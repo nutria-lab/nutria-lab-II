@@ -17,15 +17,24 @@
     "@nestjs/common": "latest",
     "@nestjs/config": "latest",
     "@nestjs/core": "latest",
+    "@nestjs/platform-express": "latest",
+    "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
+    "bcrypt": "^5.1.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
     "dotenv": "latest",
+    "pg": "^8.23.0",
     "reflect-metadata": "latest",
     "rxjs": "latest"
   },
   "devDependencies": {
     "@nestjs/cli": "latest",
+    "@types/bcrypt": "^5.0.2",
+    "@types/express": "latest",
     "@types/node": "latest",
+    "@types/pg": "^8.23.1",
     "prisma": "^7.9.1",
-    "typescript": "latest"
+    "typescript": "^5.7.3"
   }
 }
