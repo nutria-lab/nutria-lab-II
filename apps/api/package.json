@@ -9,22 +9,23 @@
     "test": "echo No tests yet",
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy"
   },
   "dependencies": {
-    "@nestjs/common": "latest",
-    "@nestjs/core": "latest",
-    "@nestjs/config": "latest",
     "@google/generative-ai": "latest",
+    "@nestjs/common": "latest",
+    "@nestjs/config": "latest",
+    "@nestjs/core": "latest",
+    "@prisma/client": "^7.9.1",
     "dotenv": "latest",
     "reflect-metadata": "latest",
-    "rxjs": "latest",
-    "@prisma/client": "^7.9.1"
+    "rxjs": "latest"
   },
   "devDependencies": {
     "@nestjs/cli": "latest",
     "@types/node": "latest",
-    "typescript": "latest",
-    "prisma": "^7.9.1"
+    "prisma": "^7.9.1",
+    "typescript": "latest"
   }
 }
