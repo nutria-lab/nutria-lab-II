@@ -1,0 +1,6 @@
+{
+  "version": 2,
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm prisma:deploy && pnpm build",
+  "outputDirectory": "dist"
+}
