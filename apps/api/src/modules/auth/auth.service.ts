@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { UserRepository } from '../user.repository';
+import { UserRepository } from '../user/user.repository';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RegisterRequestDto } from './dto/register-request.dto';
 import { LoginRequestDto } from './dto/login-request.dto';
