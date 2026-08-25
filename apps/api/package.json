@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "nest start --watch",
-    "build": "pnpm prisma:generate && tsc -p tsconfig.build.json",
+    "build": "pnpm prisma:generate && nest build",
     "lint": "tsc --noEmit",
     "test": "echo No tests yet",
     "start": "node dist/main.js",
