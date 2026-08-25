@@ -13,7 +13,7 @@ if (!databaseUrl && !isGenerate) {
 }
 
 export default defineConfig({
-  schema: "prisma/schema.prisma",
+  schema: "prisma/",
   migrations: { path: "prisma/migrations" },
   // Prisma generate requiere un string válido aunque no se conecte
   datasource: { url: databaseUrl || "postgresql://dummy:dummy@localhost/dummy" },

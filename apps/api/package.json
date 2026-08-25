@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "nest start --watch",
-    "build": "pnpm prisma:generate && nest build",
+    "build": "pnpm prisma:generate && tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/generated', 'dist/generated', {recursive: true})\"",
     "lint": "tsc --noEmit",
     "test": "echo No tests yet",
     "start": "node dist/main.js",
@@ -34,7 +34,6 @@
     "@types/express": "latest",
     "@types/node": "latest",
     "@types/pg": "^8.23.1",
-    "prisma": "^7.9.1",
-    "typescript": "^5.7.3"
+    "prisma": "^7.9.1"
   }
 }
