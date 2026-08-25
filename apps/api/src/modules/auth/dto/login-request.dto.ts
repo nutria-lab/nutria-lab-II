@@ -3,9 +3,9 @@ import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
 export class LoginRequestDto {
   @IsEmail({}, { message: 'El email proporcionado no es válido' })
   @IsNotEmpty({ message: 'El email es obligatorio' })
-  email: string;
+  email!: string;
 
   @IsString({ message: 'La contraseña debe ser una cadena de texto' })
   @IsNotEmpty({ message: 'La contraseña es obligatoria' })
-  password: string;
+  password!: string;
 }

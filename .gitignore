@@ -8,5 +8,6 @@ build/
 coverage/
 *.log
 *.tsbuildinfo
-apps/api/generated/
+apps/api/src/generated/
 .initialization.md
+apps/api/.env
