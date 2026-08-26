@@ -14,10 +14,11 @@ const COOK_TIME_OPTIONS: {
 
 type CookTimeSelectorProps = {
   value: CookTimePreference;
+  disabled?: boolean;
   onChange: (value: CookTimePreference) => void;
 };
 
-export function CookTimeSelector({ value, onChange }: CookTimeSelectorProps) {
+export function CookTimeSelector({ value, disabled, onChange }: CookTimeSelectorProps) {
   return (
     <div className="space-y-3">
       {COOK_TIME_OPTIONS.map((option) => (
@@ -27,6 +28,7 @@ export function CookTimeSelector({ value, onChange }: CookTimeSelectorProps) {
           valueLabel={option.valueLabel}
           description={option.description}
           selected={value === option.value}
+          disabled={disabled}
           onClick={() => onChange(option.value)}
         />
       ))}

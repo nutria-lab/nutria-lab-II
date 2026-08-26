@@ -5,6 +5,7 @@ type SelectableCardProps = {
   description: string;
   valueLabel?: string;
   selected: boolean;
+  disabled?: boolean;
   onClick: () => void;
 };
 
@@ -13,14 +14,16 @@ export function SelectableCard({
   description,
   valueLabel,
   selected,
+  disabled,
   onClick,
 }: SelectableCardProps) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       aria-pressed={selected}
-      className={`w-full rounded-xl border bg-white p-4 text-left transition-colors ${
+      className={`w-full rounded-xl border bg-white p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
         selected ? 'border-brand-green' : 'border-neutral-200'
       }`}
     >

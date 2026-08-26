@@ -9,10 +9,11 @@ const GOAL_OPTIONS: { value: Goal; title: string; description: string }[] = [
 
 type GoalSelectorProps = {
   value: Goal;
+  disabled?: boolean;
   onChange: (value: Goal) => void;
 };
 
-export function GoalSelector({ value, onChange }: GoalSelectorProps) {
+export function GoalSelector({ value, disabled, onChange }: GoalSelectorProps) {
   return (
     <div className="space-y-3">
       {GOAL_OPTIONS.map((option) => (
@@ -21,6 +22,7 @@ export function GoalSelector({ value, onChange }: GoalSelectorProps) {
           title={option.title}
           description={option.description}
           selected={value === option.value}
+          disabled={disabled}
           onClick={() => onChange(option.value)}
         />
       ))}

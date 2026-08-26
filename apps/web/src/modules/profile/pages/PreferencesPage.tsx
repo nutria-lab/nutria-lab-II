@@ -26,6 +26,7 @@ export function PreferencesPage() {
   }
 
   const isFormValid = Boolean(formState.goal && formState.diet && formState.cookTimePreference);
+  const isSaving = status === 'saving';
 
   return (
     <main className="mx-auto max-w-md space-y-6 px-4 py-6">
@@ -42,7 +43,11 @@ export function PreferencesPage() {
 
       <section className="space-y-3">
         <h2 className="font-serif text-lg font-semibold text-neutral-900">¿Cuál es tu objetivo principal?</h2>
-        <GoalSelector value={formState.goal} onChange={(goal) => setFormState({ ...formState, goal })} />
+        <GoalSelector
+          value={formState.goal}
+          disabled={isSaving}
+          onChange={(goal) => setFormState({ ...formState, goal })}
+        />
       </section>
 
       <section className="space-y-4">
@@ -50,13 +55,18 @@ export function PreferencesPage() {
 
         <div className="space-y-2">
           <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Elegí una dieta</p>
-          <DietPills value={formState.diet} onChange={(diet) => setFormState({ ...formState, diet })} />
+          <DietPills
+            value={formState.diet}
+            disabled={isSaving}
+            onChange={(diet) => setFormState({ ...formState, diet })}
+          />
         </div>
 
         <div className="space-y-2">
           <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Excluir ingredientes</p>
           <ExcludeIngredientsPills
             value={formState.excludedIngredients}
+            disabled={isSaving}
             onChange={(excludedIngredients) => setFormState({ ...formState, excludedIngredients })}
           />
         </div>
@@ -66,17 +76,18 @@ export function PreferencesPage() {
         <h2 className="font-serif text-lg font-semibold text-neutral-900">Tiempo de cocina preferido</h2>
         <CookTimeSelector
           value={formState.cookTimePreference}
+          disabled={isSaving}
           onChange={(cookTimePreference) => setFormState({ ...formState, cookTimePreference })}
         />
       </section>
 
       <button
         type="button"
-        disabled={!isFormValid || status === 'saving'}
+        disabled={!isFormValid || isSaving}
         onClick={() => save(formState)}
         className="w-full rounded-lg bg-brand-green py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
       >
-        {status === 'saving' ? 'Guardando...' : 'Guardar preferencias'}
+        {isSaving ? 'Guardando...' : 'Guardar preferencias'}
       </button>
     </main>
   );

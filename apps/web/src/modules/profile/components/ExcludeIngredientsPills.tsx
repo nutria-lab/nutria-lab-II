@@ -11,10 +11,11 @@ const RESTRICTION_OPTIONS: { value: Restriction; label: string }[] = [
 
 type ExcludeIngredientsPillsProps = {
   value: Restriction[];
+  disabled?: boolean;
   onChange: (value: Restriction[]) => void;
 };
 
-export function ExcludeIngredientsPills({ value, onChange }: ExcludeIngredientsPillsProps) {
+export function ExcludeIngredientsPills({ value, disabled, onChange }: ExcludeIngredientsPillsProps) {
   function toggle(option: Restriction) {
     onChange(value.includes(option) ? value.filter((item) => item !== option) : [...value, option]);
   }
@@ -26,6 +27,7 @@ export function ExcludeIngredientsPills({ value, onChange }: ExcludeIngredientsP
           key={option.value}
           label={option.label}
           selected={value.includes(option.value)}
+          disabled={disabled}
           onClick={() => toggle(option.value)}
         />
       ))}
