@@ -8,5 +8,9 @@ build/
 coverage/
 *.log
 *.tsbuildinfo
-apps/api/generated/
+apps/api/src/generated/
 .initialization.md
+apps/api/.env
+refactor1.md
+refactor2.md
+refactor3.md
