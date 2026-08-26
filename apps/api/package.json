@@ -17,6 +17,7 @@
     "@nestjs/common": "latest",
     "@nestjs/config": "latest",
     "@nestjs/core": "latest",
+    "@nestjs/jwt": "^11.0.2",
     "@nestjs/platform-express": "latest",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
