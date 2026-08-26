@@ -1,0 +1,273 @@
+:root {
+  color: #243126;
+  background: #f7f1e5;
+  font-family: "Nunito Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 20rem;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.login-page {
+  background: #f7f1e5;
+  min-height: 100dvh;
+}
+
+.login-visual-panel {
+  display: none;
+}
+
+.login-card {
+  background: #f7f1e5;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 2.5rem 1.5rem;
+  width: 100%;
+}
+
+.login-content {
+  max-width: 25rem;
+  width: 100%;
+}
+
+.login-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+}
+
+.login-brand-icon {
+  block-size: 3rem;
+  border-radius: 50%;
+  display: block;
+  inline-size: 3rem;
+  object-fit: cover;
+}
+
+.login-outline-leaf {
+  fill: none;
+  inline-size: 7rem;
+  stroke: #fffdf8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.login-header {
+  margin: 0 0 1.75rem;
+  text-align: center;
+}
+
+.login-header h1 {
+  color: #254a36;
+  font-family: Literata, Georgia, serif;
+  font-size: clamp(2rem, 8vw, 2.35rem);
+  font-weight: 600;
+  letter-spacing: -.025em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.login-header p:last-child {
+  color: #5f675c;
+  line-height: 1.5;
+  margin: .6rem 0 0;
+}
+
+.login-form,
+.login-field {
+  display: grid;
+  gap: .5rem;
+}
+
+.login-form {
+  gap: 1.1rem;
+}
+
+.login-field label,
+.login-remember {
+  font-size: .9rem;
+  font-weight: 700;
+}
+
+.login-field input {
+  background: #fffefa;
+  border: 1px solid #b7b7a8;
+  border-radius: .5rem;
+  min-height: 3rem;
+  padding: .625rem .75rem;
+  width: 100%;
+}
+
+.login-password-control {
+  position: relative;
+}
+
+.login-password-control input {
+  padding-right: 5.5rem;
+}
+
+.login-password-toggle {
+  background: transparent;
+  border: 0;
+  border-radius: .375rem;
+  color: #254a36;
+  font-size: .875rem;
+  font-weight: 700;
+  min-height: 2.75rem;
+  padding: .5rem .75rem;
+  position: absolute;
+  right: .125rem;
+  top: .125rem;
+}
+
+.login-options,
+.login-remember {
+  align-items: center;
+  display: flex;
+}
+
+.login-options {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  row-gap: .625rem;
+  gap: 1rem;
+}
+
+.login-remember {
+  min-height: 2.75rem;
+  gap: .625rem;
+}
+
+.login-remember input {
+  accent-color: #254a36;
+  height: 1.25rem;
+  width: 1.25rem;
+}
+
+.login-forgot-password {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: #254a36;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: .875rem;
+  font-weight: 700;
+  min-height: 2.75rem;
+  padding: .5rem 0;
+  text-decoration: underline;
+  text-underline-offset: .18em;
+}
+
+.login-submit {
+  background: #254a36;
+  border: 0;
+  border-radius: .5rem;
+  color: #fffdf8;
+  cursor: pointer;
+  font-weight: 800;
+  min-height: 3rem;
+  padding: .75rem 1rem;
+}
+
+.login-register {
+  color: #5f675c;
+  font-size: .9rem;
+  margin: 1.75rem auto 0;
+  text-align: center;
+}
+
+.login-register-link {
+  color: #254a36;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: .18em;
+}
+
+.login-field-error {
+  color: #9e2f27;
+  margin: 0;
+}
+
+.login-error-summary {
+  background: #fff1ee;
+  border-left: .25rem solid #9e2f27;
+  border-radius: .5rem;
+  color: #6d211c;
+  padding: .75rem;
+}
+
+.login-field input[aria-invalid="true"] {
+  border-color: #9e2f27;
+}
+
+.login-field input:focus-visible,
+.login-password-toggle:focus-visible,
+.login-submit:focus-visible,
+.login-remember input:focus-visible,
+.login-forgot-password:focus-visible {
+  outline: 3px solid #c88b35;
+  outline-offset: 2px;
+}
+
+@media (min-width: 48rem) {
+  .login-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .login-visual-panel {
+    align-items: center;
+    background: #b58c43;
+    color: #fffdf8;
+    display: flex;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: 3rem;
+  }
+
+  .login-visual-content {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    max-width: 24rem;
+    text-align: center;
+  }
+
+  .login-outline-leaf {
+    inline-size: 8.25rem;
+    stroke-width: 1.3;
+  }
+
+  .login-visual-content p {
+    font-family: Literata, Georgia, serif;
+    font-size: 1.25rem;
+    line-height: 1.5;
+    margin: 2rem 0 0;
+  }
+
+  .login-card {
+    padding: 3rem clamp(2.5rem, 7vw, 7rem);
+    place-items: center;
+  }
+
+  .login-content {
+    max-width: 23rem;
+  }
+
+  .login-header h1 {
+    font-size: 2.25rem;
+  }
+}
