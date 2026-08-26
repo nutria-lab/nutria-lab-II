@@ -2,7 +2,6 @@ generator client {
   provider        = "prisma-client"
   output          = "../src/generated/prisma"
   moduleFormat    = "cjs"
-  previewFeatures = ["prismaSchemaFolder"]
 }
 
 datasource db {
