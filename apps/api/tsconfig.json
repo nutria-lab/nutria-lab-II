@@ -12,7 +12,8 @@
     "rootDir": "./src",
     "incremental": true,
     "skipLibCheck": true,
-    "strict": true
+    "strict": true,
+    "moduleResolution": "node"
   },
   "include": [
     "src/**/*.ts"
