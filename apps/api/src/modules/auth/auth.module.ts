@@ -5,13 +5,16 @@ import { AuthService } from './auth.service';
 import { JwtModule } from '@nestjs/jwt';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
-
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  throw new Error('FATAL ERROR: JWT_SECRET is not defined in environment variables');
+}
 
 @Module({
   imports: [
     JwtModule.register({
       global: true, // Hace que JwtService esté disponible en toda la app
-      secret: process.env.JWT_SECRET || 'super-secret-key',
+      secret: jwtSecret,
       signOptions: { expiresIn: '7d' },
     }),
   ],
