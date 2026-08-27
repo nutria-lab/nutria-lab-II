@@ -18,8 +18,10 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "prettier": "latest"
+    "prettier": "latest",
+    "tailwindcss": "latest"
   }
 }
