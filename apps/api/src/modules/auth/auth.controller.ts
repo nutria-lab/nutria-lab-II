@@ -4,7 +4,6 @@ import { AuthService } from './auth.service';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RegisterRequestDto } from './dto/register-request.dto';
 import { LoginRequestDto } from './dto/login-request.dto';
-// IMPORTANTE: Asegurate de importar tu JwtAuthGuard y AuthenticatedRequest cuando lo re-agregues
 
 @Controller('auth')
 export class AuthController {
