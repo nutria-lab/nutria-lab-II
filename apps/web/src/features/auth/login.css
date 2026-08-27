@@ -172,14 +172,44 @@ input {
 }
 
 .login-submit {
+  align-items: center;
   background: #254a36;
   border: 0;
   border-radius: .5rem;
   color: #fffdf8;
   cursor: pointer;
+  display: inline-flex;
   font-weight: 800;
+  gap: .5rem;
+  justify-content: center;
   min-height: 3rem;
   padding: .75rem 1rem;
+}
+
+.login-submit:disabled {
+  background: #345b45;
+  cursor: wait;
+  opacity: 1;
+}
+
+.login-loading-spinner {
+  animation: login-spinner-rotate .75s linear infinite;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  block-size: 1rem;
+  flex: 0 0 1rem;
+  inline-size: 1rem;
+}
+
+.login-loading-status {
+  block-size: 1px;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
 }
 
 .login-register {
@@ -209,6 +239,15 @@ input {
   padding: .75rem;
 }
 
+.login-auth-error {
+  background: #fff1ee;
+  border-left: .25rem solid #9e2f27;
+  border-radius: .5rem;
+  color: #6d211c;
+  margin: 0;
+  padding: .75rem;
+}
+
 .login-field input[aria-invalid="true"] {
   border-color: #9e2f27;
 }
@@ -220,6 +259,18 @@ input {
 .login-forgot-password:focus-visible {
   outline: 3px solid #c88b35;
   outline-offset: 2px;
+}
+
+@keyframes login-spinner-rotate {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-loading-spinner {
+    animation: none;
+  }
 }
 
 @media (min-width: 48rem) {

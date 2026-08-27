@@ -106,4 +106,27 @@ describe('LoginPage', () => {
     expect(email).not.toHaveAttribute('aria-invalid');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  it('renders invalid credentials as a non-enumerating presentation state without replacing field semantics', () => {
+    render(<LoginPage status="invalidCredentials" />);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('El correo o la contraseña no son correctos.');
+    expect(screen.getByLabelText(/correo/i)).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText(/^contraseña$/i)).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('checkbox', { name: /recordarme/i })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Iniciá sesión' })).toBeEnabled();
+  });
+
+  it('renders loading as an accessible presentation state that prevents repeated submission', () => {
+    render(<LoginPage status="loading" />);
+
+    const form = document.querySelector('form')!;
+    const submit = screen.getByRole('button', { name: 'Iniciando sesión...' });
+
+    expect(form).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status', { name: /iniciando sesión/i })).toBeVisible();
+    expect(submit).toBeDisabled();
+    expect(screen.getByLabelText(/correo/i)).toBeVisible();
+    expect(screen.getByLabelText(/^contraseña$/i)).toBeVisible();
+  });
 });

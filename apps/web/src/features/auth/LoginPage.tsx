@@ -13,16 +13,28 @@ function OutlineLeaf() {
   );
 }
 
-export function LoginPage() {
+export type LoginPageStatus = 'idle' | 'loading' | 'invalidCredentials';
+
+type LoginPageProps = {
+  /** Visual-only state supplied by a future authentication boundary. */
+  status?: LoginPageStatus;
+};
+
+export function LoginPage({ status = 'idle' }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const isLoading = status === 'loading';
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (isLoading) {
+      return;
+    }
 
     const nextErrors = validateLoginFields(email, password);
     setErrors(nextErrors);
@@ -65,7 +77,12 @@ export function LoginPage() {
             <p>Ingresá tus datos para continuar</p>
           </header>
 
-          <form className="login-form" noValidate onSubmit={handleSubmit}>
+          <form className="login-form" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
+            {status === 'invalidCredentials' && (
+              <p className="login-auth-error" role="alert">
+                El correo o la contraseña no son correctos.
+              </p>
+            )}
             {Object.keys(errors).length > 0 && (
               <div className="login-error-summary" role="alert">
                 {Object.values(errors).join(' ')}
@@ -124,7 +141,11 @@ export function LoginPage() {
               <button className="login-forgot-password" type="button">¿Olvidaste tu contraseña?</button>
             </div>
 
-            <button className="login-submit" type="submit">Iniciá sesión</button>
+            <button className="login-submit" disabled={isLoading} type="submit">
+              {isLoading && <span aria-hidden="true" className="login-loading-spinner" />}
+              {isLoading ? 'Iniciando sesión...' : 'Iniciá sesión'}
+            </button>
+            {isLoading && <span aria-label="Iniciando sesión..." className="login-loading-status" role="status">Iniciando sesión...</span>}
           </form>
 
           <p className="login-register">
