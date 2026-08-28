@@ -35,7 +35,7 @@
     "@types/bcrypt": "^5.0.2",
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "latest",
-    "@types/node": "latest",
+    "@types/node": "^26.2.0",
     "@types/pg": "^8.23.1",
     "prisma": "^7.9.1"
   }
