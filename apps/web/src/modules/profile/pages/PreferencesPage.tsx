@@ -19,7 +19,7 @@ export function PreferencesPage() {
 
   if (status === 'loading' || !formState) {
     return (
-      <main className="mx-auto max-w-md px-4 py-8 text-center text-sm text-neutral-500">
+      <main className="mx-auto max-w-3xl px-4 py-8 text-center text-sm text-neutral-500 md:px-8">
         Cargando tus preferencias...
       </main>
     );
@@ -29,8 +29,11 @@ export function PreferencesPage() {
   const isSaving = status === 'saving';
 
   return (
-    <main className="mx-auto max-w-md space-y-6 px-4 py-6">
-      <h1 className="font-serif text-2xl font-bold text-neutral-900">Preferencias alimentarias</h1>
+    <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-8">
+      <div className="flex items-center justify-between">
+        <h1 className="font-serif text-2xl font-bold text-neutral-900">Preferencias alimentarias</h1>
+        <span className="hidden h-10 w-10 shrink-0 rounded-full bg-brand-green md:block" aria-hidden="true" />
+      </div>
 
       {status === 'success' && (
         <Banner variant="success" message="Tus preferencias se guardaron correctamente" />
@@ -81,14 +84,23 @@ export function PreferencesPage() {
         />
       </section>
 
-      <button
-        type="button"
-        disabled={!isFormValid || isSaving}
-        onClick={() => save(formState)}
-        className="w-full rounded-lg bg-brand-green py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-      >
-        {isSaving ? 'Guardando...' : 'Guardar preferencias'}
-      </button>
+      <div className="flex flex-col gap-3 md:flex-row md:justify-end">
+        <button
+          type="button"
+          disabled={isSaving}
+          className="hidden rounded-lg border border-neutral-300 px-6 py-3 text-sm font-semibold text-neutral-700 transition-opacity hover:bg-neutral-100 disabled:opacity-50 md:block"
+        >
+          Volver al perfil
+        </button>
+        <button
+          type="button"
+          disabled={!isFormValid || isSaving}
+          onClick={() => save(formState)}
+          className="w-full rounded-lg bg-brand-green py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50 md:w-auto md:px-6"
+        >
+          {isSaving ? 'Guardando...' : 'Guardar preferencias'}
+        </button>
+      </div>
     </main>
   );
 }

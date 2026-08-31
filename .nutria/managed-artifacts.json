@@ -1,0 +1,154 @@
+{
+  "artifacts": {
+    "codex:skills": [
+      ".codex\\skills\\architecture-adr\\SKILL.md",
+      ".codex\\skills\\codegraph-guidance\\SKILL.md",
+      ".codex\\skills\\documentation-evidence\\SKILL.md",
+      ".codex\\skills\\engram-memory-protocol\\SKILL.md",
+      ".codex\\skills\\gentle-ai-engram\\SKILL.md",
+      ".codex\\skills\\google-modern-web-guidance\\SKILL.md",
+      ".codex\\skills\\INDEX.md",
+      ".codex\\skills\\linear-delivery-ops\\SKILL.md",
+      ".codex\\skills\\meal-plan-ai-safety\\SKILL.md",
+      ".codex\\skills\\neon-prisma-safety\\SKILL.md",
+      ".codex\\skills\\nutria-project-context\\SKILL.md",
+      ".codex\\skills\\pr-release-guardrails\\SKILL.md",
+      ".codex\\skills\\product-backlog\\SKILL.md",
+      ".codex\\skills\\qa-playwright-evidence\\SKILL.md",
+      ".codex\\skills\\review\\SKILL.md",
+      ".codex\\skills\\stitch-ui-workflow\\SKILL.md",
+      ".codex\\skills\\time-reporting\\SKILL.md"
+    ],
+    "codex:ai": [
+      ".ai\\adherence.md",
+      ".ai\\ai-generation-safety.md",
+      ".ai\\architecture.md",
+      ".ai\\authentication-and-profile.md",
+      ".ai\\codegraph.md",
+      ".ai\\database-and-migrations.md",
+      ".ai\\delivery-and-linear.md",
+      ".ai\\frontend-and-stitch.md",
+      ".ai\\index.md",
+      ".ai\\meal-plans.md",
+      ".ai\\memory-and-engram.md",
+      ".ai\\quality-and-testing.md",
+      ".ai\\recipes.md",
+      ".ai\\release-and-evidence.md",
+      ".ai\\shopping-list.md"
+    ],
+    "codex:connectors:management": [],
+    "codex:google-sheets-workflow:management": [],
+    "codex:agents:management": [],
+    "codex:agents:development": [
+      ".codex\\agents\\backend-designer.toml",
+      ".codex\\agents\\backend-explorer.toml",
+      ".codex\\agents\\backend-implementer.toml",
+      ".codex\\agents\\backend-review-readability.toml",
+      ".codex\\agents\\backend-review-reliability.toml",
+      ".codex\\agents\\backend-review-resilience.toml",
+      ".codex\\agents\\backend-review-risk.toml",
+      ".codex\\agents\\backend-tester.toml",
+      ".codex\\agents\\frontend-checker-lite.toml",
+      ".codex\\agents\\frontend-designer.toml",
+      ".codex\\agents\\frontend-explorer.toml",
+      ".codex\\agents\\frontend-implementer.toml",
+      ".codex\\agents\\frontend-review-readability.toml",
+      ".codex\\agents\\frontend-review-reliability.toml",
+      ".codex\\agents\\frontend-review-resilience.toml",
+      ".codex\\agents\\frontend-review-risk.toml",
+      ".codex\\agents\\frontend-tester.toml",
+      ".codex\\agents\\linear-time-registration.toml"
+    ],
+    "codex:mcp-catalog:development": [
+      ".nutria\\mcp\\servers.json"
+    ],
+    "codex:instructions:development": [
+      "AGENTS.md"
+    ],
+    "codex:instructions:management": [],
+    "claude:skills": [
+      ".claude\\skills\\architecture-adr\\SKILL.md",
+      ".claude\\skills\\codegraph-guidance\\SKILL.md",
+      ".claude\\skills\\documentation-evidence\\SKILL.md",
+      ".claude\\skills\\engram-memory-protocol\\SKILL.md",
+      ".claude\\skills\\gentle-ai-engram\\SKILL.md",
+      ".claude\\skills\\google-modern-web-guidance\\SKILL.md",
+      ".claude\\skills\\INDEX.md",
+      ".claude\\skills\\linear-delivery-ops\\SKILL.md",
+      ".claude\\skills\\meal-plan-ai-safety\\SKILL.md",
+      ".claude\\skills\\neon-prisma-safety\\SKILL.md",
+      ".claude\\skills\\nutria-project-context\\SKILL.md",
+      ".claude\\skills\\pr-release-guardrails\\SKILL.md",
+      ".claude\\skills\\product-backlog\\SKILL.md",
+      ".claude\\skills\\qa-playwright-evidence\\SKILL.md",
+      ".claude\\skills\\review\\SKILL.md",
+      ".claude\\skills\\stitch-ui-workflow\\SKILL.md",
+      ".claude\\skills\\time-reporting\\SKILL.md"
+    ],
+    "claude:ai": [
+      ".ai\\adherence.md",
+      ".ai\\ai-generation-safety.md",
+      ".ai\\architecture.md",
+      ".ai\\authentication-and-profile.md",
+      ".ai\\codegraph.md",
+      ".ai\\database-and-migrations.md",
+      ".ai\\delivery-and-linear.md",
+      ".ai\\frontend-and-stitch.md",
+      ".ai\\index.md",
+      ".ai\\meal-plans.md",
+      ".ai\\memory-and-engram.md",
+      ".ai\\quality-and-testing.md",
+      ".ai\\recipes.md",
+      ".ai\\release-and-evidence.md",
+      ".ai\\shopping-list.md"
+    ],
+    "claude:connectors:management": [],
+    "claude:google-sheets-workflow:management": [],
+    "claude:agents:management": [],
+    "claude:agents:development": [
+      ".claude\\agents\\backend-designer.md",
+      ".claude\\agents\\backend-explorer.md",
+      ".claude\\agents\\backend-implementer.md",
+      ".claude\\agents\\backend-review-readability.md",
+      ".claude\\agents\\backend-review-reliability.md",
+      ".claude\\agents\\backend-review-resilience.md",
+      ".claude\\agents\\backend-review-risk.md",
+      ".claude\\agents\\backend-tester.md",
+      ".claude\\agents\\frontend-checker-lite.md",
+      ".claude\\agents\\frontend-designer.md",
+      ".claude\\agents\\frontend-explorer.md",
+      ".claude\\agents\\frontend-implementer.md",
+      ".claude\\agents\\frontend-review-readability.md",
+      ".claude\\agents\\frontend-review-reliability.md",
+      ".claude\\agents\\frontend-review-resilience.md",
+      ".claude\\agents\\frontend-review-risk.md",
+      ".claude\\agents\\frontend-tester.md",
+      ".claude\\agents\\linear-time-registration.md"
+    ],
+    "claude:instructions:development": [
+      "CLAUDE.md"
+    ],
+    "claude:instructions:management": [],
+    "claude:mcp-catalog:development": [
+      ".nutria\\mcp\\servers.json"
+    ]
+  },
+  "mcp": {
+    "codex:mcp:development": [
+      "linear",
+      "neon",
+      "stitch",
+      "engram",
+      "codegraph",
+      "agentation"
+    ],
+    "claude:mcp:development": [
+      "linear",
+      "neon",
+      "stitch",
+      "engram",
+      "codegraph",
+      "agentation"
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+# NutrIA skill index
+
+Load only the skill relevant to the task: `nutria-project-context` (product/domain), `linear-delivery-ops` (Linear hygiene), `time-reporting` (hours), `architecture-adr` (technical decisions), `neon-prisma-safety` (database/migrations), `google-modern-web-guidance` and `stitch-ui-workflow` (frontend), `qa-playwright-evidence` (tests), `pr-release-guardrails` (review/release), `review` (/review workflow), `product-backlog` (stories), `documentation-evidence` (reports), `meal-plan-ai-safety` (AI safety), `engram-memory-protocol`/`gentle-ai-engram` (memory), and `codegraph-guidance` (codebase exploration).

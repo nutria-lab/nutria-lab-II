@@ -20,7 +20,7 @@ type CookTimeSelectorProps = {
 
 export function CookTimeSelector({ value, disabled, onChange }: CookTimeSelectorProps) {
   return (
-    <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       {COOK_TIME_OPTIONS.map((option) => (
         <SelectableCard
           key={option.value}
