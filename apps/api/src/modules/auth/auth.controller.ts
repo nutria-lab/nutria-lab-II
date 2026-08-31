@@ -1,5 +1,6 @@
 ﻿import { Body, Controller, HttpCode, HttpStatus, Post, Get, UseGuards, Req, Res } from '@nestjs/common';
-import { Response, Request } from 'express';
+import { Response } from 'express';
+import { JwtAuthGuard, AuthenticatedRequest } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RegisterRequestDto } from './dto/register-request.dto';
@@ -31,5 +32,15 @@ export class AuthController {
     });
 
     return user;
+  }
+
+  // Endpoint protegido de prueba
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  getProfile(@Req() req: AuthenticatedRequest) {
+    return {
+      message: 'Token válido',
+      user: req.user,
+    };
   }
 }
