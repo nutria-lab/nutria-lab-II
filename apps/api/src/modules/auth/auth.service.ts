@@ -52,7 +52,7 @@ export class AuthService {
       updatedAt: user.updatedAt,
     };
   }
-
+  
   async findById(id: string): Promise<AuthResponseDto | null> {
     const user = await this.userRepository.findById(id);
     if (!user) return null;
