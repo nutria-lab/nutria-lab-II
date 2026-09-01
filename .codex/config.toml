@@ -1,0 +1,21 @@
+
+[mcp_servers.linear]
+url = "https://mcp.linear.app/mcp"
+
+[mcp_servers.neon]
+url = "https://mcp.neon.tech/mcp"
+
+[mcp_servers.stitch]
+url = "https://stitch.googleapis.com/mcp"
+
+[mcp_servers.engram]
+command = "C:\\Users\\USUARIO\\IdeaProjects\\nutria-lab-II\\.nutria\\bin\\engram.exe"
+args = ["mcp", "--tools=agent"]
+
+[mcp_servers.codegraph]
+command = "C:\\Users\\USUARIO\\IdeaProjects\\nutria-lab-II\\.nutria\\runtime\\codegraph\\node_modules\\.bin\\codegraph.cmd"
+args = ["serve", "--mcp"]
+
+[mcp_servers.agentation]
+command = "npx"
+args = ["--yes", "agentation-mcp", "server"]

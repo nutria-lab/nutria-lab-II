@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "servers": {
+    "linear": {
+      "transport": "http",
+      "url": "https://mcp.linear.app/mcp",
+      "purpose": "Issues, projects, cycles, status, and delivery reporting.",
+      "risk": "write",
+      "defaultMode": "read-only-first"
+    },
+    "neon": {
+      "transport": "http",
+      "url": "https://mcp.neon.tech/mcp",
+      "purpose": "Development database branches, schema review, and safe SQL validation.",
+      "risk": "database-write",
+      "defaultMode": "development-branch-only"
+    },
+    "stitch": {
+      "transport": "http",
+      "url": "https://stitch.googleapis.com/mcp",
+      "purpose": "Generate, inspect, and refine UI artifacts. Stitch is the design source; Figma is not used.",
+      "risk": "design-write",
+      "defaultMode": "human-approved"
+    },
+    "engram": {
+      "transport": "stdio",
+      "command": "engram",
+      "args": [
+        "mcp",
+        "--tools=agent"
+      ],
+      "purpose": "Persistent project memory and session continuity through Gentle AI / Engram.",
+      "risk": "knowledge-write",
+      "defaultMode": "proactive-curated-save"
+    },
+    "codegraph": {
+      "transport": "stdio",
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ],
+      "purpose": "Structural codebase exploration and impact analysis.",
+      "risk": "read-only",
+      "defaultMode": "explore-first"
+    },
+    "agentation": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "--yes",
+        "agentation-mcp",
+        "server"
+      ],
+      "purpose": "Local visual annotation MCP for frontend review feedback.",
+      "risk": "human-approved-annotation",
+      "defaultMode": "human-approved"
+    }
+  }
+}
