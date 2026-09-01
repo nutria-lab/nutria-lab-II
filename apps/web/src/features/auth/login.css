@@ -248,6 +248,23 @@ input {
   padding: .75rem;
 }
 
+.login-auth-error p {
+  margin: 0;
+}
+
+.login-retry {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-weight: 800;
+  margin-top: .5rem;
+  min-height: 2.75rem;
+  padding: .5rem 0;
+  text-decoration: underline;
+  text-underline-offset: .18em;
+}
+
 .login-field input[aria-invalid="true"] {
   border-color: #9e2f27;
 }
@@ -256,7 +273,8 @@ input {
 .login-password-toggle:focus-visible,
 .login-submit:focus-visible,
 .login-remember input:focus-visible,
-.login-forgot-password:focus-visible {
+.login-forgot-password:focus-visible,
+.login-retry:focus-visible {
   outline: 3px solid #c88b35;
   outline-offset: 2px;
 }
