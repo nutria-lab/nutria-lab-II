@@ -57,6 +57,17 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
     }
   }
 
+  function handlePasswordChange(nextPassword: string) {
+    setPassword(nextPassword);
+
+    if (errors.password) {
+      setErrors((currentErrors) => {
+        const { password: _passwordError, ...remainingErrors } = currentErrors;
+        return remainingErrors;
+      });
+    }
+  }
+
   return (
     <main className="login-page">
       <aside className="login-visual-panel" aria-hidden="true">
@@ -118,7 +129,7 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
                   value={password}
                   aria-invalid={errors.password ? 'true' : undefined}
                   aria-describedby={errors.password ? 'password-error' : undefined}
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={(event) => handlePasswordChange(event.target.value)}
                 />
                 <button
                   className="login-password-toggle"

@@ -107,6 +107,24 @@ describe('LoginPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('clears local password-required feedback while the person corrects the password', async () => {
+    const user = userEvent.setup();
+    render(<LoginPage />);
+
+    const email = screen.getByLabelText(/correo/i);
+    const password = screen.getByLabelText(/^contraseña$/i);
+    await user.type(email, 'persona@nutria.com');
+    fireEvent.submit(document.querySelector('form')!);
+
+    expect(password).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá tu contraseña.');
+
+    await user.type(password, 'secreta');
+
+    expect(password).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('renders invalid credentials as a non-enumerating presentation state without replacing field semantics', () => {
     render(<LoginPage status="invalidCredentials" />);
 
