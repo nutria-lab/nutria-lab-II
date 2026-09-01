@@ -15,7 +15,7 @@ type GoalSelectorProps = {
 
 export function GoalSelector({ value, disabled, onChange }: GoalSelectorProps) {
   return (
-    <div className="space-y-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       {GOAL_OPTIONS.map((option) => (
         <SelectableCard
           key={option.value}

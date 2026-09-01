@@ -1,0 +1,38 @@
+{
+  "mcpServers": {
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    },
+    "neon": {
+      "type": "http",
+      "url": "https://mcp.neon.tech/mcp"
+    },
+    "stitch": {
+      "type": "http",
+      "url": "https://stitch.googleapis.com/mcp"
+    },
+    "engram": {
+      "command": "C:\\Users\\USUARIO\\IdeaProjects\\nutria-lab-II\\.nutria\\bin\\engram.exe",
+      "args": [
+        "mcp",
+        "--tools=agent"
+      ]
+    },
+    "codegraph": {
+      "command": "C:\\Users\\USUARIO\\IdeaProjects\\nutria-lab-II\\.nutria\\runtime\\codegraph\\node_modules\\.bin\\codegraph.cmd",
+      "args": [
+        "serve",
+        "--mcp"
+      ]
+    },
+    "agentation": {
+      "command": "npx",
+      "args": [
+        "--yes",
+        "agentation-mcp",
+        "server"
+      ]
+    }
+  }
+}
