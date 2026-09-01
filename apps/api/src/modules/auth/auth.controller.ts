@@ -44,14 +44,5 @@ export class AuthController {
       path: '/',
     });
   }
-
-  // Endpoint protegido de prueba
-  @Get('me')
-  @UseGuards(JwtAuthGuard)
-  getProfile(@Req() req: AuthenticatedRequest) {
-    return {
-      message: 'Token válido',
-      user: req.user,
-    };
-  }
+ 
 }
