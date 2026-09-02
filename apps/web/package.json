@@ -7,11 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "tsc --noEmit",
-    "test": "echo No tests yet",
+    "test": "vitest run",
     "format": "prettier --write ."
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "axios": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest",
@@ -20,9 +21,14 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "jsdom": "latest",
     "prettier": "latest",
-    "tailwindcss": "latest"
+    "tailwindcss": "latest",
+    "vitest": "latest"
   }
 }
