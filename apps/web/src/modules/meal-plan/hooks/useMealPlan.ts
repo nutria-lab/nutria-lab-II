@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { mealPlanService, type MealPlan } from '../../../services/mealPlanService';
+import { formatLocalDateKey } from '../utils';
 
 type Status = 'loading' | 'empty' | 'error' | 'success';
 
@@ -9,7 +10,7 @@ function getCurrentWeekStart(): string {
   const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
   const monday = new Date(now);
   monday.setDate(now.getDate() + diffToMonday);
-  return monday.toISOString().slice(0, 10);
+  return formatLocalDateKey(monday);
 }
 
 export function useMealPlan(weekStart: string = getCurrentWeekStart()) {

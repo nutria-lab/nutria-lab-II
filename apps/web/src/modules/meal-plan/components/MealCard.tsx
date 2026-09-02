@@ -10,10 +10,26 @@ type MealCardProps = {
 export function MealCard({ meal }: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { recipe } = meal;
-  const hasDetail = recipe.ingredients.length > 0 || recipe.instructions.length > 0 || Boolean(recipe.description);
 
   const servingsLabel =
     meal.servings != null ? `${meal.servings} ${meal.servings === 1 ? 'porción' : 'porciones'}` : null;
+
+  // La receta puede venir ausente aunque el tipo la declare obligatoria: es un límite
+  // externo (API), no algo que TypeScript pueda garantizar en tiempo de ejecución.
+  if (!recipe) {
+    return (
+      <div className="flex min-h-[44px] items-center gap-4 rounded-2xl bg-white p-4 shadow-sm">
+        <div className="h-14 w-14 shrink-0 rounded-xl bg-neutral-100" aria-hidden="true" />
+        <div>
+          <p className="font-serif text-base font-semibold text-neutral-400">Receta no disponible</p>
+          <p className="text-sm text-neutral-400">{MEAL_TYPE_LABELS[meal.mealType]}</p>
+        </div>
+      </div>
+    );
+  }
+
+  const ingredients = recipe.ingredients ?? [];
+  const instructions = recipe.instructions ?? [];
 
   return (
     <div className="rounded-2xl bg-white shadow-sm">
@@ -21,8 +37,7 @@ export function MealCard({ meal }: MealCardProps) {
         type="button"
         onClick={() => setIsExpanded((current) => !current)}
         aria-expanded={isExpanded}
-        disabled={!hasDetail}
-        className="flex min-h-[44px] w-full items-center gap-4 rounded-2xl p-4 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green disabled:cursor-default"
+        className="flex min-h-[44px] w-full items-center gap-4 rounded-2xl p-4 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green"
       >
         <div className="h-14 w-14 shrink-0 rounded-xl bg-brand-cream-dark" aria-hidden="true" />
         <div className="flex-1">
@@ -32,14 +47,12 @@ export function MealCard({ meal }: MealCardProps) {
             {servingsLabel ? ` · ${servingsLabel}` : ''}
           </p>
         </div>
-        {hasDetail && (
-          <ChevronIcon
-            className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-          />
-        )}
+        <ChevronIcon
+          className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+        />
       </button>
 
-      {isExpanded && hasDetail && (
+      {isExpanded && (
         <div className="space-y-3 border-t border-neutral-100 px-4 pt-3 pb-4">
           {recipe.description && <p className="text-sm text-neutral-600">{recipe.description}</p>}
 
@@ -51,27 +64,31 @@ export function MealCard({ meal }: MealCardProps) {
             </p>
           )}
 
-          {recipe.ingredients.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Ingredientes</p>
+          <div>
+            <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Ingredientes</p>
+            {ingredients.length > 0 ? (
               <ul className="mt-1 space-y-1 text-sm text-neutral-700">
-                {recipe.ingredients.map((ingredient, index) => (
+                {ingredients.map((ingredient, index) => (
                   <li key={index}>{formatIngredient(ingredient)}</li>
                 ))}
               </ul>
-            </div>
-          )}
+            ) : (
+              <p className="mt-1 text-sm text-neutral-400">Ingredientes no disponibles todavía.</p>
+            )}
+          </div>
 
-          {recipe.instructions.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Instrucciones</p>
+          <div>
+            <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Instrucciones</p>
+            {instructions.length > 0 ? (
               <ol className="mt-1 list-decimal space-y-1 pl-4 text-sm text-neutral-700">
-                {recipe.instructions.map((step, index) => (
+                {instructions.map((step, index) => (
                   <li key={index}>{step}</li>
                 ))}
               </ol>
-            </div>
-          )}
+            ) : (
+              <p className="mt-1 text-sm text-neutral-400">Instrucciones no disponibles todavía.</p>
+            )}
+          </div>
         </div>
       )}
     </div>

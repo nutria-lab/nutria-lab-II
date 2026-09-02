@@ -26,10 +26,19 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   DINNER: 'Cena',
 };
 
-// Evita el corrimiento de día que da `new Date('YYYY-MM-DD')` (lo interpreta como UTC).
+// Evita el corrimiento de día que da new Date('YYYY-MM-DD') (lo interpreta como UTC).
 export function parseLocalDate(dateStr: string): Date {
   const [year, month, day] = dateStr.split('-').map(Number);
   return new Date(year, month - 1, day);
+}
+
+// Inversa de parseLocalDate: arma YYYY-MM-DD a partir de los componentes LOCALES
+// de la fecha, sin pasar por toISOString() (que convierte a UTC y puede correr el día).
+export function formatLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function formatDayAbbreviation(dateStr: string): string {

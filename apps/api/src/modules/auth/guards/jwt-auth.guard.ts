@@ -30,7 +30,7 @@ export class JwtAuthGuard implements CanActivate {
 
     try {
       const payload = await this.jwtService.verifyAsync(token, {
-        secret: process.env.JWT_SECRET,
+        secret: process.env.JWT_SECRET
       });
       
       // Asignamos el payload decodificado a request.user
@@ -43,10 +43,9 @@ export class JwtAuthGuard implements CanActivate {
   }
 
   private extractTokenFromHeader(request: Request): string | undefined {
-    const authHeader = request.headers.authorization;
-    if (!authHeader) return undefined;
-
-    const [type, token] = authHeader.split(' ');
-    return type === 'Bearer' ? token : undefined;
+    if (request.cookies && request.cookies.token) { // Probamos extraer el token desde la cookie
+      return request.cookies.token;
+    }
+    return undefined; // Lo agarramos estrictamente desde la cookie.
   }
 }

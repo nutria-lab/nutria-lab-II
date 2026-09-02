@@ -4,10 +4,14 @@ import { UserRepository } from '../user/user.repository';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { RegisterRequestDto } from './dto/register-request.dto';
 import { LoginRequestDto } from './dto/login-request.dto';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly userRepository: UserRepository) {}
+  constructor(
+    private readonly userRepository: UserRepository,
+    private readonly jwtService: JwtService,
+  ) {}
 
   async register(dto: RegisterRequestDto): Promise<AuthResponseDto> {
     const existingUser = await this.userRepository.findByEmail(dto.email);
@@ -33,7 +37,7 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginRequestDto): Promise<AuthResponseDto> {
+  async login(dto: LoginRequestDto): Promise<{ user: AuthResponseDto; token: string }> {
     const user = await this.userRepository.findByEmail(dto.email);
     if (!user) {
       throw new UnauthorizedException('Credenciales incorrectas');
@@ -44,15 +48,20 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales incorrectas');
     }
 
+    const token = await this.jwtService.signAsync({ sub: user.id, email: user.email });
+
     return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      },
+      token,
     };
   }
-
+  
   async findById(id: string): Promise<AuthResponseDto | null> {
     const user = await this.userRepository.findById(id);
     if (!user) return null;

@@ -3,7 +3,7 @@ import { Banner } from '../../../common/components/Banner';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
-import { formatFullDate, formatWeekRange } from '../utils';
+import { formatFullDate, formatLocalDateKey, formatWeekRange } from '../utils';
 
 function LoadingSkeleton() {
   return (
@@ -68,7 +68,7 @@ export function MealPlanPage() {
 
   useEffect(() => {
     if (mealPlan && !selectedDate) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = formatLocalDateKey(new Date());
       const matchesToday = mealPlan.days.some((day) => day.date === today);
       setSelectedDate(matchesToday ? today : (mealPlan.days[0]?.date ?? null));
     }
