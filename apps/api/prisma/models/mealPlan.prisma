@@ -1,0 +1,19 @@
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+model MealPlan {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weekStart DateTime
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  days      MealPlanDay[]
+
+  @@unique([userId, weekStart])
+  @@map("meal_plans")
+}

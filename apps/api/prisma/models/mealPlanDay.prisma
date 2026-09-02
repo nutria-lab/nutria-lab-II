@@ -1,0 +1,12 @@
+model MealPlanDay {
+  id         String        @id @default(uuid())
+  mealPlanId String
+  mealPlan   MealPlan      @relation(fields: [mealPlanId], references: [id], onDelete: Cascade)
+  date       DateTime
+  meals      PlannedMeal[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([mealPlanId, date])
+  @@map("meal_plan_days")
+}
