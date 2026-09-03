@@ -117,3 +117,6 @@ ALTER TABLE "meal_plans" ADD CONSTRAINT "meal_plans_parentPlanId_fkey" FOREIGN K
 
 -- AddForeignKey
 ALTER TABLE "planned_meals" ADD CONSTRAINT "planned_meals_editedFromId_fkey" FOREIGN KEY ("editedFromId") REFERENCES "planned_meals"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- CreateIndex
+CREATE UNIQUE INDEX "meal_plans_active_key" ON "meal_plans"("userId", "weekStart") WHERE "isActive" = true;
