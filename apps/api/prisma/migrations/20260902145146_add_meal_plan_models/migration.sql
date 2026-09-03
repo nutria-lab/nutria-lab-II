@@ -16,6 +16,10 @@ CREATE TABLE "meal_plans" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "weekStart" TIMESTAMP(3) NOT NULL,
+    "generationContext" JSONB NOT NULL,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "parentPlanId" TEXT,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -41,6 +45,8 @@ CREATE TABLE "planned_meals" (
     "recipeId" TEXT NOT NULL,
     "servings" INTEGER,
     "order" INTEGER NOT NULL DEFAULT 0,
+    "isUserEdited" BOOLEAN NOT NULL DEFAULT false,
+    "editedFromId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -80,7 +86,7 @@ CREATE TABLE "recipe_ingredients" (
 CREATE UNIQUE INDEX "ingredients_name_key" ON "ingredients"("name");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "meal_plans_userId_weekStart_key" ON "meal_plans"("userId", "weekStart");
+CREATE UNIQUE INDEX "meal_plans_userId_weekStart_version_key" ON "meal_plans"("userId", "weekStart", "version");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "meal_plan_days_mealPlanId_date_key" ON "meal_plan_days"("mealPlanId", "date");
@@ -105,3 +111,9 @@ ALTER TABLE "recipe_ingredients" ADD CONSTRAINT "recipe_ingredients_recipeId_fke
 
 -- AddForeignKey
 ALTER TABLE "recipe_ingredients" ADD CONSTRAINT "recipe_ingredients_ingredientId_fkey" FOREIGN KEY ("ingredientId") REFERENCES "ingredients"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "meal_plans" ADD CONSTRAINT "meal_plans_parentPlanId_fkey" FOREIGN KEY ("parentPlanId") REFERENCES "meal_plans"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "planned_meals" ADD CONSTRAINT "planned_meals_editedFromId_fkey" FOREIGN KEY ("editedFromId") REFERENCES "planned_meals"("id") ON DELETE SET NULL ON UPDATE CASCADE;
