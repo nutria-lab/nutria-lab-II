@@ -61,7 +61,7 @@ export class AuthService {
       token,
     };
   }
-
+  
   async findById(id: string): Promise<AuthResponseDto | null> {
     const user = await this.userRepository.findById(id);
     if (!user) return null;

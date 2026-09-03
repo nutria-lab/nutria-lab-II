@@ -46,14 +46,6 @@ export class JwtAuthGuard implements CanActivate {
     if (request.cookies && request.cookies.token) { // Probamos extraer el token desde la cookie
       return request.cookies.token;
     }
-    
-    const authHeader = request.headers.authorization; // Si no, probamos desde el header
-    if (authHeader) {
-      const [type, token] = authHeader.split(' ');
-      return type === 'Bearer' ? token : undefined;
-    }
-
-    return undefined;
-    
+    return undefined; // Lo agarramos estrictamente desde la cookie.
   }
 }
