@@ -1,0 +1,20 @@
+model PlannedMeal {
+  id              String        @id @default(uuid())
+  dayId           String
+  day             MealPlanDay   @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  mealType        MealType
+  recipeId        String
+  recipe          Recipe        @relation(fields: [recipeId], references: [id], onDelete: Restrict)
+  servings        Int?
+  order           Int           @default(0)
+
+  isUserEdited    Boolean       @default(false)
+  editedFromId    String?       // If this meal was edited from a previous generation/plan version
+  editedFrom      PlannedMeal?  @relation("MealEditHistory", fields: [editedFromId], references: [id], onDelete: SetNull)
+  edits           PlannedMeal[] @relation("MealEditHistory")
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("planned_meals")
+}
