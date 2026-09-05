@@ -7,7 +7,6 @@ model Recipe {
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
-  ingredients  RecipeIngredient[]
   plannedMeals PlannedMeal[]
 
   @@map("recipes")
