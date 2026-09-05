@@ -6,22 +6,16 @@ enum MealType {
 }
 
 model MealPlan {
-  id                String        @id @default(uuid())
-  userId            String
-  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  weekStart         DateTime
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  generationContext Json          // Immutable snapshot of profile and constraints used for AI generation
-  version           Int           @default(1)
-  parentPlanId      String?       // Link to previous version if this plan is an edit/regeneration
-  parentPlan        MealPlan?     @relation("PlanLineage", fields: [parentPlanId], references: [id], onDelete: SetNull)
-  childPlans        MealPlan[]    @relation("PlanLineage")
-  isActive          Boolean       @default(true)
+  days MealPlanDay[]
 
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  days              MealPlanDay[]
-
-  @@unique([userId, weekStart, version])
+  @@unique([userId, startDate])
   @@map("meal_plans")
 }
