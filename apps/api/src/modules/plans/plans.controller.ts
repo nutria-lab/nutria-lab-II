@@ -11,13 +11,13 @@ export class PlansController {
   @Post('generate')
   @HttpCode(201)
   async generatePlan(@Req() req: any, @Body() dto: PlanDto) {
-    const userId = req.user.id;
+    const userId = req.user.sub;
     return this.plansService.generateAndPersistPlan(userId, new Date(dto.weekStart));
   }
 
   @Get('current')
-  async getCurrentPlan(@Req() req: any, @Body() dto: PlanDto) {
-    const userId = req.user.id;
-    return this.plansService.getPlanByWeek(userId, new Date(dto.weekStart));
+  async getCurrentPlan(@Req() req: any, @Query('weekStart') weekStart: string) {
+    const userId = req.user.sub;
+    return this.plansService.getPlanByWeek(userId, new Date(weekStart));
   }
 }

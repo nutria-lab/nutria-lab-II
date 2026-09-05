@@ -1,6 +1,18 @@
 import { Injectable, InternalServerErrorException, RequestTimeoutException } from '@nestjs/common';
 import { GoogleGenerativeAI, Schema, SchemaType } from '@google/generative-ai';
 import { ConfigService } from '@nestjs/config';
+import { NutritionProfile, DayOfWeek, MealType } from '../../generated/prisma/client';
+
+export interface GeneratedMealPlanDay {
+  day: DayOfWeek;
+  date: string;
+  meals: Array<{
+    mealType: MealType;
+    title: string;
+    nutritionalValues: { Protein: number; Fiber: number; Calories: number; Description: string };
+    recipe?: { prepMinutes: number; cookMinutes: number; steps: string[] };
+  }>;
+}
 
 @Injectable()
 export class GeminiService {
@@ -14,7 +26,7 @@ export class GeminiService {
     this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  async generateMealPlan(profile: any, startDate: Date): Promise<any[]> {
+  async generateMealPlan(profile: NutritionProfile, startDate: Date): Promise<GeneratedMealPlanDay[]> {
     const model = this.genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
       generationConfig: {
@@ -28,14 +40,14 @@ export class GeminiService {
       Perfil del usuario:
       - Dieta: ${profile.diet || 'Sin dieta específica'}
       - Objetivo: ${profile.goal || 'General'}
-      - Restricciones/Alergias: ${profile.allergies || 'Ninguna'}
+      - Ingredientes excluidos: ${profile.excludedIngredients.length > 0 ? (profile.excludedIngredients as string[]).join(', ') : 'Ninguno'}
       - Tiempo preferido de cocción: ${profile.cookTimePreference || 'Cualquiera'}
       
       Reglas estrictas:
       1. Devuelve un JSON válido acorde al esquema.
-      2. No incluyas ingredientes que violen las restricciones.
+      2. NUNCA incluyas ingredientes que estén en la lista de excluidos (y sus derivados).
       3. Proporciona macros coherentes.
-      4. Los días deben ser desde el día 1 al día 7.
+      4. Los días deben ser desde el día 1 al día 7 de la semana solicitada.
     `;
 
     try {
@@ -48,7 +60,7 @@ export class GeminiService {
       
       const text = result.response.text();
       const parsed = JSON.parse(text);
-      return parsed.days;
+      return parsed.days as GeneratedMealPlanDay[];
     } catch (error) {
       if (error instanceof RequestTimeoutException) throw error;
       throw new InternalServerErrorException('Error generating AI plan');
