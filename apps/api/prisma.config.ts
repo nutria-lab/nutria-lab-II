@@ -3,7 +3,7 @@ import "dotenv/config";
 import { defineConfig } from "prisma/config";
 
 const isGenerate = process.argv.includes("generate");
-const databaseUrl = process.env.DIRECT_URL || process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 
 // El flujo de generación (prisma generate) ocurre durante el build (e.g. en CI), 
 // momento en el cual puede no haber una conexión disponible.
