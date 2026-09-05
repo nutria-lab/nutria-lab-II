@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "axios": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest",
@@ -19,15 +20,15 @@
     "vite": "latest"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^7.0.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.6",
     "@tailwindcss/vite": "latest",
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@testing-library/user-event": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "jsdom": "^30.0.1",
+    "jsdom": "latest",
     "prettier": "latest",
     "tailwindcss": "latest",
-    "vitest": "^4.1.11"
+    "vitest": "latest"
   }
 }
