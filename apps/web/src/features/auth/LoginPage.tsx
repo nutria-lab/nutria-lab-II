@@ -13,14 +13,21 @@ function OutlineLeaf() {
   );
 }
 
-export type LoginPageStatus = 'idle' | 'loading' | 'invalidCredentials';
+export type LoginPageStatus = 'idle' | 'loading' | 'invalidCredentials' | 'networkError';
 
-type LoginPageProps = {
-  /** Visual-only state supplied by a future authentication boundary. */
-  status?: LoginPageStatus;
+export type LoginSubmission = {
+  email: string;
+  password: string;
 };
 
-export function LoginPage({ status = 'idle' }: LoginPageProps) {
+type LoginPageProps = {
+  /** Visual-only state supplied by the login request boundary. */
+  status?: LoginPageStatus;
+  onSubmit?: (credentials: LoginSubmission) => void | Promise<void>;
+  onCredentialsChange?: (credentials: LoginSubmission) => void;
+};
+
+export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -36,6 +43,10 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
       return;
     }
 
+    submitValidCredentials();
+  }
+
+  function submitValidCredentials() {
     const nextErrors = validateLoginFields(email, password);
     setErrors(nextErrors);
 
@@ -43,11 +54,20 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
       emailRef.current?.focus();
     } else if (nextErrors.password) {
       passwordRef.current?.focus();
+    } else {
+      void onSubmit?.({ email, password });
+    }
+  }
+
+  function handleRetry() {
+    if (!isLoading) {
+      submitValidCredentials();
     }
   }
 
   function handleEmailChange(nextEmail: string) {
     setEmail(nextEmail);
+    onCredentialsChange?.({ email: nextEmail, password });
 
     if (errors.email) {
       setErrors((currentErrors) => {
@@ -59,6 +79,7 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
 
   function handlePasswordChange(nextPassword: string) {
     setPassword(nextPassword);
+    onCredentialsChange?.({ email, password: nextPassword });
 
     if (errors.password) {
       setErrors((currentErrors) => {
@@ -93,6 +114,14 @@ export function LoginPage({ status = 'idle' }: LoginPageProps) {
               <p className="login-auth-error" role="alert">
                 El correo o la contraseña no son correctos.
               </p>
+            )}
+            {status === 'networkError' && (
+              <div className="login-auth-error" role="alert">
+                <p>No pudimos iniciar sesión. Revisá tu conexión e intentá nuevamente.</p>
+                <button className="login-retry" type="button" onClick={handleRetry}>
+                  Reintentar
+                </button>
+              </div>
             )}
             {Object.keys(errors).length > 0 && (
               <div className="login-error-summary" role="alert">

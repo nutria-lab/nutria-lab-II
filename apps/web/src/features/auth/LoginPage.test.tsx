@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LoginPage } from './LoginPage';
 
@@ -146,5 +146,33 @@ describe('LoginPage', () => {
     expect(submit).toBeDisabled();
     expect(screen.getByLabelText(/correo/i)).toBeVisible();
     expect(screen.getByLabelText(/^contraseña$/i)).toBeVisible();
+  });
+
+  it('delegates one locally valid submit with only the email and password', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<LoginPage onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText(/correo/i), 'persona@nutria.com');
+    await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
+    await user.click(screen.getByRole('button', { name: 'Iniciá sesión' }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({ email: 'persona@nutria.com', password: 'secreta' });
+  });
+
+  it('does not delegate invalid local values or a submit while loading', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LoginPage onSubmit={onSubmit} />);
+
+    await user.click(screen.getByRole('button', { name: 'Iniciá sesión' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá tu correo electrónico. Ingresá tu contraseña.');
+
+    rerender(<LoginPage status="loading" onSubmit={onSubmit} />);
+    await user.click(screen.getByRole('button', { name: 'Iniciando sesión...' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
