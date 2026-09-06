@@ -1,4 +1,4 @@
-import { IsEnum, IsArray, ArrayUnique, IsOptional } from 'class-validator';
+import { IsEnum, IsArray, ArrayUnique } from 'class-validator';
 import { NutritionGoal, Diet, DietaryRestriction, CookTimePreference } from '../../../generated/prisma/client';
 
 export class UpdateProfileDto {
@@ -11,7 +11,6 @@ export class UpdateProfileDto {
   @IsArray()
   @IsEnum(DietaryRestriction, { each: true })
   @ArrayUnique()
-  @IsOptional()
   excludedIngredients!: DietaryRestriction[];
 
   @IsEnum(CookTimePreference)

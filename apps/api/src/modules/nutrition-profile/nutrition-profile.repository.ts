@@ -19,14 +19,14 @@ export class NutritionProfileRepository {
       update: {
         goal: data.goal,
         diet: data.diet,
-        excludedIngredients: data.excludedIngredients || [],
+        excludedIngredients: data.excludedIngredients,
         cookTimePreference: data.cookTimePreference,
       },
       create: {
         userId,
         goal: data.goal,
         diet: data.diet,
-        excludedIngredients: data.excludedIngredients || [],
+        excludedIngredients: data.excludedIngredients,
         cookTimePreference: data.cookTimePreference,
       },
     });
