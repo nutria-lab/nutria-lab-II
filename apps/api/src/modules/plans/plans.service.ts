@@ -1,100 +1,86 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { MealType, DayOfWeek } from '../../generated/prisma/client';
+import { PlansRepository } from './plans.repository';
 import { GeminiService, GeneratedMealPlanDay } from './gemini.service';
+import { DayOfWeek, MealType } from '../../generated/prisma/client';
 
 @Injectable()
 export class PlansService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly repository: PlansRepository,
     private readonly gemini: GeminiService
   ) {}
 
   async generateAndPersistPlan(userId: string, weekStart: Date) {
-    // Normalizar a inicio del día
     weekStart.setHours(0, 0, 0, 0);
 
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      include: { nutritionProfile: true },
-    });
-
+    const user = await this.repository.getUserWithProfile(userId);
     if (!user) throw new NotFoundException('User not found');
     if (!user.nutritionProfile) throw new BadRequestException('User needs a nutrition profile');
 
-    const existingPlan = await this.prisma.mealPlan.findUnique({
-      where: { userId_startDate: { userId, startDate: weekStart } },
-      include: { days: { include: { meals: { include: { recipe: true } } } } }
-    });
-
-    if (existingPlan) { // No permitimos generar dos planes para la misma semana
-      throw new BadRequestException('A plan for this week already exists');
-    }
+    const exists = await this.repository.checkPlanExists(userId, weekStart);
+    if (exists) throw new BadRequestException('A plan for this week already exists');
 
     const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
-
     this.validateGeneratedPlan(generatedDays, user.nutritionProfile);
 
-    return this.prisma.$transaction(async (tx) => {
-      const plan = await tx.mealPlan.create({
-        data: {
-          userId,
-          startDate: weekStart,
-          endDate: new Date(new Date(weekStart).getTime() + 6 * 24 * 60 * 60 * 1000),
-        }
-      });
+    await this.repository.createPlanTransaction(userId, weekStart, generatedDays);
+    return this.getPlanByWeek(userId, weekStart);
+  }
 
-      for (const day of generatedDays) {
-        const mealPlanDay = await tx.mealPlanDay.create({
-          data: { mealPlanId: plan.id, day: day.day, date: new Date(day.date) }
-        });
+  async generateAndPersistPredefinedPlan(userId: string, weekStart: Date) {
+    // Normalizar a inicio del día
+    weekStart.setHours(0, 0, 0, 0);
 
-        for (const meal of day.meals) {
-          let recipeId = null;
-          
-          if (meal.recipe) {
-            const recipe = await tx.recipe.create({
-              data: {
-                prepMinutes: meal.recipe.prepMinutes || 0,
-                cookMinutes: meal.recipe.cookMinutes || 0,
-                steps: meal.recipe.steps || [],
-              }
-            });
-            recipeId = recipe.id;
-          }
+    const exists = await this.repository.checkPlanExists(userId, weekStart);
+    if (exists) throw new BadRequestException('A plan for this week already exists');
 
-          await tx.plannedMeal.create({
-            data: {
-              dayId: mealPlanDay.id,
-              mealType: meal.mealType,
-              title: meal.title,
-              nutritionalValues: meal.nutritionalValues || {},
-              recipeId,
-            }
-          });
+    const predefinedDays = this.getPredefinedTemplate(weekStart);
+
+    await this.repository.createPlanTransaction(userId, weekStart, predefinedDays);
+    return this.getPlanByWeek(userId, weekStart);
+  }
+
+  async deletePlan(userId: string, weekStart: Date){
+    const plan = await this.getPlanByWeek(userId, weekStart);
+
+    // Lógica de negocio: Identificamos todas las recetas que quedarán huérfanas
+    const recipeIds: string[] = [];
+    for (const day of plan.days || []) {
+      for (const meal of day.meals || []) {
+        if (meal.recipeId) {
+          recipeIds.push(meal.recipeId);
         }
       }
-    });
+    }
 
-    // Una vez que la transacción finaliza (commit), hacemos la consulta con el cliente principal
+    return this.repository.deletePlanTransaction(plan.id, recipeIds);
+  }
+
+  async updatePlan(userId: string, weekStart: Date) {
+    // Normalizar
+    weekStart.setHours(0, 0, 0, 0);
+
+    const user = await this.repository.getUserWithProfile(userId);
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.nutritionProfile) throw new BadRequestException('User needs a nutrition profile');
+
+    const plan = await this.repository.findPlanByWeek(userId, weekStart);
+    if (!plan) throw new NotFoundException('Plan not found to update');
+
+    // Generar el plan con Gemini de nuevo
+    const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
+    this.validateGeneratedPlan(generatedDays, user.nutritionProfile);
+
+    await this.deletePlan(userId, weekStart);
+
+    await this.repository.createPlanTransaction(userId, weekStart, generatedDays);
+
     return this.getPlanByWeek(userId, weekStart);
   }
 
   async getPlanByWeek(userId: string, weekStart: Date) {
     weekStart.setHours(0, 0, 0, 0);
-    const plan = await this.prisma.mealPlan.findUnique({
-      where: { userId_startDate: { userId, startDate: weekStart } },
-      include: {
-        days: {
-          orderBy: { date: 'asc' },
-          include: {
-            meals: {
-              include: { recipe: true }
-            }
-          }
-        }
-      }
-    });
+    const plan = await this.repository.findPlanByWeek(userId, weekStart);
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
     return plan;
@@ -127,5 +113,39 @@ export class PlansService {
         }
       }
     }
+  }
+
+  private getPredefinedTemplate(weekStart: Date): GeneratedMealPlanDay[] {
+    const days: DayOfWeek[] = [
+      DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
+      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY
+    ];
+    
+    return days.map((dayName, index) => {
+      const date = new Date(weekStart);
+      date.setDate(date.getDate() + index);
+
+      return {
+        day: dayName,
+        date: date.toISOString().split('T')[0],
+        meals: [
+          {
+            mealType: MealType.BREAKFAST,
+            title: 'Avena Clásica',
+            nutritionalValues: { Protein: 10, Fiber: 5, Calories: 300, Description: 'Avena con leche y miel' },
+          },
+          {
+            mealType: MealType.LUNCH,
+            title: 'Pollo con Arroz',
+            nutritionalValues: { Protein: 30, Fiber: 2, Calories: 500, Description: 'Pechuga a la plancha' },
+          },
+          {
+            mealType: MealType.DINNER,
+            title: 'Ensalada Mixta',
+            nutritionalValues: { Protein: 10, Fiber: 8, Calories: 250, Description: 'Vegetales frescos' },
+          }
+        ]
+      };
+    });
   }
 }
