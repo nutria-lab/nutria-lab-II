@@ -1,0 +1,42 @@
+enum NutritionGoal { 
+    LOSE_WEIGHT 
+    GAIN_MUSCLE 
+    MAINTAIN 
+}
+
+enum Diet { 
+    VEGAN 
+    VEGETARIAN 
+    PALEO 
+    KETO 
+    PESCATARIAN 
+    ALL 
+}
+
+enum DietaryRestriction { 
+    NUTS 
+    GLUTEN 
+    DAIRY 
+    SHELLFISH 
+    SOY 
+}
+
+enum CookTimePreference { 
+    QUICK 
+    STANDARD 
+    GOURMET 
+}
+
+model NutritionProfile {
+  id                 String               @id @default(uuid())
+  userId             String               @unique
+  user               User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goal               NutritionGoal
+  diet               Diet
+  excludedIngredients DietaryRestriction[]
+  cookTimePreference CookTimePreference
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@map("nutrition_profiles")
+}
