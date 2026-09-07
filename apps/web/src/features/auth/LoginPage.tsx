@@ -2,11 +2,14 @@ import { type FormEvent, useRef, useState } from 'react';
 
 import { validateLoginFields, type LoginFieldErrors } from './loginValidation';
 import nutriaIcon from '../../assets/nutria-icon.png';
-import './login.css';
 
 function OutlineLeaf() {
   return (
-    <svg aria-hidden="true" className="login-outline-leaf" viewBox="0 0 128 128">
+    <svg
+      aria-hidden="true"
+      className="w-28 fill-none stroke-[#fffdf8] stroke-[1.5] [stroke-linecap:round] [stroke-linejoin:round] md:w-[8.25rem] md:stroke-[1.3]"
+      viewBox="0 0 128 128"
+    >
       <path d="M99 15C84 34 66 40 47 48 25 57 15 75 25 101c9-22 26-38 49-47 17-7 26-20 25-39Z" />
       <path d="M25 101c16-23 34-39 74-86" />
     </svg>
@@ -90,48 +93,58 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
   }
 
   return (
-    <main className="login-page">
-      <aside className="login-visual-panel" aria-hidden="true">
-        <div className="login-visual-content">
+    <main className="min-h-dvh w-full bg-[#f7f1e5] md:grid md:grid-cols-2">
+      <aside className="hidden min-h-dvh items-center justify-center bg-[#b58c43] p-12 text-[#fffdf8] md:flex" aria-hidden="true">
+        <div className="flex max-w-sm flex-col items-center text-center">
           <OutlineLeaf />
-          <p>Nutrirte bien empieza con elegir con intención.</p>
+          <p className="mt-8 font-serif text-xl leading-7">Nutrirte bien empieza con elegir con intención.</p>
         </div>
       </aside>
 
-      <section className="login-card" aria-labelledby="login-title">
-        <div className="login-content">
-          <div className="login-brand">
-            <img alt="Hoja de NutrIA" className="login-brand-icon" src={nutriaIcon} />
+      <section
+        className="grid min-h-dvh w-full place-items-center bg-[#f7f1e5] px-6 py-10 md:px-[clamp(2.5rem,7vw,7rem)] md:py-12"
+        aria-labelledby="login-title"
+      >
+        <div className="w-full max-w-[25rem] md:max-w-[23rem]">
+          <div className="mb-6 flex justify-center">
+            <img alt="Hoja de NutrIA" className="size-12 rounded-full object-cover" src={nutriaIcon} />
           </div>
 
-          <header className="login-header">
-            <h1 id="login-title">Iniciá sesión</h1>
-            <p>Ingresá tus datos para continuar</p>
+          <header className="mb-7 text-center">
+            <h1 id="login-title" className="m-0 font-serif text-[clamp(2rem,8vw,2.35rem)] font-semibold leading-[1.15] tracking-[-0.025em] text-[#254a36] md:text-4xl">
+              Iniciá sesión
+            </h1>
+            <p className="mt-2.5 leading-6 text-[#5f675c]">Ingresá tus datos para continuar</p>
           </header>
 
-          <form className="login-form" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
+          <form className="grid gap-[1.1rem]" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
             {status === 'invalidCredentials' && (
-              <p className="login-auth-error" role="alert">
+              <p className="m-0 rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
                 El correo o la contraseña no son correctos.
               </p>
             )}
             {status === 'networkError' && (
-              <div className="login-auth-error" role="alert">
-                <p>No pudimos iniciar sesión. Revisá tu conexión e intentá nuevamente.</p>
-                <button className="login-retry" type="button" onClick={handleRetry}>
+              <div className="m-0 rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
+                <p className="m-0">No pudimos iniciar sesión. Revisá tu conexión e intentá nuevamente.</p>
+                <button
+                  className="mt-2 inline-flex min-h-11 cursor-pointer items-center bg-transparent py-2 font-extrabold text-inherit underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+                  type="button"
+                  onClick={handleRetry}
+                >
                   Reintentar
                 </button>
               </div>
             )}
             {Object.keys(errors).length > 0 && (
-              <div className="login-error-summary" role="alert">
+              <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
                 {Object.values(errors).join(' ')}
               </div>
             )}
-            <div className="login-field">
-              <label htmlFor="email">Correo electrónico</label>
+            <div className="grid gap-2">
+              <label className="text-sm font-bold" htmlFor="email">Correo electrónico</label>
               <input
                 ref={emailRef}
+                className="min-h-12 w-full rounded-lg border border-[#b7b7a8] bg-[#fffefa] px-3 py-2.5 pr-3 aria-invalid:border-[#9e2f27] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                 id="email"
                 name="email"
                 type="email"
@@ -142,14 +155,15 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                 aria-describedby={errors.email ? 'email-error' : undefined}
                 onChange={(event) => handleEmailChange(event.target.value)}
               />
-              {errors.email && <p className="login-field-error" id="email-error">{errors.email}</p>}
+              {errors.email && <p className="m-0 text-[#9e2f27]" id="email-error">{errors.email}</p>}
             </div>
 
-            <div className="login-field">
-              <label htmlFor="current-password">Contraseña</label>
-              <div className="login-password-control">
+            <div className="grid gap-2">
+              <label className="text-sm font-bold" htmlFor="current-password">Contraseña</label>
+              <div className="relative">
                 <input
                   ref={passwordRef}
+                  className="min-h-12 w-full rounded-lg border border-[#b7b7a8] bg-[#fffefa] px-3 py-2.5 pr-[5.5rem] aria-invalid:border-[#9e2f27] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   id="current-password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
@@ -161,7 +175,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                   onChange={(event) => handlePasswordChange(event.target.value)}
                 />
                 <button
-                  className="login-password-toggle"
+                  className="absolute top-0.5 right-0.5 min-h-11 rounded-md border-0 bg-transparent px-3 py-2 text-sm font-bold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   type="button"
                   aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                   aria-pressed={showPassword}
@@ -170,26 +184,40 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                   {showPassword ? 'Ocultar' : 'Mostrar'}
                 </button>
               </div>
-              {errors.password && <p className="login-field-error" id="password-error">{errors.password}</p>}
+              {errors.password && <p className="m-0 text-[#9e2f27]" id="password-error">{errors.password}</p>}
             </div>
 
-            <div className="login-options">
-              <label className="login-remember" htmlFor="remember-me">
-                <input id="remember-me" name="rememberMe" type="checkbox" />
+            <div className="flex flex-wrap items-center justify-between gap-4 gap-y-2.5">
+              <label className="flex min-h-11 items-center gap-2.5 text-sm font-bold" htmlFor="remember-me">
+                <input
+                  className="size-5 accent-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+                  id="remember-me"
+                  name="rememberMe"
+                  type="checkbox"
+                />
                 <span>Recordarme</span>
               </label>
-              <button className="login-forgot-password" type="button">¿Olvidaste tu contraseña?</button>
+              <button
+                className="inline-flex min-h-11 cursor-pointer items-center border-0 bg-transparent py-2 text-sm font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+                type="button"
+              >
+                ¿Olvidaste tu contraseña?
+              </button>
             </div>
 
-            <button className="login-submit" disabled={isLoading} type="submit">
-              {isLoading && <span aria-hidden="true" className="login-loading-spinner" />}
+            <button
+              className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-[#254a36] px-4 py-3 font-extrabold text-[#fffdf8] disabled:cursor-wait disabled:bg-[#345b45] disabled:opacity-100 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+              disabled={isLoading}
+              type="submit"
+            >
+              {isLoading && <span aria-hidden="true" className="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
               {isLoading ? 'Iniciando sesión...' : 'Iniciá sesión'}
             </button>
-            {isLoading && <span aria-label="Iniciando sesión..." className="login-loading-status" role="status">Iniciando sesión...</span>}
+            {isLoading && <span aria-label="Iniciando sesión..." className="sr-only" role="status">Iniciando sesión...</span>}
           </form>
 
-          <p className="login-register">
-            ¿No tenés cuenta? <span className="login-register-link">Registrate</span>
+          <p className="mx-auto mt-7 text-center text-sm text-[#5f675c]">
+            ¿No tenés cuenta? <span className="font-bold text-[#254a36] underline underline-offset-[0.18em]">Registrate</span>
           </p>
         </div>
       </section>

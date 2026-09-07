@@ -14,8 +14,9 @@ describe('LoginPage', () => {
     expect(screen.getByText('Ingresá tus datos para continuar')).toBeVisible();
     expect(screen.getByRole('img', { name: /hoja de nutria/i })).toBeVisible();
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
-    expect(document.querySelector('.login-register')).toHaveTextContent('¿No tenés cuenta? Registrate');
-    expect(screen.getByText('Registrate')).toHaveClass('login-register-link');
+    const register = screen.getByText('Registrate');
+    expect(register).toBeVisible();
+    expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(screen.queryByText('Tu bienestar, a tu ritmo')).not.toBeInTheDocument();
     expect(screen.queryByText(/^NutrIA$/)).not.toBeInTheDocument();
     expect(document.querySelector('form')).toBeInTheDocument();
@@ -82,10 +83,16 @@ describe('LoginPage', () => {
     render(<LoginPage />);
 
     const register = screen.getByText('Registrate');
-    expect(register).toHaveClass('login-register-link');
     expect(register.previousSibling?.textContent).toBe('¿No tenés cuenta? ');
     expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(register.parentElement?.childElementCount).toBe(1);
+  });
+
+  it('keeps desktop branding separate from the labelled login region', () => {
+    render(<LoginPage />);
+
+    expect(screen.getByText('Nutrirte bien empieza con elegir con intención.').closest('aside')).toHaveAttribute('aria-hidden', 'true');
+    expect(document.querySelector('form')?.closest('section')).toHaveAttribute('aria-labelledby', 'login-title');
   });
 
   it('clears local email feedback while the person corrects the address', async () => {
