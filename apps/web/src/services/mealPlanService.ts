@@ -45,7 +45,15 @@ export const mealPlanService = {
       if (!data || !Array.isArray(data.days)) {
         throw new Error('La respuesta del servidor no tiene el formato esperado.');
       }
-      return data;
+      // Normaliza `meals` por día: si algún día viene sin el array (o mal formado),
+      // que se comporte como un día sin comidas en vez de romper a quien lo consuma.
+      return {
+        ...data,
+        days: data.days.map((day) => ({
+          ...day,
+          meals: Array.isArray(day.meals) ? day.meals : [],
+        })),
+      };
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return null;
