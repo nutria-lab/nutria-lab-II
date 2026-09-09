@@ -3,7 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '../services/apiClient';
 import { App } from './App';
+
+vi.mock('../services/apiClient', () => ({
+  apiClient: {
+    post: vi.fn(),
+  },
+}));
 
 const loginResponse = {
   id: 'user-1',
@@ -11,6 +18,14 @@ const loginResponse = {
   name: 'Persona',
   createdAt: '2026-09-01T00:00:00.000Z',
   updatedAt: '2026-09-01T00:00:00.000Z',
+};
+
+const registrationResponse = {
+  id: 'user-9',
+  email: 'persona@nutria.com',
+  name: 'Persona',
+  createdAt: '2026-09-09T00:00:00.000Z',
+  updatedAt: '2026-09-09T00:00:00.000Z',
 };
 
 function LocationProbe() {
@@ -51,6 +66,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  vi.clearAllMocks();
 });
 
 beforeEach(() => {
@@ -58,10 +74,9 @@ beforeEach(() => {
 });
 
 describe('App login integration', () => {
-  it('renders registration publicly, keeps it local, and links back to login', async () => {
+  it('registers publicly and navigates to /login after the real API confirms account creation', async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    vi.mocked(apiClient.post).mockResolvedValue({ data: registrationResponse } as never);
     renderAtRegistration();
 
     expect(screen.getByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
@@ -74,9 +89,21 @@ describe('App login integration', () => {
     await user.type(screen.getByLabelText(/confirmá tu contraseña/i), 'secreta');
     fireEvent.submit(document.querySelector('form')!);
 
-    expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('link', { name: /iniciá sesión/i }));
-    expect(screen.getByTestId('location')).toHaveTextContent('/login');
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith(
+      '/auth/register',
+      {
+        name: 'Persona',
+        email: 'persona@nutria.com',
+        password: 'secreta',
+      },
+      expect.objectContaining({
+        skipAuthErrorHandling: true,
+        timeout: expect.any(Number),
+        signal: expect.any(AbortSignal),
+      }),
+    ));
+    expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).not.toHaveProperty('confirmPassword');
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
     expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
   });
 

@@ -1,14 +1,54 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { apiClient } from '../../services/apiClient';
 import { RegistrationPage } from './RegistrationPage';
+
+vi.mock('../../services/apiClient', () => ({
+  apiClient: {
+    post: vi.fn(),
+  },
+}));
+
+const registeredUser = {
+  id: 'user-9',
+  email: 'maria@nutria.com',
+  name: 'María Ñu',
+  createdAt: '2026-09-09T00:00:00.000Z',
+  updatedAt: '2026-09-09T00:00:00.000Z',
+};
+
+const requestConfig = {
+  headers: {},
+} as InternalAxiosRequestConfig;
+
+function httpFailure(status: number) {
+  return new AxiosError(
+    `Request failed with status ${status}`,
+    AxiosError.ERR_BAD_RESPONSE,
+    requestConfig,
+    undefined,
+    {
+      data: { message: 'internal backend detail' },
+      status,
+      statusText: 'Error',
+      headers: {},
+      config: requestConfig,
+    },
+  );
+}
+
+function networkFailure() {
+  return new AxiosError('Network Error', AxiosError.ERR_NETWORK, requestConfig);
+}
 
 afterEach(() => {
   cleanup();
-  vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 function renderRegistration() {
@@ -35,7 +75,7 @@ describe('RegistrationPage', () => {
     renderRegistration();
 
     expect(screen.getByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
-    expect(screen.getByText(/todavía no se creará una cuenta/i)).toBeVisible();
+    expect(screen.queryByText(/todavía no se creará una cuenta/i)).not.toBeInTheDocument();
     expect(getForm()).toHaveAttribute('novalidate');
 
     const name = screen.getByLabelText(/^nombre$/i);
@@ -94,6 +134,7 @@ describe('RegistrationPage', () => {
     expect(screen.getByLabelText(/^contraseña$/i)).toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByLabelText(/confirmá tu contraseña/i)).toHaveAttribute('aria-invalid', 'true');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
   it('validates the password minimum and a confirmation mismatch, then updates feedback while editing', async () => {
@@ -158,68 +199,172 @@ describe('RegistrationPage', () => {
     expect(screen.getByRole('button', { name: /mostrar confirmación de contraseña/i })).toHaveClass('min-h-12');
   });
 
-  it('locks every field and password visibility control during local loading', async () => {
+  it('submits a valid DTO once through the shared client, locks the form, clears secrets, and announces success', async () => {
     const user = userEvent.setup();
+    let resolveRegistration!: (value: unknown) => void;
+    const pendingRegistration = new Promise((resolve) => {
+      resolveRegistration = resolve;
+    });
+    vi.mocked(apiClient.post).mockReturnValue(pendingRegistration as never);
     renderRegistration();
 
     await fillValidRegistration(user);
-    vi.useFakeTimers();
     fireEvent.submit(getForm());
 
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/auth/register',
+      {
+        name: 'María Ñu',
+        email: 'maria@nutria.com',
+        password: 'secreta',
+      },
+      expect.objectContaining({ skipAuthErrorHandling: true }),
+    );
+    expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).not.toHaveProperty('confirmPassword');
+    expect(getForm()).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByLabelText(/^nombre$/i)).toBeDisabled();
     expect(screen.getByLabelText(/correo electrónico/i)).toBeDisabled();
     expect(screen.getByLabelText(/^contraseña$/i)).toBeDisabled();
     expect(screen.getByLabelText(/confirmá tu contraseña/i)).toBeDisabled();
     expect(screen.getByRole('button', { name: /mostrar contraseña$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /mostrar confirmación de contraseña/i })).toBeDisabled();
-    expect(screen.getByRole('link', { name: /iniciá sesión/i })).toBeEnabled();
-  });
-
-  it('uses only local state for a valid submission and exposes loading before local success', async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const storageSetItem = vi.spyOn(Storage.prototype, 'setItem');
-    vi.stubGlobal('fetch', fetchMock);
-    renderRegistration();
-
-    await fillValidRegistration(user);
-    vi.useFakeTimers();
-    fireEvent.submit(getForm());
-
-    expect(getForm()).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByRole('button', { name: /creando cuenta/i })).toBeDisabled();
-    expect(screen.getByLabelText(/^contraseña$/i)).toHaveValue('secreta');
-    fireEvent.submit(getForm());
-    expect(fetchMock).not.toHaveBeenCalled();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
-    });
-
-    expect(screen.getByRole('status')).toHaveTextContent(/todavía no fue creada|sin conexión con la api/i);
+    resolveRegistration({ data: registeredUser });
+    expect(await screen.findByRole('status')).toHaveTextContent('Cuenta creada. Ahora iniciá sesión.');
     expect(screen.getByLabelText(/^contraseña$/i)).toHaveValue('');
     expect(screen.getByLabelText(/confirmá tu contraseña/i)).toHaveValue('');
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(consoleError).not.toHaveBeenCalled();
-    expect(storageSetItem).not.toHaveBeenCalled();
   });
 
-  it('keeps the login link keyboard-operable after local success', async () => {
+  it('normalizes an existing email and backend validation without navigating or exposing raw backend details', async () => {
     const user = userEvent.setup();
+    vi.mocked(apiClient.post).mockRejectedValueOnce(httpFailure(409));
     renderRegistration();
 
     await fillValidRegistration(user);
-    vi.useFakeTimers();
     fireEvent.submit(getForm());
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(300);
-    });
 
-    const login = screen.getByRole('link', { name: /iniciá sesión/i });
-    expect(screen.getByRole('status')).toBeVisible();
-    login.focus();
-    expect(login).toHaveFocus();
-    expect(login).toHaveAttribute('href', '/login');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Ya existe una cuenta con este email.');
+    expect(screen.getByLabelText(/correo electrónico/i)).toHaveAccessibleDescription('Ya existe una cuenta con este email.');
+    expect(screen.queryByText(/internal backend detail/i)).not.toBeInTheDocument();
+
+    cleanup();
+    vi.clearAllMocks();
+    vi.mocked(apiClient.post).mockRejectedValueOnce(httpFailure(400));
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos validar los datos. Revisá los campos e intentá nuevamente.');
+    expect(screen.queryByText(/internal backend detail/i)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a network failure from an unexpected failure and retries only after activation', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.post)
+      .mockRejectedValueOnce(networkFailure())
+      .mockResolvedValueOnce({ data: registeredUser } as never);
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.');
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+    const retry = screen.getByRole('button', { name: /reintentar/i });
+    expect(retry).toBeEnabled();
+
+    await user.click(retry);
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole('status')).toHaveTextContent('Cuenta creada. Ahora iniciá sesión.');
+
+    cleanup();
+    vi.clearAllMocks();
+    vi.mocked(apiClient.post).mockRejectedValueOnce(new Error('unexpected'));
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos crear tu cuenta en este momento. Intentá nuevamente.');
+  });
+
+  it('blocks repeated submit events while a registration request is pending', async () => {
+    const user = userEvent.setup();
+    let resolveRegistration!: (value: unknown) => void;
+    const pendingRegistration = new Promise((resolve) => {
+      resolveRegistration = resolve;
+    });
+    vi.mocked(apiClient.post).mockReturnValue(pendingRegistration as never);
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+    fireEvent.submit(getForm());
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('button', { name: /creando cuenta/i })).toBeDisabled();
+
+    resolveRegistration({ data: registeredUser });
+    expect(await screen.findByRole('status')).toHaveTextContent('Cuenta creada. Ahora iniciá sesión.');
+  });
+
+  it('keeps the submit lock after the request resolves and before the success navigation runs', async () => {
+    const user = userEvent.setup();
+    let resolveRegistration!: (value: unknown) => void;
+    const pendingRegistration = new Promise((resolve) => {
+      resolveRegistration = resolve;
+    });
+    vi.mocked(apiClient.post).mockReturnValue(pendingRegistration as never);
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+
+    resolveRegistration({ data: registeredUser });
+    await pendingRegistration;
+    fireEvent.submit(getForm());
+
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts the pending registration request when the page unmounts', async () => {
+    const user = userEvent.setup();
+    const pendingRegistration = new Promise(() => undefined);
+    vi.mocked(apiClient.post).mockReturnValue(pendingRegistration as never);
+    const registration = renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+
+    const signal = vi.mocked(apiClient.post).mock.calls[0]?.[2]?.signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+
+    registration.unmount();
+
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('does not persist or log form secrets or a registration response', async () => {
+    const user = userEvent.setup();
+    const storageSetItem = vi.spyOn(Storage.prototype, 'setItem');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.mocked(apiClient.post).mockResolvedValue({ data: registeredUser } as never);
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+
+    await screen.findByRole('status');
+    expect(storageSetItem).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(window.location.pathname).not.toContain('clave-de-prueba');
   });
 });
