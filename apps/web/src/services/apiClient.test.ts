@@ -182,3 +182,21 @@ describe('auth failure handler resilience', () => {
     });
   });
 });
+
+describe('already handled auth errors', () => {
+  it('no vuelve a manejar una request cuyo error de autenticación ya fue tratado', async () => {
+    const handler = vi.fn();
+    setAuthFailureHandler(handler);
+
+    await expect(
+      apiClient.get('/protected', {
+        adapter: failingAdapter(401),
+        authErrorHandled: true,
+      }),
+    ).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
