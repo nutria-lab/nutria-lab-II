@@ -1,4 +1,15 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Get, UseGuards, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard, AuthenticatedRequest } from './guards/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { AuthResponseDto } from './dto/auth-response.dto';
@@ -30,6 +41,18 @@ export class AuthController {
       sameSite: 'strict',
       maxAge: 24 * 60 * 60 * 1000, // 1 dia
     });
+
+    return user;
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  async me(@Req() request: AuthenticatedRequest): Promise<AuthResponseDto> {
+    const user = await this.authService.findById(request.user!.sub);
+
+    if (!user) {
+      throw new UnauthorizedException();
+    }
 
     return user;
   }
