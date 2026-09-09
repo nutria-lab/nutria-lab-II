@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LoginPage } from './LoginPage';
 
@@ -14,8 +14,9 @@ describe('LoginPage', () => {
     expect(screen.getByText('Ingresá tus datos para continuar')).toBeVisible();
     expect(screen.getByRole('img', { name: /hoja de nutria/i })).toBeVisible();
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
-    expect(document.querySelector('.login-register')).toHaveTextContent('¿No tenés cuenta? Registrate');
-    expect(screen.getByText('Registrate')).toHaveClass('login-register-link');
+    const register = screen.getByText('Registrate');
+    expect(register).toBeVisible();
+    expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(screen.queryByText('Tu bienestar, a tu ritmo')).not.toBeInTheDocument();
     expect(screen.queryByText(/^NutrIA$/)).not.toBeInTheDocument();
     expect(document.querySelector('form')).toBeInTheDocument();
@@ -82,10 +83,16 @@ describe('LoginPage', () => {
     render(<LoginPage />);
 
     const register = screen.getByText('Registrate');
-    expect(register).toHaveClass('login-register-link');
     expect(register.previousSibling?.textContent).toBe('¿No tenés cuenta? ');
     expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(register.parentElement?.childElementCount).toBe(1);
+  });
+
+  it('keeps desktop branding separate from the labelled login region', () => {
+    render(<LoginPage />);
+
+    expect(screen.getByText('Nutrirte bien empieza con elegir con intención.').closest('aside')).toHaveAttribute('aria-hidden', 'true');
+    expect(document.querySelector('form')?.closest('section')).toHaveAttribute('aria-labelledby', 'login-title');
   });
 
   it('clears local email feedback while the person corrects the address', async () => {
@@ -146,5 +153,33 @@ describe('LoginPage', () => {
     expect(submit).toBeDisabled();
     expect(screen.getByLabelText(/correo/i)).toBeVisible();
     expect(screen.getByLabelText(/^contraseña$/i)).toBeVisible();
+  });
+
+  it('delegates one locally valid submit with only the email and password', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<LoginPage onSubmit={onSubmit} />);
+
+    await user.type(screen.getByLabelText(/correo/i), 'persona@nutria.com');
+    await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
+    await user.click(screen.getByRole('button', { name: 'Iniciá sesión' }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit).toHaveBeenCalledWith({ email: 'persona@nutria.com', password: 'secreta' });
+  });
+
+  it('does not delegate invalid local values or a submit while loading', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    const { rerender } = render(<LoginPage onSubmit={onSubmit} />);
+
+    await user.click(screen.getByRole('button', { name: 'Iniciá sesión' }));
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('Ingresá tu correo electrónico. Ingresá tu contraseña.');
+
+    rerender(<LoginPage status="loading" onSubmit={onSubmit} />);
+    await user.click(screen.getByRole('button', { name: 'Iniciando sesión...' }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
