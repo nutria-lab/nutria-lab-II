@@ -8,7 +8,7 @@ import { Banner } from '../../../common/components/Banner';
 import type { NutritionProfile } from '../../../services/nutritionProfileService';
 
 export function PreferencesPage() {
-  const { profile, status, errorMessage, save } = useNutritionProfile();
+  const { profile, isNewProfile, status, errorMessage, save } = useNutritionProfile();
   const [formState, setFormState] = useState<NutritionProfile | null>(null);
 
   useEffect(() => {
@@ -39,6 +39,11 @@ export function PreferencesPage() {
         <Banner variant="success" message="Tus preferencias se guardaron correctamente" />
       )}
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
+      {status === 'idle' && isNewProfile && (
+        <p className="text-sm text-neutral-500">
+          Todavía no tenés preferencias guardadas — completá el formulario para crear tu perfil.
+        </p>
+      )}
 
       <p className="text-sm text-neutral-600">
         Ajustá tus preferencias para recibir mejores sugerencias.

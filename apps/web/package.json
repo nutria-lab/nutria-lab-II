@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "axios": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest",

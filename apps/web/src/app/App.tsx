@@ -2,8 +2,9 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
+import { LoginPage } from '../features/auth/LoginPage';
 
-export function App() {
+function AppRoutes() {
   return (
     <AppLayout>
       <Routes>
@@ -15,5 +16,14 @@ export function App() {
         <Route path="/goals" element={<PreferencesPage />} />
       </Routes>
     </AppLayout>
+  );
+}
+
+export function App() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/*" element={<AppRoutes />} />
+    </Routes>
   );
 }
