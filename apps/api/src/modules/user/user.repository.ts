@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { User } from '../../generated/prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { User } from '@/generated/prisma/client';
+import { PrismaService } from '@/prisma/prisma.service';
 
 export interface CreateUserData {
   email: string;
