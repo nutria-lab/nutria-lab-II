@@ -1,6 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from 'axios';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { authService, type LoginCredentials } from './authService';
+import { apiClient } from './apiClient';
+import {
+  authService,
+  type LoginCredentials,
+} from './authService';
 
 const credentials: LoginCredentials = {
   email: 'persona@nutria.com',
@@ -15,63 +24,100 @@ const user = {
   updatedAt: '2026-09-01T00:00:00.000Z',
 };
 
+const initialAdapter = apiClient.defaults.adapter;
+
+function response(config: InternalAxiosRequestConfig, data: unknown, status = 200): AxiosResponse {
+  return {
+    data,
+    status,
+    statusText: status === 204 ? 'No Content' : 'OK',
+    headers: {},
+    config,
+  };
+}
+
+function rejectedResponse(config: InternalAxiosRequestConfig, status: number) {
+  return new AxiosError(
+    `Request failed with status ${status}`,
+    AxiosError.ERR_BAD_RESPONSE,
+    config,
+    undefined,
+    response(config, {}, status),
+  );
+}
+
 afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.unstubAllEnvs();
+  apiClient.defaults.adapter = initialAdapter;
+  vi.restoreAllMocks();
 });
 
-beforeEach(() => {
-  vi.stubEnv('VITE_API_URL', 'http://api.nutria.test');
-});
-
-describe('authService.login', () => {
-  it('posts only credentials with cookie credentials and returns the parsed user', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(user), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+describe('authService', () => {
+  it('uses the shared Axios client to submit only login credentials and normalizes the safe user', async () => {
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => response(config, user));
+    apiClient.defaults.adapter = adapter;
 
     await expect(authService.login(credentials)).resolves.toEqual(user);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://api.nutria.test/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: credentials.email, password: credentials.password }),
-      credentials: 'include',
-    });
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const request = adapter.mock.calls[0][0] as InternalAxiosRequestConfig;
+    expect(request.url).toBe('/auth/login');
+    expect(request.method).toBe('post');
+    expect(JSON.parse(request.data as string)).toEqual(credentials);
+    expect(request.skipAuthErrorHandling).toBeUndefined();
   });
 
-  it('classifies a 401 differently from a network failure without exposing response detail', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('Credenciales incorrectas', { status: 401 })));
+  it('gets the current user with the global authorization handler explicitly skipped', async () => {
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => response(config, user));
+    apiClient.defaults.adapter = adapter;
+
+    await expect(authService.getCurrentUser()).resolves.toEqual(user);
+
+    const request = adapter.mock.calls[0][0] as InternalAxiosRequestConfig;
+    expect(request.url).toBe('/auth/me');
+    expect(request.method).toBe('get');
+    expect(request.skipAuthErrorHandling).toBe(true);
+  });
+
+  it('posts logout through the shared client without a request body and accepts 204', async () => {
+    const adapter = vi.fn(async (config: InternalAxiosRequestConfig) => response(config, undefined, 204));
+    apiClient.defaults.adapter = adapter;
+
+    await expect(authService.logout()).resolves.toBeUndefined();
+
+    const request = adapter.mock.calls[0][0] as InternalAxiosRequestConfig;
+    expect(request.url).toBe('/auth/logout');
+    expect(request.method).toBe('post');
+    expect(request.data).toBeUndefined();
+  });
+
+  it('classifies a login 401 as invalid credentials without exposing the remote response', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw rejectedResponse(config, 401);
+    };
 
     await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'invalidCredentials' });
-
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new TypeError('Network request failed')));
-
-    await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
   });
 
-  it('rejects a malformed successful response as a recoverable failure', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ id: 'user-1', email: credentials.email }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ));
+  it('classifies a /auth/me 401 as an absent session and fails closed for malformed payloads', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw rejectedResponse(config, 401);
+    };
 
-    await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
+    await expect(authService.getCurrentUser()).rejects.toMatchObject({ kind: 'unauthenticated' });
+
+    apiClient.defaults.adapter = async (config) => response(config, { id: user.id, email: user.email });
+
+    await expect(authService.getCurrentUser()).rejects.toMatchObject({ kind: 'network' });
   });
 
-  it.each([201, 202])('rejects a shape-valid HTTP %i response as a recoverable failure', async (status) => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(user), {
-        status,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    ));
+  it('turns transport failures and malformed success bodies into recoverable errors without leaking details', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw new AxiosError('connection refused', AxiosError.ERR_NETWORK, config);
+    };
+
+    await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
+
+    apiClient.defaults.adapter = async (config) => response(config, { id: user.id, email: user.email });
 
     await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
   });

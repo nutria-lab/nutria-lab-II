@@ -1,3 +1,7 @@
+import axios from 'axios';
+
+import { apiClient } from './apiClient';
+
 export type LoginCredentials = {
   email: string;
   password: string;
@@ -11,7 +15,7 @@ export type AuthenticatedUser = {
   updatedAt: string;
 };
 
-export type LoginErrorKind = 'invalidCredentials' | 'network';
+export type LoginErrorKind = 'invalidCredentials' | 'network' | 'unauthenticated';
 
 export class LoginRequestError extends Error {
   constructor(public readonly kind: LoginErrorKind) {
@@ -34,53 +38,35 @@ function isAuthenticatedUser(value: unknown): value is AuthenticatedUser {
     && typeof user.updatedAt === 'string';
 }
 
-function loginUrl() {
-  const baseUrl = import.meta.env.VITE_API_URL;
-
-  if (!baseUrl) {
+async function requestUser(
+  request: Promise<{ data: unknown }>,
+  { unauthenticated = false }: { unauthenticated?: boolean } = {},
+) {
+  try {
+    const { data } = await request;
+    if (!isAuthenticatedUser(data)) throw new LoginRequestError('network');
+    return data;
+  } catch (error) {
+    if (error instanceof LoginRequestError) throw error;
+    if (axios.isAxiosError(error) && error.response?.status === 401) {
+      throw new LoginRequestError(unauthenticated ? 'unauthenticated' : 'invalidCredentials');
+    }
     throw new LoginRequestError('network');
   }
-
-  return `${baseUrl.replace(/\/+$/, '')}/auth/login`;
 }
 
 export const authService = {
   async login(credentials: LoginCredentials): Promise<AuthenticatedUser> {
-    let response: Response;
-
+    return requestUser(apiClient.post('/auth/login', credentials));
+  },
+  async getCurrentUser(): Promise<AuthenticatedUser> {
+    return requestUser(apiClient.get('/auth/me', { skipAuthErrorHandling: true }), { unauthenticated: true });
+  },
+  async logout(): Promise<void> {
     try {
-      response = await fetch(loginUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: credentials.email, password: credentials.password }),
-        credentials: 'include',
-      });
-    } catch (error) {
-      if (error instanceof LoginRequestError) {
-        throw error;
-      }
-
-      throw new LoginRequestError('network');
-    }
-
-    if (response.status === 401) {
-      throw new LoginRequestError('invalidCredentials');
-    }
-
-    if (response.status !== 200) {
-      throw new LoginRequestError('network');
-    }
-
-    try {
-      const user: unknown = await response.json();
-
-      if (!isAuthenticatedUser(user)) {
-        throw new LoginRequestError('network');
-      }
-
-      return user;
+      await apiClient.post('/auth/logout');
     } catch {
-      throw new LoginRequestError('network');
+      // Local logout is authoritative.
     }
   },
 };
