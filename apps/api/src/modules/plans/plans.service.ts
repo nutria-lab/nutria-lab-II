@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
-import { GeminiService } from './gemini.service';
+import { GeminiService } from './gemini/gemini.service';
 import { CreateMealPlanDto, MealPlanDayDto } from './dto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -33,19 +33,17 @@ export class PlansService {
 
     const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
     
-    // Validate Gemini response structure
-    const daysDto = plainToInstance(MealPlanDayDto, generatedDays);
-    for (const day of daysDto) {
-      const errors = await validate(day);
-      if (errors.length > 0) {
-        throw new InternalServerErrorException('AI returned an invalid plan structure');
-      }
-    }
+    // Wrap in CreateMealPlanDto and validate full structure
+    const dto = plainToInstance(CreateMealPlanDto, {
+      weekStart: weekStartStr,
+      days: generatedDays
+    });
 
-    // Wrap in CreateMealPlanDto for full validation flow
-    const dto = new CreateMealPlanDto();
-    dto.weekStart = weekStartStr;
-    dto.days = daysDto;
+    const errors = await validate(dto);
+    if (errors.length > 0) {
+      // Documented recoverable failure
+      throw new InternalServerErrorException('AI generated an invalid plan structure that failed domain validation');
+    }
 
     return this.validateAndPersistPlan(userId, dto);
   }

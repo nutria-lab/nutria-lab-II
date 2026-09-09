@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsEnum, IsDateString, IsArray, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsEnum, IsDateString, IsArray, ValidateNested, ArrayMinSize } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DayOfWeek } from '../../../generated/prisma/client';
 import { MealDto } from './meal.dto';
@@ -14,6 +14,7 @@ export class MealPlanDayDto {
 
   @IsNotEmpty()
   @IsArray()
+  @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => MealDto)
   meals!: MealDto[];
