@@ -1,21 +1,28 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LoginPage } from './LoginPage';
 
 afterEach(cleanup);
 
+function renderLogin(ui: ReactElement) {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
+
 describe('LoginPage', () => {
   it('renders the approved Spanish login form with native sign-in semantics', () => {
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.getByText('Ingresá tus datos para continuar')).toBeVisible();
     expect(screen.getByRole('img', { name: /hoja de nutria/i })).toBeVisible();
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
-    const register = screen.getByText('Registrate');
+    const register = screen.getByRole('link', { name: 'Registrate' });
     expect(register).toBeVisible();
+    expect(register).toHaveAttribute('href', '/register');
     expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(screen.queryByText('Tu bienestar, a tu ritmo')).not.toBeInTheDocument();
     expect(screen.queryByText(/^NutrIA$/)).not.toBeInTheDocument();
@@ -38,7 +45,7 @@ describe('LoginPage', () => {
 
   it('lets a person show or hide their password without changing it or blocking paste', async () => {
     const user = userEvent.setup();
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     const password = screen.getByLabelText(/^contraseña$/i);
     await user.type(password, 'secreta');
@@ -59,7 +66,7 @@ describe('LoginPage', () => {
 
   it('keeps an invalid email local and communicates accessible feedback', async () => {
     const user = userEvent.setup();
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     const email = screen.getByLabelText(/correo/i);
     await user.type(email, 'correo-invalido');
@@ -71,7 +78,7 @@ describe('LoginPage', () => {
 
   it('keeps password recovery presentation-only without changing the URL', async () => {
     const user = userEvent.setup();
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     const initialUrl = window.location.href;
     await user.click(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' }));
@@ -79,17 +86,18 @@ describe('LoginPage', () => {
     expect(window.location.href).toBe(initialUrl);
   });
 
-  it('keeps only Registrate as the styleable presentation-only registration text', () => {
-    render(<LoginPage />);
+  it('exposes Registrate as the styleable semantic link to registration', () => {
+    renderLogin(<LoginPage />);
 
-    const register = screen.getByText('Registrate');
+    const register = screen.getByRole('link', { name: 'Registrate' });
     expect(register.previousSibling?.textContent).toBe('¿No tenés cuenta? ');
     expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(register.parentElement?.childElementCount).toBe(1);
+    expect(register).toHaveAttribute('href', '/register');
   });
 
   it('keeps desktop branding separate from the labelled login region', () => {
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     expect(screen.getByText('Nutrirte bien empieza con elegir con intención.').closest('aside')).toHaveAttribute('aria-hidden', 'true');
     expect(document.querySelector('form')?.closest('section')).toHaveAttribute('aria-labelledby', 'login-title');
@@ -97,7 +105,7 @@ describe('LoginPage', () => {
 
   it('clears local email feedback while the person corrects the address', async () => {
     const user = userEvent.setup();
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     const email = screen.getByLabelText(/correo/i);
     await user.type(email, 'correo-invalido');
@@ -116,7 +124,7 @@ describe('LoginPage', () => {
 
   it('clears local password-required feedback while the person corrects the password', async () => {
     const user = userEvent.setup();
-    render(<LoginPage />);
+    renderLogin(<LoginPage />);
 
     const email = screen.getByLabelText(/correo/i);
     const password = screen.getByLabelText(/^contraseña$/i);
@@ -133,7 +141,7 @@ describe('LoginPage', () => {
   });
 
   it('renders invalid credentials as a non-enumerating presentation state without replacing field semantics', () => {
-    render(<LoginPage status="invalidCredentials" />);
+    renderLogin(<LoginPage status="invalidCredentials" />);
 
     expect(screen.getByRole('alert')).toHaveTextContent('El correo o la contraseña no son correctos.');
     expect(screen.getByLabelText(/correo/i)).not.toHaveAttribute('aria-invalid', 'true');
@@ -143,7 +151,7 @@ describe('LoginPage', () => {
   });
 
   it('renders loading as an accessible presentation state that prevents repeated submission', () => {
-    render(<LoginPage status="loading" />);
+    renderLogin(<LoginPage status="loading" />);
 
     const form = document.querySelector('form')!;
     const submit = screen.getByRole('button', { name: 'Iniciando sesión...' });
@@ -158,7 +166,7 @@ describe('LoginPage', () => {
   it('delegates one locally valid submit with only the email and password', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    render(<LoginPage onSubmit={onSubmit} />);
+    renderLogin(<LoginPage onSubmit={onSubmit} />);
 
     await user.type(screen.getByLabelText(/correo/i), 'persona@nutria.com');
     await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
@@ -171,13 +179,13 @@ describe('LoginPage', () => {
   it('does not delegate invalid local values or a submit while loading', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
-    const { rerender } = render(<LoginPage onSubmit={onSubmit} />);
+    const { rerender } = renderLogin(<LoginPage onSubmit={onSubmit} />);
 
     await user.click(screen.getByRole('button', { name: 'Iniciá sesión' }));
     expect(onSubmit).not.toHaveBeenCalled();
     expect(screen.getByRole('alert')).toHaveTextContent('Ingresá tu correo electrónico. Ingresá tu contraseña.');
 
-    rerender(<LoginPage status="loading" onSubmit={onSubmit} />);
+    rerender(<MemoryRouter><LoginPage status="loading" onSubmit={onSubmit} /></MemoryRouter>);
     await user.click(screen.getByRole('button', { name: 'Iniciando sesión...' }));
 
     expect(onSubmit).not.toHaveBeenCalled();

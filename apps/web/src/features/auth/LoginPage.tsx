@@ -1,4 +1,5 @@
 import { type FormEvent, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 import { validateLoginFields, type LoginFieldErrors } from './loginValidation';
 import nutriaIcon from '../../assets/nutria-icon.png';
@@ -217,7 +218,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
           </form>
 
           <p className="mx-auto mt-7 text-center text-sm text-[#5f675c]">
-            ¿No tenés cuenta? <span className="font-bold text-[#254a36] underline underline-offset-[0.18em]">Registrate</span>
+            ¿No tenés cuenta? <Link className="font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/register">Registrate</Link>
           </p>
         </div>
       </section>

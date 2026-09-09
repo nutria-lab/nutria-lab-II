@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
+import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
 import { authService, LoginRequestError } from '../services/authService';
 
@@ -66,6 +67,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route path="/register" element={<RegistrationPage />} />
       <Route
         path="*"
         element={(
