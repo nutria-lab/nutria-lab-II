@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GeneratedMealPlanDay } from './gemini.service';
-import { MealPlan } from '../../generated/prisma/client';
+import { MealPlanDayDto } from './dto';
 
 @Injectable()
 export class PlansRepository {
@@ -47,17 +46,27 @@ export class PlansRepository {
 
       // 2. Borrar las recetas huérfanas pasadas por el servicio
       if (recipeIds.length > 0) {
-        await tx.recipe.deleteMany({
-          where: { id: { in: recipeIds } }
+        const inUseRecipes = await tx.plannedMeal.findMany({
+          where: { recipeId: { in: recipeIds } },
+          select: { recipeId: true }
         });
+        const inUseSet = new Set(inUseRecipes.map(r => r.recipeId));
+        const toDelete = recipeIds.filter(id => id && !inUseSet.has(id)) as string[];
+
+        if (toDelete.length > 0) {
+          await tx.recipe.deleteMany({
+            where: { id: { in: toDelete } }
+          });
+        }
       }
 
       return deletedPlan;
     });
   }
 
-  async createPlanTransaction(userId: string, weekStart: Date, generatedDays: GeneratedMealPlanDay[]) {
-    return this.prisma.$transaction(async (tx) => {
+  async createPlanTransaction(userId: string, weekStart: Date, generatedDays: MealPlanDayDto[], txClient?: any) {
+    const client = txClient || this.prisma;
+    return client.$transaction(async (tx: any) => {
       const plan = await tx.mealPlan.create({
         data: {
           userId,
@@ -97,6 +106,35 @@ export class PlansRepository {
         }
       }
       return plan.id;
+    });
+  }
+
+  async updatePlanTransaction(planId: string, recipeIds: string[], userId: string, weekStart: Date, newDays: MealPlanDayDto[]) {
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Delete old plan inside this transaction
+      await tx.mealPlan.delete({
+        where: { id: planId }
+      });
+
+      if (recipeIds.length > 0) {
+        const inUseRecipes = await tx.plannedMeal.findMany({
+          where: { recipeId: { in: recipeIds } },
+          select: { recipeId: true }
+        });
+        const inUseSet = new Set(inUseRecipes.map(r => r.recipeId));
+        const toDelete = recipeIds.filter(id => id && !inUseSet.has(id)) as string[];
+
+        if (toDelete.length > 0) {
+          await tx.recipe.deleteMany({
+            where: { id: { in: toDelete } }
+          });
+        }
+      }
+
+      // 2. Create the new plan
+      await this.createPlanTransaction(userId, weekStart, newDays, tx);
+      
+      return true;
     });
   }
 }

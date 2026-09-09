@@ -50,19 +50,26 @@ export class GeminiService {
       4. Los días deben ser desde el día 1 al día 7 de la semana solicitada.
     `;
 
-    try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new RequestTimeoutException('AI generation timed out')), 15000)
-      );
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, 15000);
 
-      const aiPromise = model.generateContent(prompt);
-      const result: any = await Promise.race([aiPromise, timeoutPromise]);
+    try {
+      const result = await model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] }, 
+        { requestOptions: { signal: abortController.signal } } as any
+      );
       
+      clearTimeout(timeoutId);
       const text = result.response.text();
       const parsed = JSON.parse(text);
       return parsed.days as GeneratedMealPlanDay[];
-    } catch (error) {
-      if (error instanceof RequestTimeoutException) throw error;
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new RequestTimeoutException('AI generation timed out');
+      }
       throw new InternalServerErrorException('Error generating AI plan');
     }
   }

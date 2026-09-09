@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PlansController } from '../plans.controller';
 import { PlansService } from '../plans.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
-import { PlanDto } from '../dto/plan.dto';
+import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto } from '../dto';
 
 describe('PlansController', () => {
   let controller: PlansController;
@@ -11,7 +11,7 @@ describe('PlansController', () => {
   beforeEach(async () => {
     const mockService = {
       generateAndPersistPlan: jest.fn(),
-      generateAndPersistPredefinedPlan: jest.fn(),
+      validateAndPersistPlan: jest.fn(),
       getPlanByWeek: jest.fn(),
       updatePlan: jest.fn(),
       deletePlan: jest.fn(),
@@ -41,7 +41,7 @@ describe('PlansController', () => {
   describe('generatePlan', () => {
     it('should call generateAndPersistPlan with userId and weekStart', async () => {
       const req = { user: { sub: 'user-123' } };
-      const dto: PlanDto = { weekStart: '2026-09-07' };
+      const dto: GenerateMealPlanDto = { weekStart: '2026-09-07' };
       const expectedPlan = { id: 'plan-1' };
       
       service.generateAndPersistPlan.mockResolvedValue(expectedPlan as any);
@@ -49,44 +49,44 @@ describe('PlansController', () => {
       const result = await controller.generatePlan(req, dto);
 
       expect(result).toEqual(expectedPlan);
-      expect(service.generateAndPersistPlan).toHaveBeenCalledWith('user-123', new Date('2026-09-07'));
+      expect(service.generateAndPersistPlan).toHaveBeenCalledWith('user-123', '2026-09-07');
     });
   });
 
-  describe('generatePredefinedPlan', () => {
-    it('should call generateAndPersistPredefinedPlan with userId and weekStart', async () => {
+  describe('createPlan', () => {
+    it('should call validateAndPersistPlan with userId and full DTO', async () => {
       const req = { user: { sub: 'user-123' } };
-      const dto: PlanDto = { weekStart: '2026-09-07' };
-      const expectedPlan = { id: 'plan-2' };
+      const dto: CreateMealPlanDto = { weekStart: '2026-09-07', days: [] };
+      const expectedPlan = { id: 'plan-new' };
       
-      service.generateAndPersistPredefinedPlan.mockResolvedValue(expectedPlan as any);
+      service.validateAndPersistPlan.mockResolvedValue(expectedPlan as any);
 
-      const result = await controller.generatePredefinedPlan(req, dto);
+      const result = await controller.createPlan(req, dto);
 
       expect(result).toEqual(expectedPlan);
-      expect(service.generateAndPersistPredefinedPlan).toHaveBeenCalledWith('user-123', new Date('2026-09-07'));
+      expect(service.validateAndPersistPlan).toHaveBeenCalledWith('user-123', dto);
     });
   });
 
   describe('getCurrentPlan', () => {
     it('should call getPlanByWeek with userId and weekStart', async () => {
       const req = { user: { sub: 'user-123' } };
-      const weekStart = '2026-09-07';
+      const query: MealPlanQueryDto = { weekStart: '2026-09-07' };
       const expectedPlan = { id: 'plan-3' };
       
       service.getPlanByWeek.mockResolvedValue(expectedPlan as any);
 
-      const result = await controller.getCurrentPlan(req, weekStart);
+      const result = await controller.getCurrentPlan(req, query);
 
       expect(result).toEqual(expectedPlan);
-      expect(service.getPlanByWeek).toHaveBeenCalledWith('user-123', new Date('2026-09-07'));
+      expect(service.getPlanByWeek).toHaveBeenCalledWith('user-123', '2026-09-07');
     });
   });
 
   describe('updatePlan', () => {
-    it('should call updatePlan with userId and weekStart', async () => {
+    it('should call updatePlan with userId and full DTO', async () => {
       const req = { user: { sub: 'user-123' } };
-      const dto: PlanDto = { weekStart: '2026-09-07' };
+      const dto: CreateMealPlanDto = { weekStart: '2026-09-07', days: [] };
       const expectedPlan = { id: 'plan-4' };
       
       service.updatePlan.mockResolvedValue(expectedPlan as any);
@@ -94,22 +94,22 @@ describe('PlansController', () => {
       const result = await controller.updatePlan(req, dto);
 
       expect(result).toEqual(expectedPlan);
-      expect(service.updatePlan).toHaveBeenCalledWith('user-123', new Date('2026-09-07'));
+      expect(service.updatePlan).toHaveBeenCalledWith('user-123', dto);
     });
   });
 
   describe('deletePlan', () => {
     it('should call deletePlan with userId and weekStart', async () => {
       const req = { user: { sub: 'user-123' } };
-      const weekStart = '2026-09-07';
+      const query: MealPlanQueryDto = { weekStart: '2026-09-07' };
       const expectedPlan = { id: 'plan-5' };
       
       service.deletePlan.mockResolvedValue(expectedPlan as any);
 
-      const result = await controller.deletePlan(req, weekStart);
+      const result = await controller.deletePlan(req, query);
 
       expect(result).toEqual(expectedPlan);
-      expect(service.deletePlan).toHaveBeenCalledWith('user-123', new Date('2026-09-07'));
+      expect(service.deletePlan).toHaveBeenCalledWith('user-123', '2026-09-07');
     });
   });
 });

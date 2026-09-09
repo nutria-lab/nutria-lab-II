@@ -1,6 +1,6 @@
 import { Controller, Post, Get, Put, Delete, Body, Query, Req, UseGuards, HttpCode } from '@nestjs/common';
 import { PlansService } from './plans.service';
-import { PlanDto } from './dto/plan.dto';
+import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto } from './dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
@@ -10,33 +10,33 @@ export class PlansController {
 
   @Post('generate')
   @HttpCode(201)
-  async generatePlan(@Req() req: any, @Body() dto: PlanDto) {
+  async generatePlan(@Req() req: any, @Body() dto: GenerateMealPlanDto) {
     const userId = req.user.sub;
-    return this.plansService.generateAndPersistPlan(userId, new Date(dto.weekStart));
+    return this.plansService.generateAndPersistPlan(userId, dto.weekStart);
   }
 
-  @Post('generate-predefined')
+  @Post()
   @HttpCode(201)
-  async generatePredefinedPlan(@Req() req: any, @Body() dto: PlanDto) {
+  async createPlan(@Req() req: any, @Body() dto: CreateMealPlanDto) {
     const userId = req.user.sub;
-    return this.plansService.generateAndPersistPredefinedPlan(userId, new Date(dto.weekStart));
+    return this.plansService.validateAndPersistPlan(userId, dto);
   }
 
   @Get('current')
-  async getCurrentPlan(@Req() req: any, @Query('weekStart') weekStart: string) {
+  async getCurrentPlan(@Req() req: any, @Query() query: MealPlanQueryDto) {
     const userId = req.user.sub;
-    return this.plansService.getPlanByWeek(userId, new Date(weekStart));
+    return this.plansService.getPlanByWeek(userId, query.weekStart);
   }
 
   @Put()
-  async updatePlan(@Req() req: any, @Body() dto: PlanDto) {
+  async updatePlan(@Req() req: any, @Body() dto: CreateMealPlanDto) {
     const userId = req.user.sub;
-    return this.plansService.updatePlan(userId, new Date(dto.weekStart));
+    return this.plansService.updatePlan(userId, dto);
   }
 
   @Delete()
-  async deletePlan(@Req() req: any, @Query('weekStart') weekStart: string){
+  async deletePlan(@Req() req: any, @Query() query: MealPlanQueryDto){
     const userId = req.user.sub;
-    return this.plansService.deletePlan(userId, new Date(weekStart));
+    return this.plansService.deletePlan(userId, query.weekStart);
   }
 }

@@ -1,6 +1,6 @@
 import { IsDateString, IsNotEmpty } from 'class-validator';
 
-export class PlanDto {
+export class GenerateMealPlanDto {
   @IsNotEmpty()
   @IsDateString()
   weekStart!: string;

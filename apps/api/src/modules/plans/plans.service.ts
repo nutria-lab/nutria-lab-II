@@ -1,7 +1,10 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
-import { GeminiService, GeneratedMealPlanDay } from './gemini.service';
-import { DayOfWeek, MealType } from '../../generated/prisma/client';
+import { GeminiService } from './gemini.service';
+import { CreateMealPlanDto, MealPlanDayDto } from './dto';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+import { NutritionProfile } from '../../generated/prisma/client';
 
 @Injectable()
 export class PlansService {
@@ -10,8 +13,45 @@ export class PlansService {
     private readonly gemini: GeminiService
   ) {}
 
-  async generateAndPersistPlan(userId: string, weekStart: Date) {
-    weekStart.setHours(0, 0, 0, 0);
+  private parseDateString(dateStr: string): Date {
+    // Treat as UTC to avoid timezone shift
+    return new Date(`${dateStr}T00:00:00Z`);
+  }
+
+  async generateAndPersistPlan(userId: string, weekStartStr: string) {
+    const weekStart = this.parseDateString(weekStartStr);
+
+    const user = await this.repository.getUserWithProfile(userId);
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.nutritionProfile) throw new BadRequestException('User needs a nutrition profile');
+
+    const exists = await this.repository.checkPlanExists(userId, weekStart);
+    if (exists) {
+      // Idempotency: Return existing plan if already generated
+      return this.getPlanByWeek(userId, weekStartStr);
+    }
+
+    const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
+    
+    // Validate Gemini response structure
+    const daysDto = plainToInstance(MealPlanDayDto, generatedDays);
+    for (const day of daysDto) {
+      const errors = await validate(day);
+      if (errors.length > 0) {
+        throw new InternalServerErrorException('AI returned an invalid plan structure');
+      }
+    }
+
+    // Wrap in CreateMealPlanDto for full validation flow
+    const dto = new CreateMealPlanDto();
+    dto.weekStart = weekStartStr;
+    dto.days = daysDto;
+
+    return this.validateAndPersistPlan(userId, dto);
+  }
+
+  async validateAndPersistPlan(userId: string, dto: CreateMealPlanDto) {
+    const weekStart = this.parseDateString(dto.weekStart);
 
     const user = await this.repository.getUserWithProfile(userId);
     if (!user) throw new NotFoundException('User not found');
@@ -20,30 +60,16 @@ export class PlansService {
     const exists = await this.repository.checkPlanExists(userId, weekStart);
     if (exists) throw new BadRequestException('A plan for this week already exists');
 
-    const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
-    this.validateGeneratedPlan(generatedDays, user.nutritionProfile);
+    this.validateRestrictions(dto.days, user.nutritionProfile);
 
-    await this.repository.createPlanTransaction(userId, weekStart, generatedDays);
-    return this.getPlanByWeek(userId, weekStart);
+    await this.repository.createPlanTransaction(userId, weekStart, dto.days);
+    return this.getPlanByWeek(userId, dto.weekStart);
   }
 
-  async generateAndPersistPredefinedPlan(userId: string, weekStart: Date) {
-    // Normalizar a inicio del día
-    weekStart.setHours(0, 0, 0, 0);
+  async deletePlan(userId: string, weekStartStr: string){
+    const weekStart = this.parseDateString(weekStartStr);
+    const plan = await this.getPlanByWeek(userId, weekStartStr);
 
-    const exists = await this.repository.checkPlanExists(userId, weekStart);
-    if (exists) throw new BadRequestException('A plan for this week already exists');
-
-    const predefinedDays = this.getPredefinedTemplate(weekStart);
-
-    await this.repository.createPlanTransaction(userId, weekStart, predefinedDays);
-    return this.getPlanByWeek(userId, weekStart);
-  }
-
-  async deletePlan(userId: string, weekStart: Date){
-    const plan = await this.getPlanByWeek(userId, weekStart);
-
-    // Lógica de negocio: Identificamos todas las recetas que quedarán huérfanas
     const recipeIds: string[] = [];
     for (const day of plan.days || []) {
       for (const meal of day.meals || []) {
@@ -56,9 +82,8 @@ export class PlansService {
     return this.repository.deletePlanTransaction(plan.id, recipeIds);
   }
 
-  async updatePlan(userId: string, weekStart: Date) {
-    // Normalizar
-    weekStart.setHours(0, 0, 0, 0);
+  async updatePlan(userId: string, dto: CreateMealPlanDto) {
+    const weekStart = this.parseDateString(dto.weekStart);
 
     const user = await this.repository.getUserWithProfile(userId);
     if (!user) throw new NotFoundException('User not found');
@@ -67,85 +92,63 @@ export class PlansService {
     const plan = await this.repository.findPlanByWeek(userId, weekStart);
     if (!plan) throw new NotFoundException('Plan not found to update');
 
-    // Generar el plan con Gemini de nuevo
-    const generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
-    this.validateGeneratedPlan(generatedDays, user.nutritionProfile);
+    this.validateRestrictions(dto.days, user.nutritionProfile);
 
-    await this.deletePlan(userId, weekStart);
+    const recipeIds: string[] = [];
+    for (const day of plan.days || []) {
+      for (const meal of day.meals || []) {
+        if (meal.recipeId) {
+          recipeIds.push(meal.recipeId);
+        }
+      }
+    }
 
-    await this.repository.createPlanTransaction(userId, weekStart, generatedDays);
+    await this.repository.updatePlanTransaction(plan.id, recipeIds, userId, weekStart, dto.days);
 
-    return this.getPlanByWeek(userId, weekStart);
+    return this.getPlanByWeek(userId, dto.weekStart);
   }
 
-  async getPlanByWeek(userId: string, weekStart: Date) {
-    weekStart.setHours(0, 0, 0, 0);
+  async getPlanByWeek(userId: string, weekStartStr: string) {
+    const weekStart = this.parseDateString(weekStartStr);
     const plan = await this.repository.findPlanByWeek(userId, weekStart);
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
     return plan;
   }
 
-  // Funcion para validar que los planes se generen bien
-  private validateGeneratedPlan(generatedDays: GeneratedMealPlanDay[], profile: any) {
-    if (!generatedDays || generatedDays.length === 0) {
-      throw new BadRequestException('AI returned an empty plan');
+  private validateRestrictions(days: MealPlanDayDto[], profile: NutritionProfile) {
+    if (!days || days.length !== 7) {
+      throw new BadRequestException(`Plan must have exactly 7 days`);
     }
 
-    if (generatedDays.length !== 7) {
-      throw new BadRequestException(`AI returned ${generatedDays.length} days instead of 7`);
-    }
+    const excluded = Array.isArray(profile.excludedIngredients) 
+      ? profile.excludedIngredients 
+      : [];
+    const forbidden = excluded.map(String).map(r => r.toLowerCase());
 
-    const forbidden = profile.excludedIngredients.map((r: string) => r.toLowerCase());
-    
-    for (const day of generatedDays) {
+    for (const day of days) {
       if (!day.meals || day.meals.length === 0) {
-        throw new BadRequestException(`AI generated an empty meal list for day ${day.day}`);
+        throw new BadRequestException(`Empty meal list for day ${day.day}`);
       }
 
       for (const meal of day.meals) {
-        const textToCheck = `${meal.title} ${meal.recipe?.steps.join(' ') || ''}`.toLowerCase();
+        // Build a comprehensive string to check: title, description, steps
+        const textParts = [
+          meal.title,
+          meal.nutritionalValues?.Description || '',
+          ...(meal.recipe?.steps || [])
+        ];
+        
+        const textToCheck = textParts.join(' ').toLowerCase();
         
         for (const restriction of forbidden) {
-          if (textToCheck.includes(restriction)) {
-            throw new BadRequestException(`AI generated a meal containing an excluded ingredient: ${restriction}`);
+          // Check for exact word matches or close substrings
+          const regex = new RegExp(`\\b${restriction}\\b`, 'i');
+          if (regex.test(textToCheck) || textToCheck.includes(restriction)) {
+            throw new BadRequestException(`Meal '${meal.title}' contains excluded ingredient/concept: ${restriction}`);
           }
         }
       }
     }
-  }
-
-  private getPredefinedTemplate(weekStart: Date): GeneratedMealPlanDay[] {
-    const days: DayOfWeek[] = [
-      DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
-      DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY
-    ];
-    
-    return days.map((dayName, index) => {
-      const date = new Date(weekStart);
-      date.setDate(date.getDate() + index);
-
-      return {
-        day: dayName,
-        date: date.toISOString().split('T')[0],
-        meals: [
-          {
-            mealType: MealType.BREAKFAST,
-            title: 'Avena Clásica',
-            nutritionalValues: { Protein: 10, Fiber: 5, Calories: 300, Description: 'Avena con leche y miel' },
-          },
-          {
-            mealType: MealType.LUNCH,
-            title: 'Pollo con Arroz',
-            nutritionalValues: { Protein: 30, Fiber: 2, Calories: 500, Description: 'Pechuga a la plancha' },
-          },
-          {
-            mealType: MealType.DINNER,
-            title: 'Ensalada Mixta',
-            nutritionalValues: { Protein: 10, Fiber: 8, Calories: 250, Description: 'Vegetales frescos' },
-          }
-        ]
-      };
-    });
   }
 }
