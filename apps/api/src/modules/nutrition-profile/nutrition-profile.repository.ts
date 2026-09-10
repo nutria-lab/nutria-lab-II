@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
-import { NutritionProfile } from '../../generated/prisma/client';
-import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PrismaService } from '@/prisma/prisma.service';
+import { NutritionProfile } from '@/generated/prisma/client';
+import { UpdateProfileDto } from '@/modules/nutrition-profile/dto/update-profile.dto';
 
 @Injectable()
 export class NutritionProfileRepository {
