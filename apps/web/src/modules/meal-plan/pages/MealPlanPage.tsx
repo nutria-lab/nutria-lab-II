@@ -7,7 +7,11 @@ import { formatFullDate, formatLocalDateKey, formatWeekRange } from '../utils';
 
 function LoadingSkeleton() {
   return (
-    <div className="mx-auto max-w-md animate-pulse space-y-6 px-4 py-6" aria-busy="true" aria-live="polite">
+    <div
+      className="mx-auto max-w-3xl animate-pulse space-y-6 px-4 py-6 md:px-8"
+      aria-busy="true"
+      aria-live="polite"
+    >
       <div className="space-y-2">
         <div className="h-7 w-40 rounded bg-brand-cream-dark" />
         <div className="h-4 w-52 rounded bg-brand-cream-dark" />
@@ -29,7 +33,7 @@ function LoadingSkeleton() {
 
 function EmptyState() {
   return (
-    <div className="mx-auto max-w-md px-4 py-10 text-center">
+    <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
       <p className="font-serif text-lg font-semibold text-neutral-900">
         Todavía no tenés un plan para esta semana
       </p>
@@ -48,7 +52,7 @@ function EmptyState() {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="mx-auto max-w-md px-4 py-10 text-center">
+    <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
       <p className="font-serif text-lg font-semibold text-neutral-900">Algo salió mal</p>
       <p className="mt-2 text-sm text-neutral-500">{message}</p>
       <button
@@ -93,7 +97,7 @@ export function MealPlanPage() {
   const selectedDay = mealPlan.days.find((day) => day.date === selectedDate);
 
   return (
-    <main className="mx-auto max-w-md space-y-6 px-4 py-6">
+    <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-8">
       <div>
         <h1 className="font-serif text-2xl font-bold text-neutral-900">Tu plan semanal</h1>
         <p className="text-sm text-neutral-500">{formatWeekRange(mealPlan.days)}</p>
