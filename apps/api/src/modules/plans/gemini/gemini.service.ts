@@ -11,7 +11,14 @@ export interface GeneratedMealPlanDay {
     mealType: MealType;
     title: string;
     nutritionalValues: { Protein: number; Fiber: number; Calories: number; Description: string };
-    recipe?: { prepMinutes: number; cookMinutes: number; steps: string[] };
+    recipe?: {
+      title: string;
+      description: string;
+      prepMinutes: number;
+      cookMinutes: number;
+      ingredients: Array<{ name: string; quantity: number | string; unit: string }>;
+      instructions: string;
+    };
   }>;
 }
 

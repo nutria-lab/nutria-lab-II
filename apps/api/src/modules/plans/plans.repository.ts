@@ -86,9 +86,12 @@ export class PlansRepository {
           if (meal.recipe) {
             const recipe = await tx.recipe.create({
               data: {
-                prepMinutes: meal.recipe.prepMinutes || 0,
-                cookMinutes: meal.recipe.cookMinutes || 0,
-                steps: meal.recipe.steps || [],
+                title: meal.recipe.title,
+                description: meal.recipe.description,
+                prepMinutes: meal.recipe.prepMinutes,
+                cookMinutes: meal.recipe.cookMinutes,
+                ingredients: meal.recipe.ingredients as any,
+                steps: meal.recipe.instructions ? [meal.recipe.instructions] : [],
               }
             });
             recipeId = recipe.id;
@@ -99,7 +102,7 @@ export class PlansRepository {
               dayId: mealPlanDay.id,
               mealType: meal.mealType,
               title: meal.title,
-              nutritionalValues: meal.nutritionalValues || {},
+              nutritionalValues: meal.nutritionalValues,
               recipeId,
             }
           });

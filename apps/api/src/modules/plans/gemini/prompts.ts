@@ -59,12 +59,22 @@ export const PROMPT_VERSIONS = {
                       recipe: {
                         type: SchemaType.OBJECT,
                         properties: {
+                          title: { type: SchemaType.STRING },
+                          description: { type: SchemaType.STRING },
                           prepMinutes: { type: SchemaType.INTEGER },
                           cookMinutes: { type: SchemaType.INTEGER },
-                          steps: {
+                          ingredients: {
                             type: SchemaType.ARRAY,
-                            items: { type: SchemaType.STRING },
+                            items: {
+                              type: SchemaType.OBJECT,
+                              properties: {
+                                name: { type: SchemaType.STRING },
+                                quantity: { type: SchemaType.STRING },
+                                unit: { type: SchemaType.STRING },
+                              },
+                            },
                           },
+                          instructions: { type: SchemaType.STRING },
                         },
                       },
                     },

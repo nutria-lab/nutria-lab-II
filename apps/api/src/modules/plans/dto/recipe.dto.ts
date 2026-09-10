@@ -1,16 +1,45 @@
-import { IsNumber, IsOptional, IsArray, IsString } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsNotEmpty, ValidateNested, Min, ArrayMinSize } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class IngredientDto {
+  @IsNotEmpty()
+  @IsString()
+  name!: string;
+
+  // El contrato acepta número o string porque Gemini puede devolver "1/2" o 0.5.
+  // El campo NO se normaliza a un tipo fijo para no perder información.
+  @IsNotEmpty()
+  quantity!: number | string;
+
+  @IsNotEmpty()
+  @IsString()
+  unit!: string;
+}
 
 export class RecipeDto {
-  @IsOptional()
-  @IsNumber()
-  prepMinutes?: number;
+  @IsNotEmpty()
+  @IsString()
+  title!: string;
 
-  @IsOptional()
-  @IsNumber()
-  cookMinutes?: number;
+  @IsNotEmpty()
+  @IsString()
+  description!: string;
 
-  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  prepMinutes!: number;
+
+  @IsNumber()
+  @Min(0)
+  cookMinutes!: number;
+
   @IsArray()
-  @IsString({ each: true })
-  steps?: string[];
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => IngredientDto)
+  ingredients!: IngredientDto[];
+
+  @IsNotEmpty()
+  @IsString()
+  instructions!: string;
 }

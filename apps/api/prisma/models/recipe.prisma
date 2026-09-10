@@ -1,7 +1,10 @@
 model Recipe {
   id           String             @id @default(uuid())
+  title        String
+  description  String?
   prepMinutes  Int
   cookMinutes  Int
+  ingredients  Json?
   steps        String[]
 
   createdAt    DateTime           @default(now())

@@ -1,19 +1,19 @@
-import { IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsNumber, IsNotEmpty, IsString, Min } from 'class-validator';
 
 export class NutritionalValuesDto {
-  @IsOptional()
   @IsNumber()
-  Protein?: number;
+  @Min(0)
+  Protein!: number;
 
-  @IsOptional()
   @IsNumber()
-  Fiber?: number;
+  @Min(0)
+  Fiber!: number;
 
-  @IsOptional()
   @IsNumber()
-  Calories?: number;
+  @Min(0)
+  Calories!: number;
 
-  @IsOptional()
+  @IsNotEmpty()
   @IsString()
-  Description?: string;
+  Description!: string;
 }

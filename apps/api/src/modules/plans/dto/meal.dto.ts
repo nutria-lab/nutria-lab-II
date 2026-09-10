@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsEnum, IsString, IsOptional, ValidateNested } from 'class-validator';
+import { IsNotEmpty, IsEnum, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MealType } from '../../../generated/prisma/client';
 import { NutritionalValuesDto } from './nutritional-values.dto';
@@ -13,13 +13,15 @@ export class MealDto {
   @IsString()
   title!: string;
 
-  @IsOptional()
+  // nutritionalValues es obligatorio: una comida sin macros no es un dato válido.
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => NutritionalValuesDto)
-  nutritionalValues?: NutritionalValuesDto;
+  nutritionalValues!: NutritionalValuesDto;
 
-  @IsOptional()
+  // recipe es obligatorio: cada comida en el contrato incluye receta.
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => RecipeDto)
-  recipe?: RecipeDto;
+  recipe!: RecipeDto;
 }

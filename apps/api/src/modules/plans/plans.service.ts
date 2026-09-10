@@ -130,11 +130,12 @@ export class PlansService {
       }
 
       for (const meal of day.meals) {
-        // Build a comprehensive string to check: title, description, steps
+        // Usamos los nombres de ingredientes estructurados para validar restricciones
+        const ingredientNames = meal.recipe?.ingredients?.map(i => i.name) || [];
         const textParts = [
           meal.title,
           meal.nutritionalValues?.Description || '',
-          ...(meal.recipe?.steps || [])
+          ...ingredientNames
         ];
         
         const textToCheck = textParts.join(' ').toLowerCase();
