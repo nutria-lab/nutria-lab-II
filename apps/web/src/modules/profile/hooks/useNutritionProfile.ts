@@ -31,7 +31,10 @@ export function useNutritionProfile() {
   const [status, setStatus] = useState<Status>('loading');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setStatus('loading');
+    setErrorMessage(null);
+
     nutritionProfileService
       .getProfile()
       .then((data) => {
@@ -55,6 +58,10 @@ export function useNutritionProfile() {
       });
   }, []);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   const save = useCallback(async (next: NutritionProfile) => {
     const validationError = validateProfile(next);
     if (validationError) {
@@ -77,5 +84,5 @@ export function useNutritionProfile() {
     }
   }, []);
 
-  return { profile, isNewProfile, status, errorMessage, save };
+  return { profile, isNewProfile, status, errorMessage, save, retry: load };
 }

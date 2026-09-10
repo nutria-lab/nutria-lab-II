@@ -56,6 +56,23 @@ describe('useNutritionProfile', () => {
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
+  it('recovers via retry() after a failed initial load', async () => {
+    vi.mocked(nutritionProfileService.getProfile)
+      .mockRejectedValueOnce(new Error('network error'))
+      .mockResolvedValueOnce(sampleProfile);
+
+    const { result } = renderHook(() => useNutritionProfile());
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.profile).toBeNull();
+
+    act(() => {
+      result.current.retry();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('idle'));
+    expect(result.current.profile).toEqual(sampleProfile);
+  });
+
   it('rejects saving with duplicate excluded ingredients before calling the API', async () => {
     vi.mocked(nutritionProfileService.getProfile).mockResolvedValue(sampleProfile);
     const { result } = renderHook(() => useNutritionProfile());
