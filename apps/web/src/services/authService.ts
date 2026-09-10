@@ -20,6 +20,24 @@ export class LoginRequestError extends Error {
   }
 }
 
+// El token de sesión vive en una cookie httpOnly (no legible desde JS, a
+// propósito, por seguridad). Este flag NO es el token — es solo una señal
+// local de "hubo un login exitoso", para que las rutas privadas puedan
+// decidir sin depender de que una request falle primero.
+const AUTH_FLAG_KEY = 'nutria:isAuthenticated';
+
+export function markAuthenticated() {
+  localStorage.setItem(AUTH_FLAG_KEY, 'true');
+}
+
+export function clearAuthenticated() {
+  localStorage.removeItem(AUTH_FLAG_KEY);
+}
+
+export function isAuthenticated(): boolean {
+  return localStorage.getItem(AUTH_FLAG_KEY) === 'true';
+}
+
 function isAuthenticatedUser(value: unknown): value is AuthenticatedUser {
   if (!value || typeof value !== 'object') {
     return false;
@@ -78,6 +96,7 @@ export const authService = {
         throw new LoginRequestError('network');
       }
 
+      markAuthenticated();
       return user;
     } catch {
       throw new LoginRequestError('network');
