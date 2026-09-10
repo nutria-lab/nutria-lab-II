@@ -1,7 +1,7 @@
 import { Controller, Get, Put, Body, Req, UseGuards, HttpCode } from '@nestjs/common';
-import { NutritionProfileService } from './nutrition-profile.service';
-import { UpdateProfileDto } from './dto/update-profile.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { NutritionProfileService } from '@/modules/nutrition-profile/nutrition-profile.service';
+import { UpdateProfileDto } from '@/modules/nutrition-profile/dto/update-profile.dto';
+import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 
 @UseGuards(JwtAuthGuard)
 @Controller('nutrition-profile')

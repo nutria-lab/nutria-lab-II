@@ -1,10 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NutritionProfileController } from '../nutrition-profile.controller';
-import { NutritionProfileService } from '../nutrition-profile.service';
+import { NutritionProfileController } from '@/modules/nutrition-profile/nutrition-profile.controller';
+import { NutritionProfileService } from '@/modules/nutrition-profile/nutrition-profile.service';
 import { NotFoundException } from '@nestjs/common';
-import { UpdateProfileDto } from '../dto/update-profile.dto';
-import { NutritionGoal, Diet, CookTimePreference, DietaryRestriction } from '../../../generated/prisma/client';
-import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { UpdateProfileDto } from '@/modules/nutrition-profile/dto/update-profile.dto';
+import { NutritionGoal, Diet, CookTimePreference, DietaryRestriction } from '@/generated/prisma/client';
+import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 

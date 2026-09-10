@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { AuthController } from '../auth.controller';
-import { AuthService } from '../auth.service';
-import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { AuthController } from '@/modules/auth/auth.controller';
+import { AuthService } from '@/modules/auth/auth.service';
+import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 import { Response } from 'express';
 
 describe('AuthController', () => {

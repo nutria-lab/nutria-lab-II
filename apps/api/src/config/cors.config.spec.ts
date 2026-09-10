@@ -4,7 +4,7 @@ import { Test } from '@nestjs/testing';
 import { request } from 'node:http';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createCorsOptions } from './cors.config';
+import { createCorsOptions } from '@/config/cors.config';
 
 type CorsOptions = {
   credentials?: boolean;
