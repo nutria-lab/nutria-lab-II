@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { http } from './http';
+import { apiClient } from './apiClient';
 
 export type Goal = 'LOSE_WEIGHT' | 'GAIN_MUSCLE' | 'MAINTAIN';
 
@@ -28,7 +28,7 @@ export class NutritionProfileNotFoundError extends Error {
 export const nutritionProfileService = {
   async getProfile(): Promise<NutritionProfile> {
     try {
-      const response = await http.get<NutritionProfile>('/nutrition-profile');
+      const response = await apiClient.get<NutritionProfile>('/nutrition-profile');
       return response.data;
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
@@ -39,7 +39,7 @@ export const nutritionProfileService = {
   },
 
   async updateProfile(profile: NutritionProfile): Promise<NutritionProfile> {
-    const response = await http.put<NutritionProfile>('/nutrition-profile', profile);
+    const response = await apiClient.put<NutritionProfile>('/nutrition-profile', profile);
     return response.data;
   },
 };
