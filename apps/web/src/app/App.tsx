@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
+import { PrivateRoute } from './PrivateRoute';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
 import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
 import { authService, LoginRequestError } from '../services/authService';
@@ -67,21 +68,23 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
-      <Route
-        path="*"
-        element={(
-          <AppLayout>
-            <Routes>
-              <Route path="/" element={<Navigate to="/goals" replace />} />
-              <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
-              <Route path="/meal-plan" element={<MealPlanPage />} />
-              <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
-              <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
-              <Route path="/goals" element={<PreferencesPage />} />
-            </Routes>
-          </AppLayout>
-        )}
-      />
+      <Route element={<PrivateRoute />}>
+        <Route
+          path="*"
+          element={(
+            <AppLayout>
+              <Routes>
+                <Route path="/" element={<Navigate to="/goals" replace />} />
+                <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
+                <Route path="/meal-plan" element={<MealPlanPage />} />
+                <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
+                <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
+                <Route path="/goals" element={<PreferencesPage />} />
+              </Routes>
+            </AppLayout>
+          )}
+        />
+      </Route>
     </Routes>
   );
 }

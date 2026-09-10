@@ -1,14 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   nutritionProfileService,
   NutritionProfileNotFoundError,
   type NutritionProfile,
 } from './nutritionProfileService';
 import { apiClient } from './apiClient';
-
-vi.mock('./apiClient', () => ({
-  apiClient: { get: vi.fn(), put: vi.fn() },
-}));
 
 const sampleProfile: NutritionProfile = {
   goal: 'LOSE_WEIGHT',
@@ -17,14 +14,46 @@ const sampleProfile: NutritionProfile = {
   cookTimePreference: 'STANDARD',
 };
 
-describe('nutritionProfileService', () => {
-  beforeEach(() => {
-    vi.mocked(apiClient.get).mockReset();
-    vi.mocked(apiClient.put).mockReset();
+function successAdapter(data: unknown) {
+  return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => ({
+    data,
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
   });
+}
 
+function failingAdapter(status: number) {
+  return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
+    const response: AxiosResponse = {
+      data: {},
+      status,
+      statusText: 'Error',
+      headers: {},
+      config,
+    };
+
+    throw new AxiosError(
+      `Request failed with status ${status}`,
+      AxiosError.ERR_BAD_RESPONSE,
+      config,
+      undefined,
+      response,
+    );
+  };
+}
+
+// nutritionProfileService no acepta config por llamada, así que el adapter
+// se pisa en los defaults del apiClient real (mismo axios, mismo interceptor)
+// en vez de mockear el módulo entero.
+afterEach(() => {
+  apiClient.defaults.adapter = undefined;
+});
+
+describe('nutritionProfileService', () => {
   it('getProfile returns the profile on success', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: sampleProfile });
+    apiClient.defaults.adapter = successAdapter(sampleProfile);
 
     const result = await nutritionProfileService.getProfile();
 
@@ -32,31 +61,34 @@ describe('nutritionProfileService', () => {
   });
 
   it('getProfile throws NutritionProfileNotFoundError on 404', async () => {
-    const axiosError = Object.assign(new Error('Not Found'), {
-      isAxiosError: true,
-      response: { status: 404 },
-    });
-    vi.mocked(apiClient.get).mockRejectedValue(axiosError);
+    apiClient.defaults.adapter = failingAdapter(404);
 
     await expect(nutritionProfileService.getProfile()).rejects.toBeInstanceOf(NutritionProfileNotFoundError);
   });
 
   it('getProfile rethrows other errors as-is', async () => {
-    const axiosError = Object.assign(new Error('Server error'), {
-      isAxiosError: true,
-      response: { status: 500 },
-    });
-    vi.mocked(apiClient.get).mockRejectedValue(axiosError);
+    apiClient.defaults.adapter = failingAdapter(500);
 
-    await expect(nutritionProfileService.getProfile()).rejects.toThrow('Server error');
+    await expect(nutritionProfileService.getProfile()).rejects.toThrow('Request failed with status 500');
   });
 
   it('updateProfile sends the full profile and returns what the server persisted', async () => {
-    vi.mocked(apiClient.put).mockResolvedValue({ data: sampleProfile });
+    let capturedConfig: InternalAxiosRequestConfig | undefined;
+    apiClient.defaults.adapter = async (config) => {
+      capturedConfig = config;
+      return {
+        data: sampleProfile,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
 
     const result = await nutritionProfileService.updateProfile(sampleProfile);
 
     expect(result).toEqual(sampleProfile);
-    expect(apiClient.put).toHaveBeenCalledWith('/nutrition-profile', sampleProfile);
+    expect(capturedConfig?.url).toBe('/nutrition-profile');
+    expect(JSON.parse(capturedConfig?.data as string)).toEqual(sampleProfile);
   });
 });
