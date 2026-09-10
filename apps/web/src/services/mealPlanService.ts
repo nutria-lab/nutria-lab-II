@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { http } from './http';
+import { apiClient } from './apiClient';
 
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'SNACK';
 
@@ -38,7 +38,7 @@ export type MealPlan = {
 export const mealPlanService = {
   async getCurrentMealPlan(weekStart: string): Promise<MealPlan | null> {
     try {
-      const response = await http.get<MealPlan>('/meal-plans/current', {
+      const response = await apiClient.get<MealPlan>('/meal-plans/current', {
         params: { weekStart },
       });
       const data = response.data;
