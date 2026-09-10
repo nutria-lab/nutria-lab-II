@@ -5,7 +5,7 @@ import {
   Diet,
   DietaryRestriction,
   CookTimePreference,
-} from '../../generated/prisma/enums';
+} from '@/generated/prisma/enums';
 
 describe('NutritionProfile Schema & Migration Tests (Commit 1 Verification)', () => {
   const prismaDir = path.resolve(__dirname, '../../../prisma');

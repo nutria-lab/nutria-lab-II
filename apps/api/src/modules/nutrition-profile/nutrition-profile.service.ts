@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { NutritionProfileRepository } from './nutrition-profile.repository';
-import { UpdateProfileDto } from './dto/update-profile.dto';
+import { NutritionProfileRepository } from '@/modules/nutrition-profile/nutrition-profile.repository';
+import { UpdateProfileDto } from '@/modules/nutrition-profile/dto/update-profile.dto';
 
 @Injectable()
 export class NutritionProfileService {
