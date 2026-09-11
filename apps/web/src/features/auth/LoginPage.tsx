@@ -1,8 +1,8 @@
 import { type FormEvent, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { BrandMark } from '../../common/components/BrandMark';
 import { validateLoginFields, type LoginFieldErrors } from './loginValidation';
-import nutriaIcon from '../../assets/nutria-icon.png';
 
 function OutlineLeaf() {
   return (
@@ -107,9 +107,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
         aria-labelledby="login-title"
       >
         <div className="w-full max-w-[25rem] md:max-w-[23rem]">
-          <div className="mb-6 flex justify-center">
-            <img alt="Hoja de NutrIA" className="size-12 rounded-full object-cover" src={nutriaIcon} />
-          </div>
+          <BrandMark variant="auth" />
 
           <header className="mb-7 text-center">
             <h1 id="login-title" className="m-0 font-serif text-[clamp(2rem,8vw,2.35rem)] font-semibold leading-[1.15] tracking-[-0.025em] text-[#254a36] md:text-4xl">

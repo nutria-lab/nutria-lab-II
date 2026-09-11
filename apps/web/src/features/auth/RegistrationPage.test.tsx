@@ -34,6 +34,14 @@ describe('RegistrationPage', () => {
   it('renders the local, semantic sign-up form with its navigation to login', () => {
     renderRegistration();
 
+    expect(screen.getByText('NutrIA')).toBeVisible();
+    const brandIcon = document.querySelector('img');
+    expect(brandIcon).toHaveAttribute('src', expect.stringContaining('nutria-icon.png'));
+    expect(brandIcon).toHaveAttribute('alt', '');
+    expect(brandIcon).toHaveAttribute('aria-hidden', 'true');
+    expect(brandIcon?.parentElement).toHaveClass('justify-between');
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+
     expect(screen.getByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
     expect(screen.getByText(/todavía no se creará una cuenta/i)).toBeVisible();
     expect(getForm()).toHaveAttribute('novalidate');

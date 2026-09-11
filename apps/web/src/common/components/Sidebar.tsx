@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom';
 
+import { BrandMark } from './BrandMark';
+
 const NAV_ITEMS = [
   { label: 'Dashboard', path: '/dashboard' },
   { label: 'Meal Plan', path: '/meal-plan' },
@@ -11,7 +13,7 @@ const NAV_ITEMS = [
 export function Sidebar() {
   return (
     <aside className="hidden w-56 shrink-0 border-r border-neutral-200 bg-white px-4 py-6 md:block">
-      <p className="mb-6 font-serif text-lg font-bold text-brand-green">NutrIA</p>
+      <BrandMark variant="app" />
       <nav className="space-y-1">
         {NAV_ITEMS.map((item) => (
           <NavLink
