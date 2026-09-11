@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import nutriaIcon from '../../assets/nutria-icon.png';
-import { RegisterRequestError, registerService } from '../../services/registerService';
+import { RegisterRequestError, registerService, type RegisterErrorKind } from '../../services/registerService';
 import {
   MINIMUM_PASSWORD_LENGTH,
   type RegistrationFieldErrors,
@@ -11,11 +11,20 @@ import {
 } from './registrationValidation';
 
 type RegistrationField = keyof RegistrationValues;
-type RegistrationRequestMessage =
-  | 'Ya existe una cuenta con este email.'
-  | 'No pudimos validar los datos. Revisá los campos e intentá nuevamente.'
-  | 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.'
-  | 'No pudimos crear tu cuenta en este momento. Intentá nuevamente.';
+const requestErrorMessages = {
+  emailAlreadyExists: 'Ya existe una cuenta con este email.',
+  validation: 'No pudimos validar los datos. Revisá los campos e intentá nuevamente.',
+  timeout: 'No pudimos confirmar si tu cuenta fue creada. Intentá nuevamente.',
+  network: 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.',
+  unexpected: 'No pudimos crear tu cuenta en este momento. Intentá nuevamente.',
+} as const satisfies Record<RegisterErrorKind, string>;
+
+type RegistrationRequestError = {
+  message: string;
+  showLoginLink?: boolean;
+};
+
+const indeterminateRegistrationMessage = 'No pudimos confirmar si tu cuenta fue creada. Es posible que ya exista.';
 
 const initialValues: RegistrationValues = {
   fullName: '',
@@ -63,7 +72,8 @@ export function RegistrationPage() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [requestError, setRequestError] = useState<RegistrationRequestMessage | null>(null);
+  const [requestError, setRequestError] = useState<RegistrationRequestError | null>(null);
+  const [hasTimedOut, setHasTimedOut] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -105,6 +115,7 @@ export function RegistrationPage() {
     const nextValues = { ...values, [field]: value };
     setValues(nextValues);
     setRequestError(null);
+    setHasTimedOut(false);
 
     if (visited[field] || errors[field]) {
       validateVisitedField(field, nextValues);
@@ -180,20 +191,18 @@ export function RegistrationPage() {
         }
 
         registrationAbortControllerRef.current = undefined;
-        const kind = error instanceof RegisterRequestError ? error.kind : 'unexpected';
-        const message: RegistrationRequestMessage = kind === 'emailAlreadyExists'
-          ? 'Ya existe una cuenta con este email.'
-          : kind === 'validation'
-            ? 'No pudimos validar los datos. Revisá los campos e intentá nuevamente.'
-            : kind === 'network'
-              ? 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.'
-              : 'No pudimos crear tu cuenta en este momento. Intentá nuevamente.';
+        const kind: RegisterErrorKind = error instanceof RegisterRequestError ? error.kind : 'unexpected';
+        const isIndeterminateConflict = hasTimedOut && kind === 'emailAlreadyExists';
+        const message = isIndeterminateConflict
+          ? indeterminateRegistrationMessage
+          : requestErrorMessages[kind];
 
         submitInFlightRef.current = false;
         setIsLoading(false);
-        setRequestError(message);
+        setRequestError({ message, showLoginLink: isIndeterminateConflict });
+        setHasTimedOut((timedOut) => timedOut || kind === 'timeout');
 
-        if (kind === 'emailAlreadyExists') {
+        if (kind === 'emailAlreadyExists' && !isIndeterminateConflict) {
           setErrors((currentErrors) => ({ ...currentErrors, email: message }));
         }
       });
@@ -239,7 +248,12 @@ export function RegistrationPage() {
             )}
             {requestError && (
               <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
-                {requestError}
+                <p className="m-0">{requestError.message}</p>
+                {requestError.showLoginLink && (
+                  <Link className="mt-2 inline-block font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/login">
+                    Ir al inicio de sesión
+                  </Link>
+                )}
               </div>
             )}
             {isLoading && <p aria-live="polite" className="sr-only">Creando cuenta...</p>}

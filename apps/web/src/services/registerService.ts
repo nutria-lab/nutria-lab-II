@@ -16,7 +16,7 @@ export type RegisteredUser = {
   updatedAt: string;
 };
 
-export type RegisterErrorKind = 'emailAlreadyExists' | 'validation' | 'network' | 'unexpected';
+export type RegisterErrorKind = 'emailAlreadyExists' | 'validation' | 'timeout' | 'network' | 'unexpected';
 
 const REGISTRATION_TIMEOUT_MS = 10_000;
 
@@ -48,7 +48,11 @@ function registrationErrorKind(error: unknown): RegisterErrorKind {
 
   const status = error.response?.status;
 
-  if (error.code === 'ECONNABORTED' || error.code === axios.AxiosError.ERR_CANCELED) {
+  if (error.code === 'ECONNABORTED') {
+    return 'timeout';
+  }
+
+  if (error.code === axios.AxiosError.ERR_CANCELED) {
     return 'network';
   }
 

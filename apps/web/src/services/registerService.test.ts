@@ -96,17 +96,46 @@ describe('registerService.register', () => {
     })).rejects.toMatchObject({ kind: 'network' });
   });
 
-  it.each([
-    ['timeout', new AxiosError('timeout', 'ECONNABORTED', requestConfig)],
-    ['cancellation', new AxiosError('canceled', AxiosError.ERR_CANCELED, requestConfig)],
-  ])('normalizes Axios %s as a network failure', async (_kind, error) => {
-    vi.mocked(apiClient.post).mockRejectedValue(error);
+  it('normalizes an Axios cancellation as a network failure', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new AxiosError(
+      'canceled',
+      AxiosError.ERR_CANCELED,
+      requestConfig,
+    ));
 
     await expect(registerService.register({
       email: 'persona@nutria.com',
       password: 'clave-de-prueba',
       name: 'Persona',
     })).rejects.toMatchObject({ kind: 'network' });
+  });
+
+  it('normalizes Axios ECONNABORTED as a timeout distinct from network failures and cancellations', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new AxiosError(
+      'timeout',
+      'ECONNABORTED',
+      requestConfig,
+    ));
+
+    await expect(registerService.register({
+      email: 'persona@nutria.com',
+      password: 'clave-de-prueba',
+      name: 'Persona',
+    })).rejects.toMatchObject({ kind: 'timeout' });
+  });
+
+  it('does not conflate an Axios timeout with a network failure', async () => {
+    vi.mocked(apiClient.post).mockRejectedValue(new AxiosError(
+      'timeout',
+      'ECONNABORTED',
+      requestConfig,
+    ));
+
+    await expect(registerService.register({
+      email: 'persona@nutria.com',
+      password: 'clave-de-prueba',
+      name: 'Persona',
+    })).rejects.not.toMatchObject({ kind: 'network' });
   });
 
   it('normalizes malformed success responses and non-Axios failures as unexpected', async () => {

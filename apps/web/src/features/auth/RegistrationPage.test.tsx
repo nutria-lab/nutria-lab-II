@@ -45,6 +45,10 @@ function networkFailure() {
   return new AxiosError('Network Error', AxiosError.ERR_NETWORK, requestConfig);
 }
 
+function timeoutFailure() {
+  return new AxiosError('timeout', 'ECONNABORTED', requestConfig);
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -289,6 +293,25 @@ describe('RegistrationPage', () => {
     fireEvent.submit(getForm());
 
     expect(await screen.findByRole('alert')).toHaveTextContent('No pudimos crear tu cuenta en este momento. Intentá nuevamente.');
+  });
+
+  it('treats a 409 after a timeout as indeterminate and guides the person to login instead of claiming the email exists', async () => {
+    const user = userEvent.setup();
+    vi.mocked(apiClient.post)
+      .mockRejectedValueOnce(timeoutFailure())
+      .mockRejectedValueOnce(httpFailure(409));
+    renderRegistration();
+
+    await fillValidRegistration(user);
+    fireEvent.submit(getForm());
+
+    await user.click(await screen.findByRole('button', { name: /reintentar/i }));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/no pudimos confirmar si tu cuenta fue creada/i);
+    expect(alert).not.toHaveTextContent('Ya existe una cuenta con este email.');
+    expect(screen.getByRole('link', { name: /iniciá sesión/i })).toHaveAttribute('href', '/login');
   });
 
   it('blocks repeated submit events while a registration request is pending', async () => {
