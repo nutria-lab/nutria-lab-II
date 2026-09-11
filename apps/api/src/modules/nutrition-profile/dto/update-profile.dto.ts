@@ -1,5 +1,5 @@
 import { IsEnum, IsArray, ArrayUnique } from 'class-validator';
-import { NutritionGoal, Diet, DietaryRestriction, CookTimePreference } from '../../../generated/prisma/client';
+import { NutritionGoal, Diet, DietaryRestriction, CookTimePreference } from '@/generated/prisma/client';
 
 export class UpdateProfileDto {
   @IsEnum(NutritionGoal)

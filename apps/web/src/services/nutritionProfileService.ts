@@ -1,3 +1,6 @@
+import axios from 'axios';
+import { apiClient } from './apiClient';
+
 export type Goal = 'LOSE_WEIGHT' | 'GAIN_MUSCLE' | 'MAINTAIN';
 
 export type Diet = 'VEGAN' | 'VEGETARIAN' | 'PALEO' | 'KETO' | 'PESCATARIAN' | 'ALL';
@@ -13,31 +16,30 @@ export type NutritionProfile = {
   cookTimePreference: CookTimePreference;
 };
 
-const MOCK_DELAY_MS = 500;
-
-let mockProfile: NutritionProfile = {
-  goal: 'LOSE_WEIGHT',
-  diet: 'VEGAN',
-  excludedIngredients: ['NUTS'],
-  cookTimePreference: 'STANDARD',
-};
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+// Señal explícita de "todavía no existe perfil" — se lanza en vez de devolver
+// null para no romper la firma Promise<NutritionProfile> que pide el ticket.
+export class NutritionProfileNotFoundError extends Error {
+  constructor() {
+    super('Todavía no existe un perfil nutricional para este usuario.');
+    this.name = 'NutritionProfileNotFoundError';
+  }
 }
 
-// TODO: reemplazar por llamadas reales a /nutrition-profile cuando el
-// endpoint exista. La forma de las funciones (getProfile/updateProfile,
-// mismos tipos de entrada/salida) ya coincide con el service real futuro.
 export const nutritionProfileService = {
   async getProfile(): Promise<NutritionProfile> {
-    await delay(MOCK_DELAY_MS);
-    return { ...mockProfile };
+    try {
+      const response = await apiClient.get<NutritionProfile>('/nutrition-profile');
+      return response.data;
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        throw new NutritionProfileNotFoundError();
+      }
+      throw error;
+    }
   },
 
   async updateProfile(profile: NutritionProfile): Promise<NutritionProfile> {
-    await delay(MOCK_DELAY_MS);
-    mockProfile = { ...profile };
-    return { ...mockProfile };
+    const response = await apiClient.put<NutritionProfile>('/nutrition-profile', profile);
+    return response.data;
   },
 };

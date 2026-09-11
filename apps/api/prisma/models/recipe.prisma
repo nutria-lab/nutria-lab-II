@@ -1,5 +1,6 @@
 model Recipe {
   id           String             @id @default(uuid())
+  title        String
   prepMinutes  Int
   cookMinutes  Int
   steps        String[]

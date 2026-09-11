@@ -12,6 +12,8 @@ vi.mock('../services/apiClient', () => ({
   },
 }));
 
+const AUTH_FLAG_KEY = 'nutria:isAuthenticated';
+
 const loginResponse = {
   id: 'user-1',
   email: 'persona@nutria.com',
@@ -67,6 +69,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
+  localStorage.removeItem(AUTH_FLAG_KEY);
 });
 
 beforeEach(() => {
@@ -230,6 +233,9 @@ describe('App login integration', () => {
       resolveLogin = resolve;
     });
     vi.stubGlobal('fetch', vi.fn().mockReturnValue(pendingLogin));
+    // /dashboard ahora vive detrás de PrivateRoute; se simula una sesión
+    // previa ya válida para poder navegar ahí manualmente, como hace este test.
+    localStorage.setItem(AUTH_FLAG_KEY, 'true');
     renderAtLogin();
 
     await completeValidCredentials(user);
