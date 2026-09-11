@@ -53,13 +53,28 @@ async function main() {
 
   const recipePollo = await prisma.recipe.upsert({
     where: { id: RECETA_POLLO_ID },
-    update: {},
+    update: {
+      title: 'Pollo con Arroz',
+      description: 'Pechuga de pollo con arroz integral',
+      prepMinutes: 10,
+      cookMinutes: 20,
+      ingredients: [
+        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
+        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
+      ],
+      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
+    },
     create: {
       id: RECETA_POLLO_ID,
       title: 'Pollo con Arroz',
+      description: 'Pechuga de pollo con arroz integral',
       prepMinutes: 10,
       cookMinutes: 20,
-      steps: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz']
+      ingredients: [
+        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
+        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
+      ],
+      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
     }
   });
 

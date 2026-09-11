@@ -17,7 +17,7 @@ export interface GeneratedMealPlanDay {
       prepMinutes: number;
       cookMinutes: number;
       ingredients: Array<{ name: string; quantity: number | string; unit: string }>;
-      instructions: string;
+      instructions: string[];
     };
   }>;
 }

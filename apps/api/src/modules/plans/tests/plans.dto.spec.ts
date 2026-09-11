@@ -14,7 +14,7 @@ const validRecipe = {
   prepMinutes: 10,
   cookMinutes: 30,
   ingredients: [validIngredient],
-  instructions: 'Precalentar el horno y cocinar el pollo.',
+  instructions: ['Precalentar el horno y cocinar el pollo.'],
 };
 
 const validNutritionalValues = {
@@ -81,6 +81,13 @@ describe('RecipeDto', () => {
     const errors = await validate(dto);
     expect(errors.some(e => e.property === 'ingredients')).toBe(true);
   });
+
+  it('normaliza instructions si viene como string a un array de strings', async () => {
+    const dto = plainToInstance(RecipeDto, { ...validRecipe, instructions: 'Un único paso' });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+    expect(dto.instructions).toEqual(['Un único paso']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -145,6 +152,6 @@ describe('MealDto', () => {
     const dto = plainToInstance(MealDto, validMeal);
     expect(dto.recipe?.title).toBe(validRecipe.title);
     expect(dto.recipe?.ingredients).toHaveLength(1);
-    expect(dto.recipe?.instructions).toBe(validRecipe.instructions);
+    expect(dto.recipe?.instructions).toEqual(validRecipe.instructions);
   });
 });

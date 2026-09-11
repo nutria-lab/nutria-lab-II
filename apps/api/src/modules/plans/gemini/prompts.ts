@@ -74,7 +74,10 @@ export const PROMPT_VERSIONS = {
                               },
                             },
                           },
-                          instructions: { type: SchemaType.STRING },
+                          instructions: {
+                            type: SchemaType.ARRAY,
+                            items: { type: SchemaType.STRING },
+                          },
                         },
                       },
                     },

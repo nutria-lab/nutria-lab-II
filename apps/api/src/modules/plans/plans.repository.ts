@@ -91,7 +91,7 @@ export class PlansRepository {
                 prepMinutes: meal.recipe.prepMinutes,
                 cookMinutes: meal.recipe.cookMinutes,
                 ingredients: meal.recipe.ingredients as any,
-                steps: meal.recipe.instructions ? [meal.recipe.instructions] : [],
+                instructions: meal.recipe.instructions,
               }
             });
             recipeId = recipe.id;

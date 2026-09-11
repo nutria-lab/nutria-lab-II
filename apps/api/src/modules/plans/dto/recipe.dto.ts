@@ -1,5 +1,5 @@
 import { IsString, IsNumber, IsArray, IsNotEmpty, ValidateNested, Min, ArrayMinSize } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class IngredientDto {
   @IsNotEmpty()
@@ -39,7 +39,14 @@ export class RecipeDto {
   @Type(() => IngredientDto)
   ingredients!: IngredientDto[];
 
-  @IsNotEmpty()
-  @IsString()
-  instructions!: string;
+  @Transform(({ value }) => {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return [value.trim()];
+    }
+    return value;
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  instructions!: string[];
 }
