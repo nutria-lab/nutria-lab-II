@@ -4,8 +4,10 @@ import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
+import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
 import { LoginRequestError } from '../services/authService';
+import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
 
 function LoginRoute() {
   const { status: authStatus, login } = useAuth();
@@ -57,6 +59,7 @@ export function App() {
   return (
     <AuthProvider><Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route path="/register" element={<RegistrationPage />} />
       <Route
         path="*"
         element={(
@@ -64,7 +67,7 @@ export function App() {
             <Routes>
               <Route path="/" element={<Navigate to="/goals" replace />} />
               <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
-              <Route path="/meal-plan" element={<PlaceholderPage title="Meal Plan" />} />
+              <Route path="/meal-plan" element={<MealPlanPage />} />
               <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
               <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
               <Route path="/goals" element={<PreferencesPage />} />

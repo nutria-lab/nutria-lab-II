@@ -92,6 +92,26 @@ describe('App authentication routes', () => {
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
   });
 
+  it('bounds session restoration and fails closed to login when that request times out', async () => {
+    let restorationTimeout: number | undefined;
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        restorationTimeout = config.timeout;
+        throw new AxiosError('session restoration timed out', 'ECONNABORTED', config);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/dashboard');
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+    expect(restorationTimeout).toBeGreaterThan(0);
+    expect(restorationTimeout).toBeLessThanOrEqual(10_000);
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+  });
+
   it('allows an authenticated visitor to reach a protected route', async () => {
     apiClient.defaults.adapter = async (config) => response(config, authenticatedUser);
 
@@ -128,6 +148,25 @@ describe('App authentication routes', () => {
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/goals'));
     expect(currentUserRequests).toBe(1);
     expect(loginRequests).toBe(1);
+  });
+
+  it('keeps the NUT-8 registration route public after anonymous session restoration', async () => {
+    let currentUserRequests = 0;
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        currentUserRequests += 1;
+        throw failedResponse(config, 401);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/register');
+
+    expect(await screen.findByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent('/register');
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(currentUserRequests).toBe(1);
   });
 
   it('returns to an internal protected destination after login but rejects an external destination', async () => {

@@ -10,7 +10,7 @@ export function AppLayout({ children, onLogout }: AppLayoutProps) {
   return (
     <div className="flex min-h-screen bg-brand-cream">
       <Sidebar onLogout={onLogout} />
-      <div className="flex-1">
+      <div className="min-w-0 flex-1">
         <header className="flex min-h-14 items-center justify-end border-b border-neutral-200 bg-white px-4 md:hidden">
           <button
             type="button"

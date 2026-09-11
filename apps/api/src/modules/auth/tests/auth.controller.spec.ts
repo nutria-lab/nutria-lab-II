@@ -2,9 +2,9 @@ import { UnauthorizedException } from '@nestjs/common';
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AuthController } from '../auth.controller';
-import { AuthService } from '../auth.service';
-import { AuthenticatedRequest, JwtAuthGuard } from '../guards/jwt-auth.guard';
+import { AuthController } from '@/modules/auth/auth.controller';
+import { AuthService } from '@/modules/auth/auth.service';
+import { AuthenticatedRequest, JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 import { Response } from 'express';
 
 describe('AuthController', () => {

@@ -8,7 +8,7 @@ import { Banner } from '../../../common/components/Banner';
 import type { NutritionProfile } from '../../../services/nutritionProfileService';
 
 export function PreferencesPage() {
-  const { profile, status, errorMessage, save } = useNutritionProfile();
+  const { profile, isNewProfile, status, errorMessage, save, retry } = useNutritionProfile();
   const [formState, setFormState] = useState<NutritionProfile | null>(null);
 
   useEffect(() => {
@@ -16,6 +16,28 @@ export function PreferencesPage() {
       setFormState(profile);
     }
   }, [profile, formState]);
+
+  // Un fallo técnico en la carga inicial deja `formState` en null para siempre;
+  // hay que mostrarlo antes del chequeo de "loading" o el usuario queda
+  // viendo "Cargando..." sin salida posible (el 404/perfil nuevo no entra acá,
+  // porque ese caso sí llega a setear `profile` con los valores por defecto).
+  if (status === 'error' && !formState) {
+    return (
+      <main className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
+        <p className="font-serif text-lg font-semibold text-neutral-900">Algo salió mal</p>
+        <p className="mt-2 text-sm text-neutral-500">
+          {errorMessage ?? 'No pudimos cargar tus preferencias.'}
+        </p>
+        <button
+          type="button"
+          onClick={retry}
+          className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
+        >
+          Reintentar
+        </button>
+      </main>
+    );
+  }
 
   if (status === 'loading' || !formState) {
     return (
@@ -39,6 +61,11 @@ export function PreferencesPage() {
         <Banner variant="success" message="Tus preferencias se guardaron correctamente" />
       )}
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
+      {status === 'idle' && isNewProfile && (
+        <p className="text-sm text-neutral-500">
+          Todavía no tenés preferencias guardadas — completá el formulario para crear tu perfil.
+        </p>
+      )}
 
       <p className="text-sm text-neutral-600">
         Ajustá tus preferencias para recibir mejores sugerencias.

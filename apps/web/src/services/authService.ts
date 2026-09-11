@@ -2,6 +2,8 @@ import axios from 'axios';
 
 import { apiClient } from './apiClient';
 
+const SESSION_RESTORATION_TIMEOUT_MS = 10_000;
+
 export type LoginCredentials = {
   email: string;
   password: string;
@@ -60,7 +62,13 @@ export const authService = {
     return requestUser(apiClient.post('/auth/login', credentials));
   },
   async getCurrentUser(): Promise<AuthenticatedUser> {
-    return requestUser(apiClient.get('/auth/me', { skipAuthErrorHandling: true }), { unauthenticated: true });
+    return requestUser(
+      apiClient.get('/auth/me', {
+        skipAuthErrorHandling: true,
+        timeout: SESSION_RESTORATION_TIMEOUT_MS,
+      }),
+      { unauthenticated: true },
+    );
   },
   async logout(): Promise<void> {
     try {
