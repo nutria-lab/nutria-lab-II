@@ -35,6 +35,15 @@ function renderAtLogin() {
   );
 }
 
+function renderAtRegistration() {
+  return render(
+    <MemoryRouter initialEntries={['/register']}>
+      <App />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
+}
+
 async function completeValidCredentials(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/correo/i), 'persona@nutria.com');
   await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
@@ -52,6 +61,28 @@ beforeEach(() => {
 });
 
 describe('App login integration', () => {
+  it('renders registration publicly, keeps it local, and links back to login', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    renderAtRegistration();
+
+    expect(screen.getByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/register');
+
+    await user.type(screen.getByLabelText(/^nombre$/i), 'Persona');
+    await user.type(screen.getByLabelText(/correo electrónico/i), 'persona@nutria.com');
+    await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
+    await user.type(screen.getByLabelText(/confirmá tu contraseña/i), 'secreta');
+    fireEvent.submit(document.querySelector('form')!);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('link', { name: /iniciá sesión/i }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/login');
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+  });
+
   it('renders LoginPage publicly at /login without the application sidebar', () => {
     renderAtLogin();
 
