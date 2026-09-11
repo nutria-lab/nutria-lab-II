@@ -5,6 +5,7 @@
 
 */
 -- AlterTable
-ALTER TABLE "recipes" ADD COLUMN     "description" TEXT,
-ADD COLUMN     "ingredients" JSONB,
-ADD COLUMN     "title" TEXT NOT NULL;
+ALTER TABLE "recipes" 
+ADD COLUMN IF NOT EXISTS "description" TEXT,
+ADD COLUMN IF NOT EXISTS "ingredients" JSONB,
+ADD COLUMN IF NOT EXISTS "title" TEXT NOT NULL DEFAULT '';

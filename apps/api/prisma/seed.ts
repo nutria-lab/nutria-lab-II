@@ -139,10 +139,13 @@ async function main() {
 
     // 2.3 Plan Alimentario (Semanal)
     const startDate = new Date();
-    startDate.setHours(0,0,0,0);
-    // Ajustamos al lunes de la semana actual
-    const day = startDate.getDay() || 7; 
-    if (day !== 1) startDate.setHours(-24 * (day - 1));
+    startDate.setHours(0, 0, 0, 0);
+
+    // En JS: Domingo = 0. Si es domingo (0), son 6 días atrás; si no, (day - 1) días atrás.
+    const day = startDate.getDay();
+    const diff = day === 0 ? 6 : day - 1;
+
+    startDate.setDate(startDate.getDate() - diff);
 
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + 6);
