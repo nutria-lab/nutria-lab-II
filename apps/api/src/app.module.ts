@@ -3,6 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { AuthModule } from '@/modules/auth/auth.module';
 import { NutritionProfileModule } from '@/modules/nutrition-profile/nutrition-profile.module';
+import { RecipeModule } from '@/modules/recipe/recipe.module';
+import { IngredientModule } from '@/modules/ingredient/ingredient.module';
 
 @Module({
   imports: [
@@ -10,6 +12,8 @@ import { NutritionProfileModule } from '@/modules/nutrition-profile/nutrition-pr
     PrismaModule,
     AuthModule,
     NutritionProfileModule,
+    RecipeModule,
+    IngredientModule,
   ],
   controllers: [],
   providers: [],
