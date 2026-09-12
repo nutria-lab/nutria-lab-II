@@ -31,6 +31,12 @@ export class IngredientService {
     const existing = await this.findById(id);
 
     if (data.name && data.name !== existing.name) {
+      // Reject renaming if the ingredient is already referenced in recipes
+      const isInUse = await this.repository.isIngredientInUse(existing.name);
+      if (isInUse) {
+        throw new ConflictException(`Cannot rename ingredient '${existing.name}' because it is used in one or more recipes.`);
+      }
+
       const conflict = await this.repository.findByName(data.name);
       if (conflict) {
         throw new ConflictException(`Ingredient with name '${data.name}' already exists.`);

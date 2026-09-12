@@ -59,6 +59,7 @@ describe('IngredientService', () => {
       const existing = { id: '1', name: 'Pollo' };
       const dto = { name: 'Pollo Editado' };
       repository.findById.mockResolvedValue(existing);
+      repository.isIngredientInUse.mockResolvedValue(false);
       repository.findByName.mockResolvedValue(null);
       repository.update.mockResolvedValue({ ...existing, ...dto });
 
@@ -67,10 +68,21 @@ describe('IngredientService', () => {
       expect(repository.update).toHaveBeenCalledWith('1', dto);
     });
 
+    it('should throw ConflictException if renaming an ingredient that is in use by recipes', async () => {
+      const existing = { id: '1', name: 'Pollo' };
+      const dto = { name: 'Pollo Nuevo' };
+      repository.findById.mockResolvedValue(existing);
+      repository.isIngredientInUse.mockResolvedValue(true);
+
+      await expect(service.update('1', dto)).rejects.toThrow(ConflictException);
+      expect(repository.isIngredientInUse).toHaveBeenCalledWith('Pollo');
+    });
+
     it('should throw ConflictException if renaming to an existing ingredient', async () => {
       const existing = { id: '1', name: 'Pollo' };
       const dto = { name: 'Carne' };
       repository.findById.mockResolvedValue(existing);
+      repository.isIngredientInUse.mockResolvedValue(false);
       repository.findByName.mockResolvedValue({ id: '2', name: 'Carne' });
 
       await expect(service.update('1', dto)).rejects.toThrow(ConflictException);
