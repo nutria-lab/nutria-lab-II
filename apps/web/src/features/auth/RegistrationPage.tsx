@@ -1,7 +1,8 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { BrandMark } from '../../common/components/BrandMark';
+import { RegisterRequestError, registerService, type RegisterErrorKind } from '../../services/registerService';
 import {
   MINIMUM_PASSWORD_LENGTH,
   type RegistrationFieldErrors,
@@ -10,6 +11,20 @@ import {
 } from './registrationValidation';
 
 type RegistrationField = keyof RegistrationValues;
+const requestErrorMessages = {
+  emailAlreadyExists: 'Ya existe una cuenta con este email.',
+  validation: 'No pudimos validar los datos. Revisá los campos e intentá nuevamente.',
+  timeout: 'No pudimos confirmar si tu cuenta fue creada. Intentá nuevamente.',
+  network: 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.',
+  unexpected: 'No pudimos crear tu cuenta en este momento. Intentá nuevamente.',
+} as const satisfies Record<RegisterErrorKind, string>;
+
+type RegistrationRequestError = {
+  message: string;
+  showLoginLink?: boolean;
+};
+
+const indeterminateRegistrationMessage = 'No pudimos confirmar si tu cuenta fue creada. Es posible que ya exista.';
 
 const initialValues: RegistrationValues = {
   fullName: '',
@@ -48,6 +63,7 @@ function updateFieldError(
 }
 
 export function RegistrationPage() {
+  const navigate = useNavigate();
   const [values, setValues] = useState<RegistrationValues>(initialValues);
   const [errors, setErrors] = useState<RegistrationFieldErrors>({});
   const [visited, setVisited] = useState<Partial<Record<RegistrationField, boolean>>>({});
@@ -56,31 +72,30 @@ export function RegistrationPage() {
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [requestError, setRequestError] = useState<RegistrationRequestError | null>(null);
+  const [hasTimedOut, setHasTimedOut] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmationRef = useRef<HTMLInputElement>(null);
   const submitInFlightRef = useRef(false);
   const successTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-
-  useEffect(() => () => {
-    if (successTimeoutRef.current) {
-      clearTimeout(successTimeoutRef.current);
-    }
-  }, []);
+  const isMountedRef = useRef(true);
+  const registrationAbortControllerRef = useRef<AbortController>(undefined);
 
   useEffect(() => {
-    if (!isLoading) {
-      return;
-    }
+    isMountedRef.current = true;
 
-    successTimeoutRef.current = setTimeout(() => {
-      setValues((currentValues) => ({ ...currentValues, password: '', confirmPassword: '' }));
-      setIsLoading(false);
-      setIsSuccess(true);
-      submitInFlightRef.current = false;
-    }, 300);
-  }, [isLoading]);
+    return () => {
+      isMountedRef.current = false;
+      registrationAbortControllerRef.current?.abort();
+      registrationAbortControllerRef.current = undefined;
+
+      if (successTimeoutRef.current) {
+        clearTimeout(successTimeoutRef.current);
+      }
+    };
+  }, []);
 
   function validateVisitedField(field: RegistrationField, nextValues: RegistrationValues) {
     const nextValidation = validateRegistrationFields(nextValues);
@@ -99,6 +114,8 @@ export function RegistrationPage() {
   function handleChange(field: RegistrationField, value: string) {
     const nextValues = { ...values, [field]: value };
     setValues(nextValues);
+    setRequestError(null);
+    setHasTimedOut(false);
 
     if (visited[field] || errors[field]) {
       validateVisitedField(field, nextValues);
@@ -124,9 +141,7 @@ export function RegistrationPage() {
     }
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  function submitRegistration() {
     if (submitInFlightRef.current || isSuccess) {
       return;
     }
@@ -143,6 +158,59 @@ export function RegistrationPage() {
 
     submitInFlightRef.current = true;
     setIsLoading(true);
+    setRequestError(null);
+
+    const credentials = {
+      name: values.fullName,
+      email: values.email,
+      password: values.password,
+    };
+    const abortController = new AbortController();
+    registrationAbortControllerRef.current = abortController;
+
+    void registerService.register(credentials, abortController.signal)
+      .then(() => {
+        if (!isMountedRef.current || abortController.signal.aborted) {
+          return;
+        }
+
+        registrationAbortControllerRef.current = undefined;
+        setValues((currentValues) => ({ ...currentValues, password: '', confirmPassword: '' }));
+        setIsLoading(false);
+        setIsSuccess(true);
+        submitInFlightRef.current = false;
+        successTimeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current) {
+            navigate('/login', { replace: true });
+          }
+        }, 250);
+      })
+      .catch((error: unknown) => {
+        if (!isMountedRef.current || abortController.signal.aborted) {
+          return;
+        }
+
+        registrationAbortControllerRef.current = undefined;
+        const kind: RegisterErrorKind = error instanceof RegisterRequestError ? error.kind : 'unexpected';
+        const isIndeterminateConflict = hasTimedOut && kind === 'emailAlreadyExists';
+        const message = isIndeterminateConflict
+          ? indeterminateRegistrationMessage
+          : requestErrorMessages[kind];
+
+        submitInFlightRef.current = false;
+        setIsLoading(false);
+        setRequestError({ message, showLoginLink: isIndeterminateConflict });
+        setHasTimedOut((timedOut) => timedOut || kind === 'timeout');
+
+        if (kind === 'emailAlreadyExists' && !isIndeterminateConflict) {
+          setErrors((currentErrors) => ({ ...currentErrors, email: message }));
+        }
+      });
+  }
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    submitRegistration();
   }
 
   const inputClassName = 'min-h-12 w-full rounded-lg border border-[#b7b7a8] bg-[#fffefa] px-3 py-2.5 text-base aria-invalid:border-[#9e2f27] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]';
@@ -168,18 +236,28 @@ export function RegistrationPage() {
               Creá tu cuenta
             </h1>
             <p className="mt-2.5 leading-6 text-[#5f675c]">Completá tus datos para empezar a cuidarte.</p>
-            <p className="mt-2 text-sm leading-5 text-[#5f675c]">Todavía no se creará una cuenta: la conexión con la API llegará en el próximo paso.</p>
           </header>
 
           <form className="grid gap-[1.1rem]" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
-            {hasSubmitted && Object.keys(errors).length > 0 && (
+            {hasSubmitted && Object.keys(errors).length > 0 && !requestError && (
               <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
                 {Object.values(errors).join(' ')}
               </div>
             )}
+            {requestError && (
+              <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
+                <p className="m-0">{requestError.message}</p>
+                {requestError.showLoginLink && (
+                  <Link className="mt-2 inline-block font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/login">
+                    Ir al inicio de sesión
+                  </Link>
+                )}
+              </div>
+            )}
+            {isLoading && <p aria-live="polite" className="sr-only">Creando cuenta...</p>}
             {isSuccess && (
               <p className="m-0 rounded-lg border-l-4 border-[#254a36] bg-[#edf5e9] p-3 text-[#254a36]" role="status">
-                Los datos están listos, pero tu cuenta todavía no fue creada: esta pantalla sigue sin conexión con la API.
+                Cuenta creada. Ahora iniciá sesión.
               </p>
             )}
 
@@ -193,7 +271,7 @@ export function RegistrationPage() {
                 type="text"
                 autoComplete="name"
                 required
-                disabled={isLoading}
+                disabled={isLoading || isSuccess}
                 value={values.fullName}
                 aria-invalid={errors.fullName ? 'true' : undefined}
                 aria-describedby={errors.fullName ? 'full-name-error' : undefined}
@@ -214,7 +292,7 @@ export function RegistrationPage() {
                 inputMode="email"
                 autoComplete="username"
                 required
-                disabled={isLoading}
+                disabled={isLoading || isSuccess}
                 value={values.email}
                 aria-invalid={errors.email ? 'true' : undefined}
                 aria-describedby={errors.email ? 'email-error' : undefined}
@@ -237,7 +315,7 @@ export function RegistrationPage() {
                   autoComplete="new-password"
                   minLength={MINIMUM_PASSWORD_LENGTH}
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || isSuccess}
                   value={values.password}
                   aria-invalid={errors.password ? 'true' : undefined}
                   aria-describedby={errors.password ? 'password-help password-error' : 'password-help'}
@@ -247,7 +325,7 @@ export function RegistrationPage() {
                 <button
                   className="absolute top-0.5 right-0.5 min-h-12 rounded-md border-0 bg-transparent px-3 py-2 text-sm font-bold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   type="button"
-                  disabled={isLoading}
+                  disabled={isLoading || isSuccess}
                   aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                   aria-pressed={showPassword}
                   onClick={() => setShowPassword((visible) => !visible)}
@@ -270,7 +348,7 @@ export function RegistrationPage() {
                   autoComplete="new-password"
                   enterKeyHint="done"
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || isSuccess}
                   value={values.confirmPassword}
                   aria-invalid={errors.confirmPassword ? 'true' : undefined}
                   aria-describedby={errors.confirmPassword ? 'confirm-password-error' : undefined}
@@ -280,7 +358,7 @@ export function RegistrationPage() {
                 <button
                   className="absolute top-0.5 right-0.5 min-h-12 rounded-md border-0 bg-transparent px-3 py-2 text-sm font-bold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   type="button"
-                  disabled={isLoading}
+                  disabled={isLoading || isSuccess}
                   aria-label={showConfirmation ? 'Ocultar confirmación de contraseña' : 'Mostrar confirmación de contraseña'}
                   aria-pressed={showConfirmation}
                   onClick={() => setShowConfirmation((visible) => !visible)}
@@ -293,12 +371,21 @@ export function RegistrationPage() {
 
             <button
               className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-[#254a36] px-4 py-3 font-extrabold text-[#fffdf8] disabled:cursor-wait disabled:bg-[#345b45] disabled:opacity-100 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
-              disabled={isLoading}
+              disabled={isLoading || isSuccess}
               type="submit"
             >
               {isLoading && <span aria-hidden="true" className="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
               {isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
             </button>
+            {requestError && (
+              <button
+                className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-lg border border-[#254a36] bg-transparent px-4 py-3 font-extrabold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+                type="button"
+                onClick={submitRegistration}
+              >
+                Reintentar
+              </button>
+            )}
           </form>
 
           <p className="mx-auto mt-7 text-center text-sm text-[#5f675c]">
