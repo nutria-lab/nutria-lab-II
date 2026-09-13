@@ -19,6 +19,14 @@ const authenticatedUser = {
   updatedAt: '2026-09-01T00:00:00.000Z',
 };
 
+const registeredUser = {
+  id: 'user-9',
+  email: 'persona@nutria.com',
+  name: 'Persona',
+  createdAt: '2026-09-09T00:00:00.000Z',
+  updatedAt: '2026-09-09T00:00:00.000Z',
+};
+
 const initialAdapter = apiClient.defaults.adapter;
 
 function response(config: InternalAxiosRequestConfig, data: unknown, status = 200): AxiosResponse {
@@ -167,6 +175,47 @@ describe('App authentication routes', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/register');
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
     expect(currentUserRequests).toBe(1);
+  });
+
+  it('registers publicly and navigates to /login after the real API confirms account creation', async () => {
+    const user = userEvent.setup();
+    let registrationConfig: InternalAxiosRequestConfig | undefined;
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        throw failedResponse(config, 401);
+      }
+
+      if (config.url === '/auth/register') {
+        registrationConfig = config;
+        return response(config, registeredUser);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/register');
+    expect(await screen.findByRole('heading', { name: /creá tu cuenta/i })).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/register');
+
+    await user.type(screen.getByLabelText(/^nombre$/i), 'Persona');
+    await user.type(screen.getByLabelText(/correo electrónico/i), 'persona@nutria.com');
+    await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
+    await user.type(screen.getByLabelText(/confirmá tu contraseña/i), 'secreta');
+    fireEvent.submit(document.querySelector('form')!);
+
+    await waitFor(() => expect(registrationConfig).toBeDefined());
+    expect(registrationConfig?.skipAuthErrorHandling).toBe(true);
+    expect(registrationConfig?.timeout).toBe(10_000);
+    expect(registrationConfig?.signal).toBeInstanceOf(AbortSignal);
+    const requestData = registrationConfig?.data;
+    expect(typeof requestData === 'string' ? JSON.parse(requestData) : requestData).toEqual({
+      name: 'Persona',
+      email: 'persona@nutria.com',
+      password: 'secreta',
+    });
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
   });
 
   it('returns to an internal protected destination after login but rejects an external destination', async () => {
