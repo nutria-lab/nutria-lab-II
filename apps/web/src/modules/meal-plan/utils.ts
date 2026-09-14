@@ -27,8 +27,11 @@ export const MEAL_TYPE_LABELS: Record<MealType, string> = {
 };
 
 // Evita el corrimiento de día que da new Date('YYYY-MM-DD') (lo interpreta como UTC).
+// El backend real puede devolver `date` como datetime ISO completo
+// (ej. '2026-09-14T00:00:00.000Z') en vez de 'YYYY-MM-DD'; nos quedamos solo con la
+// porción de fecha antes de parsear los componentes locales.
 export function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
+  const [year, month, day] = dateStr.slice(0, 10).split('-').map(Number);
   return new Date(year, month - 1, day);
 }
 
