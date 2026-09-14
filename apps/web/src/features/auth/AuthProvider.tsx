@@ -17,7 +17,7 @@ export type AuthStatus = 'initializing' | 'authenticated' | 'anonymous';
 type AuthValue = {
   status: AuthStatus;
   user: AuthenticatedUser | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
 };
 
@@ -27,8 +27,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('initializing');
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const invalidatingRef = useRef(false);
-  const restorationVersionRef = useRef(0);
+  const sessionVersionRef = useRef(0);
   const restorationPromiseRef = useRef<Promise<AuthenticatedUser> | null>(null);
+  const loginPromiseRef = useRef<Promise<boolean> | null>(null);
+  const sessionMutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const sessionMutationPendingRef = useRef(false);
   const location = useLocation();
   const navigate = useNavigate();
   const locationRef = useRef(location);
@@ -37,25 +40,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   locationRef.current = location;
   navigateRef.current = navigate;
 
+  const enqueueSessionMutation = useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
+    if (!sessionMutationPendingRef.current) {
+      let mutation: Promise<T>;
+
+      try {
+        mutation = operation();
+      } catch (error) {
+        mutation = Promise.reject(error);
+      }
+
+      sessionMutationPendingRef.current = true;
+      const tail = mutation.then(() => undefined, () => undefined);
+      sessionMutationQueueRef.current = tail;
+      void tail.finally(() => {
+        if (sessionMutationQueueRef.current === tail) {
+          sessionMutationPendingRef.current = false;
+        }
+      });
+      return mutation;
+    }
+
+    const queued = sessionMutationQueueRef.current.then(operation, operation);
+    const tail = queued.then(() => undefined, () => undefined);
+    sessionMutationQueueRef.current = tail;
+    return queued;
+  }, []);
+
   const invalidate = useCallback(async () => {
     if (invalidatingRef.current) {
       return;
     }
 
     invalidatingRef.current = true;
-    restorationVersionRef.current += 1;
+    sessionVersionRef.current += 1;
     setUser(null);
     setStatus('anonymous');
-    void authService.logout();
 
     if (!locationRef.current.pathname.startsWith('/login')) {
       navigateRef.current('/login', { replace: true });
     }
-  }, []);
+
+    await enqueueSessionMutation(() => authService.logout());
+  }, [enqueueSessionMutation]);
 
   useEffect(() => {
     let isActive = true;
-    const restorationVersion = restorationVersionRef.current;
+    const restorationVersion = sessionVersionRef.current;
     const restoration = restorationPromiseRef.current
       ?? authService.getCurrentUser();
 
@@ -63,13 +94,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void restoration
       .then((next) => {
-        if (isActive && restorationVersion === restorationVersionRef.current) {
+        if (isActive && restorationVersion === sessionVersionRef.current) {
           setUser(next);
           setStatus('authenticated');
         }
       })
       .catch(() => {
-        if (isActive && restorationVersion === restorationVersionRef.current) {
+        if (isActive && restorationVersion === sessionVersionRef.current) {
           setStatus('anonymous');
         }
       });
@@ -82,13 +113,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [invalidate]);
 
-  const login = async (email: string, password: string) => {
-    const next = await authService.login({ email, password });
-    invalidatingRef.current = false;
-    restorationVersionRef.current += 1;
-    setUser(next);
-    setStatus('authenticated');
-  };
+  const login = useCallback((email: string, password: string) => {
+    if (loginPromiseRef.current) {
+      return loginPromiseRef.current;
+    }
+
+    const loginVersion = sessionVersionRef.current + 1;
+    sessionVersionRef.current = loginVersion;
+    const loginPromise = enqueueSessionMutation(async () => {
+      const next = await authService.login({ email, password });
+
+      if (loginVersion === sessionVersionRef.current) {
+        invalidatingRef.current = false;
+        setUser(next);
+        setStatus('authenticated');
+        return true;
+      }
+
+      return false;
+    });
+
+    loginPromiseRef.current = loginPromise;
+    void loginPromise.then(() => {
+      if (loginPromiseRef.current === loginPromise) {
+        loginPromiseRef.current = null;
+      }
+    }, () => {
+      if (loginPromiseRef.current === loginPromise) {
+        loginPromiseRef.current = null;
+      }
+    });
+
+    return loginPromise;
+  }, [enqueueSessionMutation]);
 
   const logout = async () => {
     await invalidate();

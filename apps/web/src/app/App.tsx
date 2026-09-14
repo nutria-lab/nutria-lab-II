@@ -20,28 +20,37 @@ function LoginRoute() {
     ? intendedPath
     : '/goals';
 
-  if (authStatus === 'initializing') return <main role="status" aria-label="Comprobando sesión">Comprobando sesión…</main>;
   if (authStatus === 'authenticated') return <Navigate replace to={destination} />;
 
   async function handleLogin(credentials: LoginSubmission) {
+    if (authStatus !== 'anonymous' || status === 'loading') {
+      return;
+    }
+
     setStatus('loading');
 
     try {
-      await login(credentials.email, credentials.password);
-      navigate(destination);
+      const accepted = await login(credentials.email, credentials.password);
+      if (accepted) {
+        navigate(destination);
+        return;
+      }
     } catch (error) {
       setStatus(error instanceof LoginRequestError && error.kind === 'invalidCredentials'
         ? 'invalidCredentials'
         : 'networkError');
+      return;
     }
+
+    setStatus('idle');
   }
 
   return (
     <LoginPage
-      status={status}
+      status={authStatus === 'initializing' ? 'restoring' : status}
       onSubmit={handleLogin}
       onCredentialsChange={() => {
-        setStatus('idle');
+        setStatus((currentStatus) => currentStatus === 'loading' ? currentStatus : 'idle');
       }}
     />
   );

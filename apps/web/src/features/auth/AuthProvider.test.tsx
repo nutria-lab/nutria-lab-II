@@ -1,5 +1,5 @@
 import { StrictMode } from 'react';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import {
   AxiosError,
   type AxiosResponse,
@@ -49,6 +49,35 @@ function AuthProbe() {
 function LocationProbe() {
   const location = useLocation();
   return <output data-testid="location">{location.pathname}</output>;
+}
+
+function AuthMutationProbe() {
+  const { login, logout } = useAuth();
+
+  return (
+    <>
+      <button type="button" onClick={() => { void login('a@nutria.com', 'secreta').catch(() => undefined); }}>
+        Login A
+      </button>
+      <button type="button" onClick={() => { void login('b@nutria.com', 'secreta').catch(() => undefined); }}>
+        Login B
+      </button>
+      <button type="button" onClick={() => { void logout().catch(() => undefined); }}>
+        Logout
+      </button>
+    </>
+  );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return { promise, reject, resolve };
 }
 
 function renderProvider(initialPath = '/goals') {
@@ -187,5 +216,131 @@ describe('AuthProvider authorization failures', () => {
     await apiClient.get('/public', { skipAuthErrorHandling: true }).catch(() => undefined);
 
     expect(screen.getByTestId('auth-state')).toHaveTextContent(`authenticated:${user.email}`);
+  });
+});
+
+describe('AuthProvider session mutation ordering', () => {
+  it('dispatches one accepted login while another login is requested before the first response resolves', async () => {
+    const pendingLogin = deferred<AxiosResponse>();
+    let loginRequests = 0;
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return Promise.reject(failedResponse(config, 401));
+      }
+
+      if (config.url === '/auth/login') {
+        loginRequests += 1;
+        return pendingLogin.promise;
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <AuthProbe />
+          <AuthMutationProbe />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText('anonymous:');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Login A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Login B' }));
+
+    expect(loginRequests).toBe(1);
+
+    pendingLogin.resolve(response({ url: '/auth/login' } as InternalAxiosRequestConfig, user));
+    await waitFor(() => expect(screen.getByTestId('auth-state')).toHaveTextContent(`authenticated:${user.email}`));
+    expect(loginRequests).toBe(1);
+  });
+
+  it('waits for a pending remote logout before dispatching a new login and finishes authenticated', async () => {
+    const pendingLogout = deferred<AxiosResponse>();
+    const pendingLogin = deferred<AxiosResponse>();
+    let logoutRequests = 0;
+    let loginRequests = 0;
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return Promise.resolve(response(config, user));
+      }
+
+      if (config.url === '/auth/logout') {
+        logoutRequests += 1;
+        return pendingLogout.promise;
+      }
+
+      if (config.url === '/auth/login') {
+        loginRequests += 1;
+        return pendingLogin.promise;
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/goals']}>
+        <AuthProvider>
+          <AuthProbe />
+          <AuthMutationProbe />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText(`authenticated:${user.email}`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Logout' }));
+    await waitFor(() => expect(screen.getByTestId('auth-state')).toHaveTextContent('anonymous:'));
+    expect(logoutRequests).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Login A' }));
+    await Promise.resolve();
+    expect(loginRequests).toBe(0);
+
+    pendingLogout.resolve(response({ url: '/auth/logout' } as InternalAxiosRequestConfig, undefined, 204));
+    await waitFor(() => expect(loginRequests).toBe(1));
+    pendingLogin.resolve(response({ url: '/auth/login' } as InternalAxiosRequestConfig, user));
+
+    await waitFor(() => expect(screen.getByTestId('auth-state')).toHaveTextContent(`authenticated:${user.email}`));
+  });
+
+  it('keeps the final state anonymous when logout follows a pending login', async () => {
+    const pendingLogin = deferred<AxiosResponse>();
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return Promise.reject(failedResponse(config, 401));
+      }
+
+      if (config.url === '/auth/login') {
+        return pendingLogin.promise;
+      }
+
+      if (config.url === '/auth/logout') {
+        return Promise.resolve(response(config, undefined, 204));
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <AuthProvider>
+          <AuthProbe />
+          <AuthMutationProbe />
+        </AuthProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText('anonymous:');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Login A' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Logout' }));
+    await waitFor(() => expect(screen.getByTestId('auth-state')).toHaveTextContent('anonymous:'));
+
+    await act(async () => {
+      pendingLogin.resolve(response({ url: '/auth/login' } as InternalAxiosRequestConfig, user));
+      await Promise.resolve();
+    });
+
+    expect(screen.getByTestId('auth-state')).toHaveTextContent('anonymous:');
   });
 });

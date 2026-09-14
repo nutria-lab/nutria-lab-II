@@ -27,6 +27,13 @@ const registeredUser = {
   updatedAt: '2026-09-09T00:00:00.000Z',
 };
 
+const nutritionProfile = {
+  goal: 'MAINTAIN',
+  diet: 'ALL',
+  excludedIngredients: [] as const,
+  cookTimePreference: 'STANDARD',
+};
+
 const initialAdapter = apiClient.defaults.adapter;
 
 function response(config: InternalAxiosRequestConfig, data: unknown, status = 200): AxiosResponse {
@@ -47,6 +54,17 @@ function failedResponse(config: InternalAxiosRequestConfig, status: number) {
     undefined,
     response(config, {}, status),
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return { promise, reject, resolve };
 }
 
 function LocationProbe() {
@@ -78,6 +96,66 @@ afterEach(() => {
 });
 
 describe('App authentication routes', () => {
+  it('keeps the public login form visible but semantically inactive while session restoration is pending, then enables it for an anonymous visitor', async () => {
+    const person = userEvent.setup();
+    const pendingRestoration = deferred<AxiosResponse>();
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return pendingRestoration.promise;
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/login');
+
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(screen.queryByRole('status', { name: /comprobando sesión/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    expect(document.querySelector('form')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByLabelText(/correo/i)).toBeDisabled();
+    expect(screen.getByLabelText(/^contraseña$/i)).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: /recordarme/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Iniciá sesión' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /mostrar contraseña/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeDisabled();
+    const register = screen.getByRole('link', { name: 'Registrate' });
+    expect(register).toHaveAttribute('aria-disabled', 'true');
+    expect(register).toHaveAttribute('tabindex', '-1');
+
+    await person.click(register);
+    expect(screen.getByTestId('location')).toHaveTextContent('/login');
+
+    pendingRestoration.reject(failedResponse({ url: '/auth/me' } as InternalAxiosRequestConfig, 401));
+    await waitFor(() => expect(screen.getByLabelText(/correo/i)).toBeEnabled());
+
+    expect(document.querySelector('form')).not.toHaveAttribute('aria-busy');
+    expect(screen.getByLabelText(/^contraseña$/i)).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: /recordarme/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Iniciá sesión' })).toBeEnabled();
+    expect(screen.getByRole('link', { name: 'Registrate' })).not.toHaveAttribute('aria-disabled');
+  });
+
+  it('redirects an authenticated visitor from login to its validated protected destination after restoration', async () => {
+    const pendingRestoration = deferred<AxiosResponse>();
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return pendingRestoration.promise;
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp({ pathname: '/login', state: { from: { pathname: '/dashboard' } } });
+
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(screen.getByLabelText(/correo/i)).toBeDisabled();
+    pendingRestoration.resolve(response({ url: '/auth/me' } as InternalAxiosRequestConfig, authenticatedUser));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  });
+
   it('renders only an accessible session-checking status while initial identity restoration is unresolved', () => {
     apiClient.defaults.adapter = () => new Promise<AxiosResponse>(() => undefined);
 
@@ -158,6 +236,40 @@ describe('App authentication routes', () => {
     expect(loginRequests).toBe(1);
   });
 
+  it('keeps the accepted login pending when credentials are edited and blocks a second submit', async () => {
+    const person = userEvent.setup();
+    const pendingLogin = deferred<AxiosResponse>();
+    let loginRequests = 0;
+    apiClient.defaults.adapter = (config) => {
+      if (config.url === '/auth/me') {
+        return Promise.reject(failedResponse(config, 401));
+      }
+
+      if (config.url === '/auth/login') {
+        loginRequests += 1;
+        return pendingLogin.promise;
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/login');
+    await screen.findByRole('heading', { name: /iniciá sesión/i });
+    await completeValidCredentials(person);
+    fireEvent.submit(document.querySelector('form')!);
+    await waitFor(() => expect(loginRequests).toBe(1));
+    expect(screen.getByRole('button', { name: 'Iniciando sesión...' })).toBeDisabled();
+
+    await person.type(screen.getByLabelText(/correo/i), '.edit');
+
+    expect(screen.getByRole('button', { name: 'Iniciando sesión...' })).toBeDisabled();
+    fireEvent.submit(document.querySelector('form')!);
+    expect(loginRequests).toBe(1);
+
+    pendingLogin.resolve(response({ url: '/auth/login' } as InternalAxiosRequestConfig, authenticatedUser));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/goals'));
+  });
+
   it('keeps the NUT-8 registration route public after anonymous session restoration', async () => {
     let currentUserRequests = 0;
     apiClient.defaults.adapter = async (config) => {
@@ -225,7 +337,11 @@ describe('App authentication routes', () => {
         throw failedResponse(config, 401);
       }
 
-      return response(config, authenticatedUser);
+      if (config.url === '/auth/login') {
+        return response(config, authenticatedUser);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
     };
 
     const internalDestination = renderApp({ pathname: '/login', state: { from: { pathname: '/dashboard' } } });
@@ -241,7 +357,15 @@ describe('App authentication routes', () => {
         throw failedResponse(config, 401);
       }
 
-      return response(config, authenticatedUser);
+      if (config.url === '/auth/login') {
+        return response(config, authenticatedUser);
+      }
+
+      if (config.url === '/nutrition-profile') {
+        return response(config, nutritionProfile);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
     };
 
     renderApp({ pathname: '/login', state: { from: { pathname: '//evil.test' } } });
