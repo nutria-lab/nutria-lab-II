@@ -14,6 +14,11 @@ El cliente Axios usa `withCredentials`; no necesita ni debe leer, almacenar ni
 persistir el JWT. La UI sí necesita distinguir una restauración inicial de una sesión
 anónima para no mostrar una ruta protegida antes de conocer `GET /auth/me`.
 
+En Vercel, el navegador usa una base relativa `/api`. Un rewrite del proyecto web
+reenvía ese prefijo al backend, por lo que login, restauración y logout conservan un
+origen visible único para la cookie Strict. Producción y Preview deben configurar
+explícitamente `VITE_API_URL=/api`; desarrollo local conserva la URL de localhost.
+
 ## Decisión
 
 - La única fuente persistente de autenticación es la cookie HttpOnly del servidor.
@@ -36,6 +41,9 @@ anónima para no mostrar una ruta protegida antes de conocer `GET /auth/me`.
 - Login y logout deben usar exactamente el mismo `path` de cookie (además de
   `httpOnly`, `secure` y `sameSite`) para que logout pueda retirar la credencial que
   login emitió.
+- El despliegue web usa el proxy same-site `/api` antes del fallback SPA. No se
+  relaja la cookie a `SameSite=None`: el requisito operativo es configurar
+  `VITE_API_URL=/api` tanto en Producción como en Preview.
 
 ## Alternativas descartadas
 
@@ -49,7 +57,10 @@ anónima para no mostrar una ruta protegida antes de conocer `GET /auth/me`.
 
 ## Consecuencias y reversión
 
-La aplicación mantiene la sesión sólo mientras el servidor conserva la cookie y
-necesita que CORS permita credenciales. No hay cambios de base de datos, migraciones
-ni persistencia de secretos. Si se cambia el contrato de sesión, se puede reemplazar
-el adaptador `authService` y la política del proveedor sin migrar datos de usuario.
+La aplicación mantiene la sesión sólo mientras el servidor conserva la cookie. El
+proxy de Vercel evita que el navegador dependa de una llamada cross-site para el flujo
+web desplegado; una configuración ausente de `VITE_API_URL=/api` en Producción o
+Preview rompe ese supuesto y debe corregirse como incidente de despliegue. No hay
+cambios de base de datos, migraciones ni persistencia de secretos. Si se cambia el
+contrato de sesión, se puede reemplazar el adaptador `authService` y la política del
+proveedor sin migrar datos de usuario.

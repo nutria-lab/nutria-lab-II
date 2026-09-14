@@ -64,6 +64,7 @@ describe('authService', () => {
     expect(request.method).toBe('post');
     expect(JSON.parse(request.data as string)).toEqual(credentials);
     expect(request.skipAuthErrorHandling).toBeUndefined();
+    expect(request.timeout).toBe(10_000);
   });
 
   it('gets the current user with the global authorization handler explicitly skipped', async () => {
@@ -118,6 +119,14 @@ describe('authService', () => {
     await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
 
     apiClient.defaults.adapter = async (config) => response(config, { id: user.id, email: user.email });
+
+    await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
+  });
+
+  it('maps a bounded login timeout to the recoverable network state', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw new AxiosError('login timed out', 'ECONNABORTED', config);
+    };
 
     await expect(authService.login(credentials)).rejects.toMatchObject({ kind: 'network' });
   });
