@@ -7,5 +7,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    // Valor de reserva para CI y checkouts limpios, que no tienen un .env real.
+    // Los tests que necesiten probar el caso "variable ausente" la pisan con vi.stubEnv.
+    env: {
+      VITE_API_URL: 'http://localhost:3000',
+    },
   },
 });

@@ -4,7 +4,7 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { LoginPage } from './LoginPage';
+import { LoginPage, type LoginPageStatus } from './LoginPage';
 
 afterEach(cleanup);
 
@@ -167,6 +167,25 @@ describe('LoginPage', () => {
     expect(submit).toBeDisabled();
     expect(screen.getByLabelText(/correo/i)).toBeVisible();
     expect(screen.getByLabelText(/^contraseña$/i)).toBeVisible();
+  });
+
+  it('keeps the recognizable form but removes authentication controls from keyboard interaction while session restoration is pending', async () => {
+    const user = userEvent.setup();
+    renderLogin(<LoginPage status={'restoring' as unknown as LoginPageStatus} />);
+
+    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(document.querySelector('form')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByLabelText(/correo/i)).toBeDisabled();
+    expect(screen.getByLabelText(/^contraseña$/i)).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: /recordarme/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /mostrar contraseña/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Iniciá sesión' })).toBeDisabled();
+    expect(screen.getByRole('link', { name: 'Registrate' })).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByRole('link', { name: 'Registrate' })).toHaveAttribute('tabindex', '-1');
+
+    await user.tab();
+    expect(document.activeElement).toBe(document.body);
   });
 
   it('delegates one locally valid submit with only the email and password', async () => {

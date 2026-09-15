@@ -11,11 +11,8 @@ export function MealCard({ meal }: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { recipe } = meal;
 
-  const servingsLabel =
-    meal.servings != null ? `${meal.servings} ${meal.servings === 1 ? 'porción' : 'porciones'}` : null;
-
-  // La receta puede venir ausente aunque el tipo la declare obligatoria: es un límite
-  // externo (API), no algo que TypeScript pueda garantizar en tiempo de ejecución.
+  // NUT-10 / plan.md sección 3: el contrato real de `PlannedMeal` no tiene `servings` en
+  // ningún nivel (ni el `PlannedMeal` ni `Recipe`); no se muestra ninguna etiqueta de porciones.
   if (!recipe) {
     return (
       <div className="flex min-h-[44px] items-center gap-4 rounded-2xl bg-white p-4 shadow-sm">
@@ -42,10 +39,7 @@ export function MealCard({ meal }: MealCardProps) {
         <div className="h-14 w-14 shrink-0 rounded-xl bg-brand-cream-dark" aria-hidden="true" />
         <div className="flex-1">
           <p className="font-serif text-base font-semibold text-neutral-900">{recipe.title}</p>
-          <p className="text-sm text-neutral-500">
-            {MEAL_TYPE_LABELS[meal.mealType]}
-            {servingsLabel ? ` · ${servingsLabel}` : ''}
-          </p>
+          <p className="text-sm text-neutral-500">{MEAL_TYPE_LABELS[meal.mealType]}</p>
         </div>
         <ChevronIcon
           className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}

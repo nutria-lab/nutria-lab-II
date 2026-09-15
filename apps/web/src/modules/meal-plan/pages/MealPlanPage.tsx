@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { WeekSelector } from '../components/WeekSelector';
@@ -31,7 +31,7 @@ function LoadingSkeleton() {
   );
 }
 
-function EmptyState() {
+function EmptyState({ onGenerate }: { onGenerate: () => void }) {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
       <p className="font-serif text-lg font-semibold text-neutral-900">
@@ -42,6 +42,7 @@ function EmptyState() {
       </p>
       <button
         type="button"
+        onClick={onGenerate}
         className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
       >
         Generar plan
@@ -67,23 +68,37 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function MealPlanPage() {
-  const { mealPlan, status, errorMessage, retry } = useMealPlan();
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const { mealPlan, status, errorMessage, retry, generate } = useMealPlan();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  useEffect(() => {
-    if (mealPlan && !selectedDate) {
-      const today = formatLocalDateKey(new Date());
-      const matchesToday = mealPlan.days.some((day) => day.date === today);
-      setSelectedDate(matchesToday ? today : (mealPlan.days[0]?.date ?? null));
+  // Decisión 3 del design.md: el día activo vive en el query param `day`, no en un
+  // `useState` local, para sobrevivir a un refresh y a la navegación de ida y vuelta.
+  const dayParam = searchParams.get('day');
+  const defaultDate = (() => {
+    if (!mealPlan) {
+      return null;
     }
-  }, [mealPlan, selectedDate]);
+    const today = formatLocalDateKey(new Date());
+    const matchesToday = mealPlan.days.some((day) => day.date === today);
+    return matchesToday ? today : (mealPlan.days[0]?.date ?? null);
+  })();
+  const selectedDate =
+    mealPlan && dayParam && mealPlan.days.some((day) => day.date === dayParam) ? dayParam : defaultDate;
+
+  function handleSelectDate(date: string) {
+    setSearchParams((previousParams) => {
+      const nextParams = new URLSearchParams(previousParams);
+      nextParams.set('day', date);
+      return nextParams;
+    });
+  }
 
   if (status === 'loading' && !mealPlan) {
     return <LoadingSkeleton />;
   }
 
   if (status === 'empty') {
-    return <EmptyState />;
+    return <EmptyState onGenerate={() => generate?.()} />;
   }
 
   if (status === 'error' && !mealPlan) {
@@ -105,7 +120,7 @@ export function MealPlanPage() {
 
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
-      <WeekSelector days={mealPlan.days} selectedDate={selectedDate} onSelectDate={setSelectedDate} />
+      <WeekSelector days={mealPlan.days} selectedDate={selectedDate} onSelectDate={handleSelectDate} />
 
       <h2 className="font-serif text-lg font-semibold text-neutral-900">{formatFullDate(selectedDate)}</h2>
 
