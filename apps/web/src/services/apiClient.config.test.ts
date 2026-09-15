@@ -9,13 +9,15 @@ describe('apiClient env configuration', () => {
     vi.unstubAllEnvs();
   });
 
-  it('throws a clear, actionable error when VITE_API_URL is missing', async () => {
+  it('throws a clear, actionable error during development when VITE_API_URL is missing', async () => {
+    vi.stubEnv('DEV', true);
     vi.stubEnv('VITE_API_URL', '');
 
     await expect(import('./apiClient')).rejects.toThrow('VITE_API_URL no está configurada.');
   });
 
-  it('creates the client with the configured backend URL', async () => {
+  it('uses the configured local backend URL during development', async () => {
+    vi.stubEnv('DEV', true);
     vi.stubEnv('VITE_API_URL', 'https://nutria-lab-ii-api.vercel.app');
 
     const { apiClient } = await import('./apiClient');
@@ -24,8 +26,9 @@ describe('apiClient env configuration', () => {
     expect(apiClient.defaults.withCredentials).toBe(true);
   });
 
-  it('accepts a same-site relative API base URL for the deployed proxy', async () => {
-    vi.stubEnv('VITE_API_URL', '/api');
+  it('uses the same-site API prefix outside development', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_API_URL', '');
 
     const { apiClient } = await import('./apiClient');
 

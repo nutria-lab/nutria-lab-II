@@ -17,7 +17,7 @@ const EXCLUDED_AUTH_PATHS = new Set([
   '/auth/logout',
 ]);
 
-const backendUrl = import.meta.env.VITE_API_URL;
+const backendUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : '/api';
 
 if (!backendUrl) {
   // Falla rápido y explícito: sin esto, las requests saldrían con una base
