@@ -18,13 +18,14 @@ describe('LoginPage', () => {
 
     expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.getByText('Ingresá tus datos para continuar')).toBeVisible();
-    expect(screen.getByText('NutrIA')).toBeVisible();
-    const brandIcon = document.querySelector('img');
-    expect(brandIcon).toHaveAttribute('src', expect.stringContaining('nutria-icon.png'));
-    expect(brandIcon).toHaveAttribute('alt', '');
-    expect(brandIcon).toHaveAttribute('aria-hidden', 'true');
-    expect(brandIcon?.parentElement).toHaveClass('justify-between');
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    const [wordmark, isotype] = Array.from(document.querySelectorAll('img'));
+    expect(wordmark).toHaveAttribute('src', expect.stringContaining('nutria-wordmark.png'));
+    expect(wordmark).toHaveAttribute('alt', 'NutrIA');
+    expect(isotype).toHaveAttribute('src', expect.stringContaining('nutria-isotype.png'));
+    expect(isotype).toHaveAttribute('alt', '');
+    expect(isotype).toHaveAttribute('aria-hidden', 'true');
+    expect(wordmark?.parentElement).toHaveClass('justify-between', 'min-w-0');
+    expect(screen.getAllByRole('img', { name: 'NutrIA' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
     const register = screen.getByRole('link', { name: 'Registrate' });
     expect(register).toBeVisible();

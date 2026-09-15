@@ -5,13 +5,15 @@ import { BrandMark } from './BrandMark';
 
 afterEach(cleanup);
 
-function expectDecorativeOfficialIcon(container: HTMLElement) {
-  const icon = container.querySelector('img');
+function expectOfficialBrandAssets(container: HTMLElement) {
+  const [wordmark, isotype] = Array.from(container.querySelectorAll('img'));
 
-  expect(icon).toHaveAttribute('src', expect.stringContaining('nutria-icon.png'));
-  expect(icon).toHaveAttribute('alt', '');
-  expect(icon).toHaveAttribute('aria-hidden', 'true');
-  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+  expect(wordmark).toHaveAttribute('src', expect.stringContaining('nutria-wordmark.png'));
+  expect(wordmark).toHaveAttribute('alt', 'NutrIA');
+  expect(isotype).toHaveAttribute('src', expect.stringContaining('nutria-isotype.png'));
+  expect(isotype).toHaveAttribute('alt', '');
+  expect(isotype).toHaveAttribute('aria-hidden', 'true');
+  expect(screen.getAllByRole('img', { name: 'NutrIA' })).toHaveLength(1);
 }
 
 function expectNoAdditionalFocusableControls(container: HTMLElement) {
@@ -19,22 +21,21 @@ function expectNoAdditionalFocusableControls(container: HTMLElement) {
 }
 
 describe('BrandMark', () => {
-  it('renders the shared authentication identity with text and the official decorative icon at opposite ends', () => {
+  it('renders the official Linear wordmark first and its decorative isotype second for authentication', () => {
     const { container } = render(<BrandMark variant="auth" />);
 
-    expect(screen.getByText('NutrIA')).toBeVisible();
     expect(container.firstElementChild).toHaveClass('flex', 'justify-between');
-    expectDecorativeOfficialIcon(container);
+    expect(container.firstElementChild).toHaveClass('min-w-0');
+    expectOfficialBrandAssets(container);
     expectNoAdditionalFocusableControls(container);
   });
 
-  it('renders the shared application identity as one centered, accessible brand without duplicating its name', () => {
+  it('renders both official assets together for the application without duplicating its accessible name', () => {
     const { container } = render(<BrandMark variant="app" />);
 
-    expect(screen.getByText('NutrIA')).toBeVisible();
     expect(container.firstElementChild).toHaveClass('flex', 'justify-center');
-    expect(screen.getAllByText('NutrIA')).toHaveLength(1);
-    expectDecorativeOfficialIcon(container);
+    expect(container.firstElementChild).toHaveClass('min-w-0');
+    expectOfficialBrandAssets(container);
     expectNoAdditionalFocusableControls(container);
   });
 });

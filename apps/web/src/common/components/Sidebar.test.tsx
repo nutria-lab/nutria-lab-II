@@ -14,13 +14,14 @@ describe('Sidebar', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('NutrIA')).toBeVisible();
-    const icon = container.querySelector('img');
-    expect(icon).toHaveAttribute('src', expect.stringContaining('nutria-icon.png'));
-    expect(icon).toHaveAttribute('alt', '');
-    expect(icon).toHaveAttribute('aria-hidden', 'true');
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(icon?.parentElement).toHaveClass('justify-center');
+    const [wordmark, isotype] = Array.from(container.querySelectorAll('img'));
+    expect(wordmark).toHaveAttribute('src', expect.stringContaining('nutria-wordmark.png'));
+    expect(wordmark).toHaveAttribute('alt', 'NutrIA');
+    expect(isotype).toHaveAttribute('src', expect.stringContaining('nutria-isotype.png'));
+    expect(isotype).toHaveAttribute('alt', '');
+    expect(isotype).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getAllByRole('img', { name: 'NutrIA' })).toHaveLength(1);
+    expect(wordmark?.parentElement).toHaveClass('justify-center', 'min-w-0');
 
     expect(screen.getByRole('link', { name: 'Goals' })).toHaveAttribute('href', '/goals');
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/dashboard');
