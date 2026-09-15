@@ -1,92 +1,89 @@
-import { useEffect, useRef, useState } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { useState, type ReactNode } from 'react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
+import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
 import { RegistrationPage } from '../features/auth/RegistrationPage';
-import { PrivateRoute } from './PrivateRoute';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
+import { LoginRequestError } from '../services/authService';
 import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
-import { authService, LoginRequestError } from '../services/authService';
 
 function LoginRoute() {
+  const { status: authStatus, login } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const [status, setStatus] = useState<LoginPageStatus>('idle');
-  const isMountedRef = useRef(true);
-  const loginInFlightRef = useRef(false);
+  const intendedPath = (location.state as { from?: { pathname?: string } } | null)
+    ?.from?.pathname;
+  const destination = intendedPath?.startsWith('/') && !intendedPath.startsWith('//')
+    ? intendedPath
+    : '/goals';
 
-  useEffect(() => {
-    isMountedRef.current = true;
-
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
+  if (authStatus === 'authenticated') return <Navigate replace to={destination} />;
 
   async function handleLogin(credentials: LoginSubmission) {
-    if (loginInFlightRef.current) {
+    if (authStatus !== 'anonymous' || status === 'loading') {
       return;
     }
 
-    loginInFlightRef.current = true;
     setStatus('loading');
 
     try {
-      await authService.login(credentials);
-
-      if (!isMountedRef.current) {
+      const accepted = await login(credentials.email, credentials.password);
+      if (accepted) {
+        navigate(destination);
         return;
       }
-
-      loginInFlightRef.current = false;
-      navigate('/goals');
     } catch (error) {
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      loginInFlightRef.current = false;
       setStatus(error instanceof LoginRequestError && error.kind === 'invalidCredentials'
         ? 'invalidCredentials'
         : 'networkError');
+      return;
     }
+
+    setStatus('idle');
   }
 
   return (
     <LoginPage
-      status={status}
+      status={authStatus === 'initializing' ? 'restoring' : status}
       onSubmit={handleLogin}
       onCredentialsChange={() => {
-        if (!loginInFlightRef.current) {
-          setStatus('idle');
-        }
+        setStatus((currentStatus) => currentStatus === 'loading' ? currentStatus : 'idle');
       }}
     />
   );
 }
 
+function ProtectedApp({ children }: { children: ReactNode }) {
+  const { status, logout } = useAuth();
+  const location = useLocation();
+  if (status === 'initializing') return <main role="status" aria-label="Comprobando sesión">Comprobando sesión…</main>;
+  if (status === 'anonymous') return <Navigate replace to="/login" state={{ from: location }} />;
+  return <AppLayout onLogout={logout}>{children}</AppLayout>;
+}
+
 export function App() {
   return (
-    <Routes>
+    <AuthProvider><Routes>
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/register" element={<RegistrationPage />} />
-      <Route element={<PrivateRoute />}>
-        <Route
-          path="*"
-          element={(
-            <AppLayout>
-              <Routes>
-                <Route path="/" element={<Navigate to="/goals" replace />} />
-                <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
-                <Route path="/meal-plan" element={<MealPlanPage />} />
-                <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
-                <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
-                <Route path="/goals" element={<PreferencesPage />} />
-              </Routes>
-            </AppLayout>
-          )}
-        />
-      </Route>
-    </Routes>
+      <Route
+        path="*"
+        element={(
+          <ProtectedApp>
+            <Routes>
+              <Route path="/" element={<Navigate to="/goals" replace />} />
+              <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
+              <Route path="/meal-plan" element={<MealPlanPage />} />
+              <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
+              <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
+              <Route path="/goals" element={<PreferencesPage />} />
+            </Routes>
+          </ProtectedApp>
+        )}
+      />
+    </Routes></AuthProvider>
   );
 }

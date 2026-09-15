@@ -17,8 +17,16 @@ const EXCLUDED_AUTH_PATHS = new Set([
   '/auth/logout',
 ]);
 
+const backendUrl = import.meta.env.VITE_API_URL;
+
+if (!backendUrl) {
+  // Falla rápido y explícito: sin esto, las requests saldrían con una base
+  // URL vacía y los errores de red se verían como fallas genéricas.
+  throw new Error('VITE_API_URL no está configurada.');
+}
+
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: backendUrl,
   withCredentials: true,
 });
 
