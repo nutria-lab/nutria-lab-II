@@ -23,4 +23,13 @@ describe('apiClient env configuration', () => {
     expect(apiClient.defaults.baseURL).toBe('https://nutria-lab-ii-api.vercel.app');
     expect(apiClient.defaults.withCredentials).toBe(true);
   });
+
+  it('accepts a same-site relative API base URL for the deployed proxy', async () => {
+    vi.stubEnv('VITE_API_URL', '/api');
+
+    const { apiClient } = await import('./apiClient');
+
+    expect(apiClient.defaults.baseURL).toBe('/api');
+    expect(apiClient.defaults.withCredentials).toBe(true);
+  });
 });

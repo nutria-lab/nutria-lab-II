@@ -1,7 +1,10 @@
+import { UnauthorizedException } from '@nestjs/common';
+import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { RequestMethod } from '@nestjs/common/enums/request-method.enum';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from '@/modules/auth/auth.controller';
 import { AuthService } from '@/modules/auth/auth.service';
-import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
+import { AuthenticatedRequest, JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
 import { Response } from 'express';
 
 describe('AuthController', () => {
@@ -85,6 +88,7 @@ describe('AuthController', () => {
         expect.objectContaining({
           httpOnly: true,
           sameSite: 'strict',
+          path: '/',
           maxAge: 24 * 60 * 60 * 1000,
         }),
       );
@@ -118,6 +122,49 @@ describe('AuthController', () => {
       await expect(controller.logout(mockRes)).resolves.not.toThrow();
       await expect(controller.logout(mockRes)).resolves.not.toThrow();
       expect(mockRes.clearCookie).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('me', () => {
+    const safeUser = {
+      id: '1',
+      email: 'test@example.com',
+      name: 'Test User',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+    };
+    const protectedController = AuthController.prototype as unknown as {
+      me: (request: AuthenticatedRequest) => Promise<typeof safeUser>;
+    };
+
+    it('expone GET /auth/me protegido por JwtAuthGuard', () => {
+      expect(Reflect.getMetadata(PATH_METADATA, protectedController.me)).toBe('me');
+      expect(Reflect.getMetadata(METHOD_METADATA, protectedController.me)).toBe(RequestMethod.GET);
+      expect(Reflect.getMetadata(GUARDS_METADATA, protectedController.me)).toContain(JwtAuthGuard);
+    });
+
+    it('devuelve el usuario seguro asociado al sub autenticado', async () => {
+      authService.findById.mockResolvedValue(safeUser);
+      const request = { user: { sub: safeUser.id, email: safeUser.email } } as AuthenticatedRequest;
+
+      const result = await protectedController.me.call(controller, request);
+
+      expect(authService.findById).toHaveBeenCalledWith(safeUser.id);
+      expect(result).toEqual(safeUser);
+      expect(result).not.toHaveProperty('passwordHash');
+      expect(result).not.toHaveProperty('token');
+    });
+
+    it('rechaza con 401 cuando el sujeto del JWT ya no existe', async () => {
+      authService.findById.mockResolvedValue(null);
+      const request = { user: { sub: 'deleted-user', email: 'deleted@example.com' } } as AuthenticatedRequest;
+
+      await expect(protectedController.me.call(controller, request)).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      await expect(protectedController.me.call(controller, request)).rejects.toMatchObject({
+        status: 401,
+      });
     });
   });
 });
