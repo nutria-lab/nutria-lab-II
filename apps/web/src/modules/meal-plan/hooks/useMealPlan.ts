@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { mealPlanService, MealPlanRequestError, type MealPlan } from '../../../services/mealPlanService';
+import { mealPlanService, type MealPlan } from '../../../services/mealPlanService';
 import { formatLocalDateKey } from '../utils';
 
-type Status = 'loading' | 'empty' | 'error' | 'success' | 'unauthorized';
+type Status = 'loading' | 'empty' | 'error' | 'success';
 
 type UseMealPlanResult = {
   mealPlan: MealPlan | null;
@@ -11,10 +11,6 @@ type UseMealPlanResult = {
   retry: () => void;
   generate: () => Promise<void>;
 };
-
-function isMealPlanUnauthorizedError(error: unknown): boolean {
-  return error instanceof MealPlanRequestError && error.kind === 'unauthorized';
-}
 
 function getCurrentWeekStart(): string {
   const now = new Date();
@@ -65,12 +61,8 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
           setStatus('empty');
         }
       })
-      .catch((error) => {
+      .catch(() => {
         if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (isMealPlanUnauthorizedError(error)) {
-          setStatus('unauthorized');
           return;
         }
         // No se borra el último `mealPlan` válido: si ya había uno cargado, sigue disponible.
@@ -79,7 +71,19 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
       });
   }, [weekStart]);
 
+  // NUT-10 (sexta iteración) — Observación 4 del revisor externo: abortar la petición del
+  // navegador no cancela la generación en curso del lado del servidor. Si el usuario
+  // reintenta mientras la generación anterior sigue en vuelo, un segundo POST puede chocar
+  // contra la constraint única `(userId, startDate)` del backend. Esta ref evita que una
+  // segunda invocación de `generate()` (directa o vía `retry()`) dispare una nueva llamada
+  // al servicio mientras la anterior todavía no resolvió.
+  const generationInFlightRef = useRef(false);
+
   const generate = useCallback(() => {
+    if (generationInFlightRef.current) {
+      return Promise.resolve();
+    }
+    generationInFlightRef.current = true;
     lastActionRef.current = 'generate';
 
     abortControllerRef.current?.abort();
@@ -104,16 +108,40 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
           setStatus('empty');
         }
       })
-      .catch((error) => {
-        if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (isMealPlanUnauthorizedError(error)) {
-          setStatus('unauthorized');
-          return;
-        }
-        setStatus('error');
-        setErrorMessage('No pudimos generar tu plan semanal. Intentá de nuevo.');
+      .catch(() =>
+        // NUT-10 (sexta iteración) — Observación 4: antes de reportar error, reconciliamos
+        // contra `getCurrentMealPlan`, porque el POST puede haber tenido éxito del lado del
+        // servidor pese a que el cliente vio un error/timeout (por ejemplo, el backend sigue
+        // corriendo la llamada a Gemini más allá del timeout del cliente).
+        mealPlanService
+          .getCurrentMealPlan(weekStart, controller.signal)
+          .then((data) => {
+            if (latestRequestIdRef.current !== requestId) {
+              return;
+            }
+            if (data) {
+              setMealPlan(data);
+              setStatus('success');
+            } else {
+              setStatus('error');
+              setErrorMessage('No pudimos generar tu plan semanal. Intentá de nuevo.');
+            }
+          })
+          .catch(() => {
+            if (latestRequestIdRef.current !== requestId) {
+              return;
+            }
+            // Reconciliación ambigua: no pudimos confirmar si el plan quedó creado del
+            // lado del servidor. Un `retry()` posterior debe reconsultar el estado real
+            // (`load`) en vez de disparar otra generación que podría colisionar con una
+            // que quizás sigue corriendo.
+            lastActionRef.current = 'load';
+            setStatus('error');
+            setErrorMessage('No pudimos generar tu plan semanal. Intentá de nuevo.');
+          }),
+      )
+      .finally(() => {
+        generationInFlightRef.current = false;
       });
   }, [weekStart]);
 

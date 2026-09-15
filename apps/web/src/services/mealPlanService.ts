@@ -63,25 +63,11 @@ export type MealPlan = {
 };
 
 const MEAL_PLAN_REQUEST_TIMEOUT_MS = 10_000;
-
-// NUT-10 / Decisión 5 del design.md: un 401 debe ser distinguible de un error genérico
-// para que `useMealPlan` pueda mapearlo a un estado `unauthorized` propio, en vez de caer
-// en el mismo catch que un 500. Sigue el mismo patrón que `registerService.ts`
-// (`RegisterRequestError`): clase de error propia + `skipAuthErrorHandling: true` para que
-// el interceptor global de `apiClient.ts` no dispare también su propio redirect en paralelo.
-export class MealPlanRequestError extends Error {
-  constructor(public readonly kind: 'unauthorized') {
-    super(kind);
-    this.name = 'MealPlanRequestError';
-  }
-}
-
-function rethrowAsUnauthorizedIfApplicable(error: unknown): never {
-  if (axios.isAxiosError(error) && error.response?.status === 401) {
-    throw new MealPlanRequestError('unauthorized');
-  }
-  throw error;
-}
+// NUT-10 (sexta iteración) — Observación 3 del revisor externo: la generación dispara una
+// llamada a Gemini del lado del backend que puede tardar hasta 15s y sigue corriendo en el
+// servidor aunque el cliente aborte antes. Se le da un timeout propio, mayor a 15s, distinto
+// del que usa `getCurrentMealPlan` (consultar el plan actual es una operación rápida).
+const MEAL_PLAN_GENERATION_TIMEOUT_MS = 20_000;
 
 export const mealPlanService = {
   async getCurrentMealPlan(
@@ -91,7 +77,6 @@ export const mealPlanService = {
     try {
       const response = await apiClient.get<MealPlan>('/meal-plans/current', {
         params: { weekStart },
-        skipAuthErrorHandling: true,
         timeout: MEAL_PLAN_REQUEST_TIMEOUT_MS,
         signal,
       });
@@ -99,12 +84,15 @@ export const mealPlanService = {
       if (!data || !Array.isArray(data.days)) {
         throw new Error('La respuesta del servidor no tiene el formato esperado.');
       }
-      // Normaliza `meals` por día: si algún día viene sin el array (o mal formado),
-      // que se comporte como un día sin comidas en vez de romper a quien lo consuma.
+      // Normaliza por día: si algún día viene sin `meals` (o mal formado), que se comporte
+      // como un día sin comidas en vez de romper a quien lo consuma. También normaliza
+      // `date` de datetime ISO completo (`'2026-08-24T00:00:00.000Z'`) a `'YYYY-MM-DD'`: el
+      // prefijo de 10 caracteres de un ISO UTC-medianoche ya es la fecha calendario correcta.
       return {
         ...data,
         days: data.days.map((day) => ({
           ...day,
+          date: day.date.slice(0, 10),
           meals: Array.isArray(day.meals) ? day.meals : [],
         })),
       };
@@ -112,7 +100,7 @@ export const mealPlanService = {
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         return null;
       }
-      rethrowAsUnauthorizedIfApplicable(error);
+      throw error;
     }
   },
 
@@ -120,25 +108,21 @@ export const mealPlanService = {
     weekStart: string,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<MealPlan | null> {
-    try {
-      const response = await apiClient.post<MealPlan>('/meal-plans/generate', { weekStart }, {
-        skipAuthErrorHandling: true,
-        timeout: MEAL_PLAN_REQUEST_TIMEOUT_MS,
-        signal,
-      });
-      const data = response.data;
-      if (!data || !Array.isArray(data.days)) {
-        throw new Error('La respuesta del servidor no tiene el formato esperado.');
-      }
-      return {
-        ...data,
-        days: data.days.map((day) => ({
-          ...day,
-          meals: Array.isArray(day.meals) ? day.meals : [],
-        })),
-      };
-    } catch (error) {
-      rethrowAsUnauthorizedIfApplicable(error);
+    const response = await apiClient.post<MealPlan>('/meal-plans/generate', { weekStart }, {
+      timeout: MEAL_PLAN_GENERATION_TIMEOUT_MS,
+      signal,
+    });
+    const data = response.data;
+    if (!data || !Array.isArray(data.days)) {
+      throw new Error('La respuesta del servidor no tiene el formato esperado.');
     }
+    return {
+      ...data,
+      days: data.days.map((day) => ({
+        ...day,
+        date: day.date.slice(0, 10),
+        meals: Array.isArray(day.meals) ? day.meals : [],
+      })),
+    };
   },
 };

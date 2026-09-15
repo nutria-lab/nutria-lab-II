@@ -1,6 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
-import { useAuth } from '../../../features/auth/AuthProvider';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
@@ -68,34 +67,6 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-// Decisión 5 del design.md: un 401 no ofrece "Reintentar" (fallaría de nuevo por el mismo
-// motivo); deriva a la acción de reautenticación existente en el resto de la app. Post
-// NUT-28, esa acción es `useAuth().logout()`: limpia la sesión en el AuthProvider global y
-// navega a `/login` vía React Router (reemplaza al viejo `clearAuthenticated` + `window.
-// location.assign`, que dejaron de existir cuando NUT-28 reescribió el módulo de auth).
-function UnauthorizedState() {
-  const { logout } = useAuth();
-
-  function handleLogin() {
-    void logout();
-  }
-
-  return (
-    <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-      <p className="font-serif text-lg font-semibold text-neutral-900">
-        Debés volver a autenticarte para ver tu plan semanal.
-      </p>
-      <button
-        type="button"
-        onClick={handleLogin}
-        className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
-      >
-        Iniciar sesión
-      </button>
-    </div>
-  );
-}
-
 export function MealPlanPage() {
   const { mealPlan, status, errorMessage, retry, generate } = useMealPlan();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -124,10 +95,6 @@ export function MealPlanPage() {
 
   if (status === 'loading' && !mealPlan) {
     return <LoadingSkeleton />;
-  }
-
-  if (status === 'unauthorized') {
-    return <UnauthorizedState />;
   }
 
   if (status === 'empty') {

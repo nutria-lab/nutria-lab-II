@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useMealPlan } from './useMealPlan';
-import { mealPlanService, MealPlanRequestError } from '../../../services/mealPlanService';
+import { mealPlanService } from '../../../services/mealPlanService';
 
 // NUT-10: fixture inline con la forma REAL del backend (ver
 // .plans/nut-10-integrar-plan-de-comidas/plan.md sección 3). No usar
@@ -138,21 +138,24 @@ describe('useMealPlan', () => {
     expect(result.current.mealPlan).toEqual(REAL_MEAL_PLAN);
   });
 
-  // NUT-10 / Decisión 5 del design.md: un 401 debe producir un estado distinguible de
-  // `error`. El mock ya no usa el flag plano `isMealPlanUnauthorized` (mecanismo viejo que
-  // el implementer va a reemplazar) sino una instancia real de `MealPlanRequestError` con
-  // `kind: 'unauthorized'`, igual que el contrato ya exigido en `mealPlanService.test.ts`.
-  // `MealPlanRequestError` no existe todavía en `mealPlanService.ts` (la crea el implementer),
-  // así que este test es ROJO hoy por partida doble: falta la clase Y falta que el hook la
-  // reconozca vía `instanceof`.
-  it('sets a distinguishable "unauthorized" status on a 401, instead of the generic error status', async () => {
-    const unauthorizedError = new MealPlanRequestError('unauthorized');
+  // NUT-10 (sexta iteración) — Observación 1 del revisor externo (Request changes): se
+  // elimina el bypass de auth local (`MealPlanRequestError`, `skipAuthErrorHandling`, el
+  // estado/pantalla `unauthorized`). El `apiClient`/`AuthProvider` global ya maneja 401/403
+  // de forma consistente para toda la app; duplicar ese flujo acá era el hallazgo. Este test
+  // reemplaza al que exigía un estado `unauthorized` distinguible: ahora un 401 debe
+  // comportarse exactamente como cualquier otro error genérico (`status: 'error'`), sin
+  // ningún manejo especial — deja asentado que la simplificación es intencional.
+  it('treats a 401 like any other generic error, with no special "unauthorized" handling', async () => {
+    const unauthorizedError = Object.assign(new Error('Unauthorized'), {
+      isAxiosError: true,
+      response: { status: 401 },
+    });
     vi.mocked(mealPlanService.getCurrentMealPlan).mockRejectedValue(unauthorizedError);
 
     const { result } = renderHook(() => useMealPlan('2026-08-24'));
 
-    await waitFor(() => expect(result.current.status).toBe('unauthorized'));
-    expect(result.current.status).not.toBe('error');
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.errorMessage).toBeTruthy();
   });
 
   // NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE: `generateMealPlan` ahora requiere
@@ -295,5 +298,219 @@ describe('useMealPlan retry action targeting', () => {
     await waitFor(() => expect(result.current.status).toBe('success'));
     expect(mealPlanService.generateMealPlan).not.toHaveBeenCalled();
     expect(mealPlanService.getCurrentMealPlan).toHaveBeenCalledTimes(2);
+  });
+});
+
+// NUT-10 (sexta iteración) — Observación 4 del revisor externo: abortar la request del
+// navegador no cancela la generación del lado del backend. Si el usuario reintenta después
+// de un timeout del cliente, puede dispararse un segundo `POST /meal-plans/generate` mientras
+// el primero todavía corre en el servidor, y el backend (check-then-create antes de confiar
+// en la constraint única `(userId, startDate)`) puede fallar con un conflicto. La corrección
+// agrega (a) una guarda de "una sola generación a la vez" en `useMealPlan.ts`, y (b) una
+// reconciliación contra `getCurrentMealPlan` antes de reportar error si `generate()` falla.
+// Los 3 tests de este bloque se esperan en ROJO hoy: el hook actual no tiene ninguna de las
+// dos protecciones.
+describe('useMealPlan generate() overlap guard and failure reconciliation', () => {
+  beforeEach(() => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockReset();
+    vi.mocked(mealPlanService.generateMealPlan).mockReset();
+  });
+
+  it('does not trigger a second generateMealPlan request when generate() is called again while the first one is still in flight', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(null);
+    let resolveGenerate!: (value: typeof REAL_MEAL_PLAN) => void;
+    const generatePromise = new Promise<typeof REAL_MEAL_PLAN>((resolve) => {
+      resolveGenerate = resolve;
+    });
+    vi.mocked(mealPlanService.generateMealPlan).mockReturnValue(generatePromise as never);
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    // Dispara `generate()` dos veces seguidas sin esperar a que la primera resuelva —
+    // equivalente a un usuario haciendo doble click en "Generar plan"/"Reintentar".
+    act(() => {
+      void result.current.generate();
+      void result.current.generate();
+    });
+
+    expect(mealPlanService.generateMealPlan).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveGenerate(REAL_MEAL_PLAN as never);
+      await generatePromise;
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('success'));
+    expect(mealPlanService.generateMealPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles with getCurrentMealPlan after a failed generate(): shows success if the plan actually exists server-side', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // carga inicial: sin plan
+    vi.mocked(mealPlanService.generateMealPlan).mockRejectedValueOnce(new Error('timeout'));
+    // Reconciliación posterior a la falla: el plan sí se creó del lado del servidor.
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(REAL_MEAL_PLAN as never);
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('success'));
+    expect(result.current.mealPlan).toEqual(REAL_MEAL_PLAN);
+  });
+
+  it('still reports error when generate() fails and reconciliation confirms no plan was actually created (does not hide a real failure)', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // carga inicial: sin plan
+    vi.mocked(mealPlanService.generateMealPlan).mockRejectedValueOnce(new Error('timeout'));
+    // Reconciliación posterior a la falla: sigue sin existir un plan del lado del servidor.
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null);
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.errorMessage).toBeTruthy();
+  });
+});
+
+// NUT-10 (séptima iteración) — Hallazgo B (Medio, confiabilidad/resiliencia) de la segunda
+// vuelta de reviewers: si `generate()` falla Y la reconciliación posterior
+// (`getCurrentMealPlan`) TAMBIÉN falla (error de red — no se pudo confirmar nada, a
+// diferencia de una reconciliación que resuelve `null` y así CONFIRMA que no hay plan),
+// `lastActionRef.current` hoy queda en `'generate'`. Si el usuario aprieta "Reintentar"
+// después, eso dispara OTRA vez `generateMealPlan`, exactamente el escenario de
+// generaciones solapadas que la reconciliación de la sexta iteración quería evitar (la
+// primera generación puede seguir corriendo del lado del servidor).
+//
+// La corrección esperada (a cargo del implementer): cuando la reconciliación MISMA falla
+// (se rechaza su promesa, no cuando resuelve `null`), se debe marcar
+// `lastActionRef.current = 'load'` antes de reportar el error, para que un `retry()`
+// posterior dispare `getCurrentMealPlan` (reintentar la reconciliación / revisar el estado
+// real) en vez de otro `generateMealPlan`.
+//
+// Distinción clave entre los dos mocks de "reconciliación" usados en este bloque:
+//   - `mockResolvedValueOnce(null)`   -> la reconciliación CONFIRMA que no hay plan.
+//   - `mockRejectedValueOnce(error)`  -> la reconciliación NO PUDO CONFIRMAR nada (ambiguo).
+// Solo el segundo caso debe redirigir `retry()` hacia `load`.
+describe('useMealPlan retry routing after an ambiguous (failed) reconciliation (NUT-10 hallazgo B, séptima iteración)', () => {
+  beforeEach(() => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockReset();
+    vi.mocked(mealPlanService.generateMealPlan).mockReset();
+  });
+
+  it('routes retry() to load (getCurrentMealPlan), not to another generateMealPlan, when generate() fails AND the reconciliation call itself rejects (ambiguous outcome)', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // carga inicial: sin plan
+    vi.mocked(mealPlanService.generateMealPlan).mockRejectedValueOnce(new Error('timeout'));
+    // La reconciliación posterior a la falla NO confirma nada: se rechaza (ej. la red sigue
+    // mal), a diferencia de resolver `null`.
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockRejectedValueOnce(
+      new Error('network error during reconciliation'),
+    );
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+
+    const generateCallsBeforeRetry = vi.mocked(mealPlanService.generateMealPlan).mock.calls.length;
+    const getCallsBeforeRetry = vi.mocked(mealPlanService.getCurrentMealPlan).mock.calls.length;
+
+    // Se dejan ambos mocks listos para resolver con éxito: si `retry()` termina llamando a
+    // `getCurrentMealPlan` (comportamiento correcto) o, incorrectamente, a
+    // `generateMealPlan` de nuevo (bug de hoy), cualquiera de los dos lleva a `status:
+    // 'success'`, así la aserción de qué mock se llamó queda limpia en vez de que el test
+    // explote con un `TypeError` por quedarse sin respuestas encoladas en el mock que no se
+    // esperaba usar.
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(REAL_MEAL_PLAN as never);
+    vi.mocked(mealPlanService.generateMealPlan).mockResolvedValueOnce(REAL_MEAL_PLAN as never);
+
+    act(() => {
+      result.current.retry();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('success'));
+
+    // La llamada siguiente que dispara `retry()` es a `getCurrentMealPlan`, no a
+    // `generateMealPlan` de nuevo.
+    expect(vi.mocked(mealPlanService.generateMealPlan).mock.calls.length).toBe(
+      generateCallsBeforeRetry,
+    );
+    expect(vi.mocked(mealPlanService.getCurrentMealPlan).mock.calls.length).toBe(
+      getCallsBeforeRetry + 1,
+    );
+  });
+
+  // Caso de control / no-regresión: si la reconciliación SÍ confirma que no hay plan
+  // (resuelve `null`, no se rechaza), el comportamiento actual se mantiene: `retry()` sigue
+  // apuntando a `generate` (la última acción intencional del usuario), no a `load`.
+  it('control (non-regression): retry() still calls generateMealPlan again when the reconciliation call CONFIRMS there is no plan by resolving null (not rejecting)', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // carga inicial: sin plan
+    vi.mocked(mealPlanService.generateMealPlan).mockRejectedValueOnce(new Error('timeout'));
+    // La reconciliación posterior a la falla SÍ confirma (con éxito) que no hay plan.
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null);
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+
+    const getCallsBeforeRetry = vi.mocked(mealPlanService.getCurrentMealPlan).mock.calls.length;
+    vi.mocked(mealPlanService.generateMealPlan).mockResolvedValueOnce(REAL_MEAL_PLAN as never);
+
+    act(() => {
+      result.current.retry();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('success'));
+
+    expect(mealPlanService.generateMealPlan).toHaveBeenCalledTimes(2);
+    // Ninguna llamada adicional a `getCurrentMealPlan` debería haberse disparado por este
+    // `retry()`, porque se redirige a `generate`, no a `load`.
+    expect(vi.mocked(mealPlanService.getCurrentMealPlan).mock.calls.length).toBe(
+      getCallsBeforeRetry,
+    );
+  });
+});
+
+// NUT-10 (séptima iteración) — Hallazgo C (Bajo, resiliencia) de la segunda vuelta de
+// reviewers: la llamada de reconciliación (`getCurrentMealPlan` dentro del `catch` de
+// `generate()`) no recibe ningún `AbortSignal`, a diferencia de las llamadas principales de
+// `load`/`generate`, que sí usan `abortControllerRef`. Por lo tanto no se cancela si el
+// componente se desmonta mientras la reconciliación está en curso.
+describe('useMealPlan reconciliation call cancellation (NUT-10 hallazgo C, séptima iteración)', () => {
+  beforeEach(() => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockReset();
+    vi.mocked(mealPlanService.generateMealPlan).mockReset();
+  });
+
+  it('invokes the reconciliation getCurrentMealPlan call with an AbortSignal as the second argument, like the main load() call', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // carga inicial: sin plan
+    vi.mocked(mealPlanService.generateMealPlan).mockRejectedValueOnce(new Error('timeout'));
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValueOnce(null); // reconciliación
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate();
+    });
+    await waitFor(() => expect(result.current.status).toBe('error'));
+
+    const reconciliationCall = vi.mocked(mealPlanService.getCurrentMealPlan).mock.calls[1];
+    expect(reconciliationCall?.[0]).toBe('2026-08-24');
+    expect(reconciliationCall?.[1]).toEqual(expect.any(AbortSignal));
   });
 });

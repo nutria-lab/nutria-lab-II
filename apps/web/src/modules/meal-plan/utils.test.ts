@@ -95,3 +95,95 @@ describe('formatWeekRange', () => {
     expect(result).toBe('14 – 20 de septiembre, 2026');
   });
 });
+
+// NUT-10 (séptima iteración) — Hallazgo A (Alto, resiliencia) de la segunda vuelta de
+// reviewers: `mealPlanService.ts` normaliza `date` con `.slice(0, 10)` pero no valida el
+// formato. Si `date` llegara vacío o malformado, `parseLocalDate` produce un `Date` inválido
+// (`getTime()` es `NaN`), y hoy `formatFullDate` explota con
+// `TypeError: Cannot read properties of undefined (reading 'charAt')` al indexar
+// `WEEKDAY_NAMES[NaN]` (`undefined`) y llamarle `.charAt(0)`. Como la app no tiene ningún
+// `ErrorBoundary`, esto tumbaría toda la UI, no solo el plan de comidas.
+//
+// La corrección esperada (a cargo del implementer): `formatFullDate`, `formatDayAbbreviation`,
+// `formatDayNumber` y `formatWeekRange` deben detectar un `Date` inválido
+// (`Number.isNaN(date.getTime())`) y devolver `''` en vez de intentar formatear. Estos tests
+// deben fallar HOY (roja: `formatFullDate('')`/`formatFullDate('no-es-una-fecha')` tiran
+// `TypeError` en vez de devolver `''`) y pasar una vez aplicada la corrección.
+//
+// Strings de fecha inválida usados a propósito para cubrir dos formas distintas de llegar a
+// `Invalid Date` desde `parseLocalDate`: `''` (los tres componentes year/month/day quedan
+// `NaN` porque `''.split('-')` da `['']` y `Number('')` es `NaN`) y `'no-es-una-fecha'` (mismo
+// resultado, pero simulando un valor no vacío y claramente no numérico, no solo un string
+// vacío/falsy).
+describe('invalid date handling (NUT-10 hallazgo A, séptima iteración)', () => {
+  it('formatFullDate returns an empty string for an empty date string, without throwing', () => {
+    expect(() => formatFullDate('')).not.toThrow();
+    expect(formatFullDate('')).toBe('');
+  });
+
+  it('formatFullDate returns an empty string for a malformed (non-date) string, without throwing', () => {
+    expect(() => formatFullDate('no-es-una-fecha')).not.toThrow();
+    expect(formatFullDate('no-es-una-fecha')).toBe('');
+  });
+
+  it('formatDayAbbreviation returns an empty string for an empty date string, without throwing', () => {
+    expect(() => formatDayAbbreviation('')).not.toThrow();
+    expect(formatDayAbbreviation('')).toBe('');
+  });
+
+  it('formatDayAbbreviation returns an empty string for a malformed (non-date) string, without throwing', () => {
+    expect(() => formatDayAbbreviation('no-es-una-fecha')).not.toThrow();
+    expect(formatDayAbbreviation('no-es-una-fecha')).toBe('');
+  });
+
+  it('formatDayNumber returns an empty string for an empty date string, without throwing', () => {
+    expect(() => formatDayNumber('')).not.toThrow();
+    expect(formatDayNumber('')).toBe('');
+  });
+
+  it('formatDayNumber returns an empty string for a malformed (non-date) string, without throwing', () => {
+    expect(() => formatDayNumber('no-es-una-fecha')).not.toThrow();
+    expect(formatDayNumber('no-es-una-fecha')).toBe('');
+  });
+
+  it('formatWeekRange returns an empty string (not a string containing NaN/undefined) when the FIRST day has an invalid date, without throwing', () => {
+    const days = [buildDay('no-es-una-fecha'), buildDay('2026-09-20')];
+
+    expect(() => formatWeekRange(days)).not.toThrow();
+    const result = formatWeekRange(days);
+    expect(result).toBe('');
+    expect(result).not.toContain('NaN');
+    expect(result).not.toContain('undefined');
+  });
+
+  it('formatWeekRange returns an empty string (not a string containing NaN/undefined) when the LAST day has an invalid date, without throwing', () => {
+    const days = [buildDay('2026-09-14'), buildDay('')];
+
+    expect(() => formatWeekRange(days)).not.toThrow();
+    const result = formatWeekRange(days);
+    expect(result).toBe('');
+    expect(result).not.toContain('NaN');
+    expect(result).not.toContain('undefined');
+  });
+
+  // No-regresión: la guarda contra fechas inválidas no debe alterar el formateo de fechas
+  // válidas, ni en la forma corta 'YYYY-MM-DD' ni en la forma ISO completa que devuelve el
+  // backend real.
+  it('non-regression: valid dates (plain YYYY-MM-DD and full ISO) keep formatting exactly as before', () => {
+    expect(formatFullDate('2026-09-14')).toBe('Lunes, 14 de septiembre');
+    expect(formatFullDate('2026-09-14T00:00:00.000Z')).toBe('Lunes, 14 de septiembre');
+    expect(formatDayAbbreviation('2026-09-14')).toBe('LUN');
+    expect(formatDayAbbreviation('2026-09-14T00:00:00.000Z')).toBe('LUN');
+    expect(formatDayNumber('2026-09-14')).toBe('14');
+    expect(formatDayNumber('2026-09-14T00:00:00.000Z')).toBe('14');
+    expect(formatWeekRange([buildDay('2026-09-14'), buildDay('2026-09-20')])).toBe(
+      '14 – 20 de septiembre, 2026',
+    );
+    expect(
+      formatWeekRange([
+        buildDay('2026-09-14T00:00:00.000Z'),
+        buildDay('2026-09-20T00:00:00.000Z'),
+      ]),
+    ).toBe('14 – 20 de septiembre, 2026');
+  });
+});

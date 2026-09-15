@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mealPlanService, MealPlanRequestError } from './mealPlanService';
+import { mealPlanService } from './mealPlanService';
 import { apiClient } from './apiClient';
 
-// NUT-10 (tercera iteración) — hallazgo ALTO de los reviewers: `mealPlanService` no pasa
-// `skipAuthErrorHandling` en ninguna de sus dos llamadas, así que el interceptor global de
-// `apiClient.ts` sigue disparando un redirect a `/login` en paralelo al estado `unauthorized`
-// del hook (contradice la Decisión 5 del design.md). El patrón de referencia ya establecido
-// en el proyecto es `registerService.ts`/`registerService.test.ts` (clase de error propia con
-// `kind`, `{ skipAuthErrorHandling: true, timeout, signal }` como config). `MealPlanRequestError`
-// no existe todavía: la crea el implementer en la próxima iteración.
+// NUT-10 (sexta iteración) — Observación 1 del revisor externo (Request changes): se
+// elimina el bypass de auth local. `MealPlanRequestError`, `skipAuthErrorHandling: true` y el
+// manejo especial de 401 salen de `mealPlanService.ts`: el `apiClient`/`AuthProvider` global
+// ya maneja 401/403 de forma consistente para toda la app (ver `apiClient.ts`), y duplicarlo
+// acá creaba un segundo flujo de auth. Se borran los tests que cubrían esa clase/kind
+// 'unauthorized' (estaban antes en este archivo); un 401 ahora se comporta como cualquier
+// otro error genérico, sin manejo especial de este módulo.
 
 // NUT-10: el contrato real de `GET /meal-plans/current` / `POST /meal-plans/generate`
 // (confirmado contra Prisma + apps/api/src/modules/plans/tests/plans.integration.spec.ts,
@@ -80,13 +80,20 @@ describe('mealPlanService.getCurrentMealPlan', () => {
     vi.mocked(apiClient.get).mockReset();
   });
 
-  it('returns the real backend shape without transforming or dropping fields, including recipe: null', async () => {
+  it('returns the real backend shape without transforming or dropping fields, including recipe: null (except day.date, which gets normalized — see the dedicated normalization test below)', async () => {
     const backendResponse = buildRealMealPlanResponse();
     vi.mocked(apiClient.get).mockResolvedValue({ data: backendResponse });
 
     const result = await mealPlanService.getCurrentMealPlan('2026-08-24');
 
-    expect(result).toEqual(backendResponse);
+    // NUT-10 (sexta iteración) — Observación 2: `day.date` es el único campo que
+    // `mealPlanService` transforma (de ISO completo a 'YYYY-MM-DD'); todo lo demás debe
+    // llegar intacto. Se compara contra `backendResponse` con esa única normalización
+    // aplicada, en vez de esperar una igualdad total con la respuesta cruda del backend.
+    expect(result).toEqual({
+      ...backendResponse,
+      days: backendResponse.days.map((day) => ({ ...day, date: day.date.slice(0, 10) })),
+    });
     expect(result?.startDate).toBe('2026-08-24T00:00:00.000Z');
     expect(result?.endDate).toBe('2026-08-30T00:00:00.000Z');
     expect(result?.days[0].day).toBe('MONDAY');
@@ -140,30 +147,22 @@ describe('mealPlanService.getCurrentMealPlan', () => {
     await expect(mealPlanService.getCurrentMealPlan('2026-08-24')).rejects.toThrow();
   });
 
-  it('rejects with a MealPlanRequestError whose kind is "unauthorized" on a 401, distinguishable from a generic error', async () => {
+  // NUT-10 (sexta iteración) — Observación 1: se borra el test que exigía un
+  // `MealPlanRequestError` con `kind: 'unauthorized'` en un 401 (esa clase y ese manejo
+  // especial se eliminan de `mealPlanService.ts`). Un 401 ahora debe propagarse como
+  // cualquier otro error del backend, sin distinción — lo confirma el test de
+  // `useMealPlan.test.ts` a nivel de hook.
+  it('propagates a 401 like any other rejected request, without a special error type', async () => {
     const unauthorizedError = Object.assign(new Error('Unauthorized'), {
       isAxiosError: true,
       response: { status: 401 },
     });
     vi.mocked(apiClient.get).mockRejectedValueOnce(unauthorizedError);
 
-    const unauthorizedRejection = await mealPlanService.getCurrentMealPlan('2026-08-24').catch((error) => error);
-    expect(unauthorizedRejection).toBeInstanceOf(MealPlanRequestError);
-    expect(unauthorizedRejection).toMatchObject({ kind: 'unauthorized' });
-
-    const genericError = Object.assign(new Error('Internal Server Error'), {
-      isAxiosError: true,
-      response: { status: 500 },
-    });
-    vi.mocked(apiClient.get).mockRejectedValueOnce(genericError);
-
-    const genericRejection = await mealPlanService.getCurrentMealPlan('2026-08-24').catch((error) => error);
-    expect(
-      genericRejection instanceof MealPlanRequestError && genericRejection.kind === 'unauthorized',
-    ).toBe(false);
+    await expect(mealPlanService.getCurrentMealPlan('2026-08-24')).rejects.toBe(unauthorizedError);
   });
 
-  it('sends skipAuthErrorHandling, a timeout and an AbortSignal so this module handles its own 401s instead of the global apiClient interceptor', async () => {
+  it('sends a timeout and an AbortSignal, without any auth-bypass flag (the global apiClient interceptor handles 401/403 for this call too)', async () => {
     const backendResponse = buildRealMealPlanResponse();
     vi.mocked(apiClient.get).mockResolvedValue({ data: backendResponse });
 
@@ -173,11 +172,40 @@ describe('mealPlanService.getCurrentMealPlan', () => {
       '/meal-plans/current',
       expect.objectContaining({
         params: { weekStart: '2026-08-24' },
-        skipAuthErrorHandling: true,
         timeout: expect.any(Number),
         signal: expect.any(AbortSignal),
       }),
     );
+    const config = vi.mocked(apiClient.get).mock.calls[0]?.[1] as { skipAuthErrorHandling?: boolean } | undefined;
+    expect(config?.skipAuthErrorHandling).toBeUndefined();
+  });
+
+  // NUT-10 (sexta iteración) — Observación 3: se deja asentado con un valor explícito que
+  // `getCurrentMealPlan` sigue usando su timeout corto de 10s (consultar el plan actual es
+  // una operación rápida); `generateMealPlan` usa uno distinto y mayor (ver más abajo), ya
+  // que dispara una llamada a Gemini del lado del backend que puede tardar hasta 15s.
+  it('uses a 10s timeout for getCurrentMealPlan', async () => {
+    const backendResponse = buildRealMealPlanResponse();
+    vi.mocked(apiClient.get).mockResolvedValue({ data: backendResponse });
+
+    await mealPlanService.getCurrentMealPlan('2026-08-24');
+
+    const config = vi.mocked(apiClient.get).mock.calls[0]?.[1] as { timeout?: number } | undefined;
+    expect(config?.timeout).toBe(10_000);
+  });
+
+  // NUT-10 (sexta iteración) — Observación 2: el backend devuelve `MealPlanDay.date` como
+  // datetime ISO completo (`'2026-08-24T00:00:00.000Z'`); si no se normaliza acá, ni
+  // `MealPlanPage` (comparación contra `formatLocalDateKey(new Date())` / `?day=`) ni
+  // `WeekSelector` (escritura del query param) matchean nunca. Se espera ROJO hoy.
+  it('normalizes MealPlanDay.date from a full ISO datetime to a plain YYYY-MM-DD string', async () => {
+    const backendResponse = buildRealMealPlanResponse();
+    vi.mocked(apiClient.get).mockResolvedValue({ data: backendResponse });
+    expect(backendResponse.days[0].date).toBe('2026-08-24T00:00:00.000Z');
+
+    const result = await mealPlanService.getCurrentMealPlan('2026-08-24');
+
+    expect(result?.days[0].date).toBe('2026-08-24');
   });
 
   it('forwards a caller-provided AbortSignal (optional last parameter) instead of only creating its own default', async () => {
@@ -209,10 +237,15 @@ describe('mealPlanService.generateMealPlan', () => {
     // body (`GenerateMealPlanDto.weekStart`, `@IsNotEmpty()`/`@IsDateString()`). Antes se
     // mandaba `undefined`, lo que hace fallar la generación con un error de validación.
     expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).toEqual({ weekStart: '2026-08-24' });
-    expect(result).toEqual(backendResponse);
+    // NUT-10 (sexta iteración) — Observación 2: mismo criterio que `getCurrentMealPlan`,
+    // `day.date` es el único campo normalizado (ISO completo -> 'YYYY-MM-DD').
+    expect(result).toEqual({
+      ...backendResponse,
+      days: backendResponse.days.map((day) => ({ ...day, date: day.date.slice(0, 10) })),
+    });
   });
 
-  it('sends skipAuthErrorHandling, a timeout and an AbortSignal on generation requests too', async () => {
+  it('sends a timeout and an AbortSignal, without any auth-bypass flag, on generation requests too', async () => {
     const backendResponse = buildRealMealPlanResponse();
     vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
 
@@ -224,11 +257,38 @@ describe('mealPlanService.generateMealPlan', () => {
       | undefined;
     expect(config).toEqual(
       expect.objectContaining({
-        skipAuthErrorHandling: true,
         timeout: expect.any(Number),
         signal: expect.any(AbortSignal),
       }),
     );
+    expect(config?.skipAuthErrorHandling).toBeUndefined();
+  });
+
+  // NUT-10 (sexta iteración) — Observación 3, hallazgo del revisor externo: el backend puede
+  // tardar hasta 15s en generar el plan (llamada a Gemini) y sigue corriendo del lado del
+  // servidor aunque el cliente ya haya abortado a los 10s. `generateMealPlan` necesita su
+  // propio timeout, mayor a 15s, distinto de la constante de 10s que usa `getCurrentMealPlan`.
+  // Se espera ROJO hoy (ambas llamadas comparten hoy `MEAL_PLAN_REQUEST_TIMEOUT_MS = 10_000`).
+  it('uses a timeout greater than 15s for generateMealPlan (the backend generation call can take up to 15s)', async () => {
+    const backendResponse = buildRealMealPlanResponse();
+    vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
+
+    await mealPlanService.generateMealPlan('2026-08-24');
+
+    const call = vi.mocked(apiClient.post).mock.calls[0];
+    const config = call?.[call.length - 1] as { timeout?: number } | undefined;
+    expect(config?.timeout).toBeGreaterThan(15_000);
+  });
+
+  // NUT-10 (sexta iteración) — Observación 2, réplica del test de `getCurrentMealPlan` para
+  // `generateMealPlan`: la generación también debe normalizar `day.date`.
+  it('normalizes MealPlanDay.date from a full ISO datetime to a plain YYYY-MM-DD string on generation too', async () => {
+    const backendResponse = buildRealMealPlanResponse();
+    vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
+
+    const result = await mealPlanService.generateMealPlan('2026-08-24');
+
+    expect(result?.days[0].date).toBe('2026-08-24');
   });
 
   it('forwards a caller-provided AbortSignal (optional last parameter) for plan generation too', async () => {
@@ -243,15 +303,15 @@ describe('mealPlanService.generateMealPlan', () => {
     expect(config?.signal).toBe(controller.signal);
   });
 
-  it('rejects with a MealPlanRequestError whose kind is "unauthorized" on a 401 during generation', async () => {
+  // NUT-10 (sexta iteración) — Observación 1: mismo criterio que en `getCurrentMealPlan`, se
+  // borra el test que exigía `MealPlanRequestError`/`kind: 'unauthorized'` en generación.
+  it('propagates a 401 like any other rejected request during generation, without a special error type', async () => {
     const unauthorizedError = Object.assign(new Error('Unauthorized'), {
       isAxiosError: true,
       response: { status: 401 },
     });
     vi.mocked(apiClient.post).mockRejectedValueOnce(unauthorizedError);
 
-    const rejection = await mealPlanService.generateMealPlan('2026-08-24').catch((error) => error);
-    expect(rejection).toBeInstanceOf(MealPlanRequestError);
-    expect(rejection).toMatchObject({ kind: 'unauthorized' });
+    await expect(mealPlanService.generateMealPlan('2026-08-24')).rejects.toBe(unauthorizedError);
   });
 });

@@ -44,16 +44,31 @@ export function formatLocalDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function isValidDate(date: Date): boolean {
+  return !Number.isNaN(date.getTime());
+}
+
 export function formatDayAbbreviation(dateStr: string): string {
-  return DAY_ABBREVIATIONS[parseLocalDate(dateStr).getDay()];
+  const date = parseLocalDate(dateStr);
+  if (!isValidDate(date)) {
+    return '';
+  }
+  return DAY_ABBREVIATIONS[date.getDay()];
 }
 
 export function formatDayNumber(dateStr: string): string {
-  return String(parseLocalDate(dateStr).getDate());
+  const date = parseLocalDate(dateStr);
+  if (!isValidDate(date)) {
+    return '';
+  }
+  return String(date.getDate());
 }
 
 export function formatFullDate(dateStr: string): string {
   const date = parseLocalDate(dateStr);
+  if (!isValidDate(date)) {
+    return '';
+  }
   const weekday = WEEKDAY_NAMES[date.getDay()];
   const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
   return `${capitalizedWeekday}, ${date.getDate()} de ${MONTH_NAMES[date.getMonth()]}`;
@@ -65,6 +80,9 @@ export function formatWeekRange(days: MealPlanDay[]): string {
   }
   const first = parseLocalDate(days[0].date);
   const last = parseLocalDate(days[days.length - 1].date);
+  if (!isValidDate(first) || !isValidDate(last)) {
+    return '';
+  }
   const sameMonth = first.getMonth() === last.getMonth();
   const startLabel = sameMonth
     ? `${first.getDate()}`

@@ -4,12 +4,18 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MealPlanPage } from './MealPlanPage';
 import { mealPlanService } from '../../../services/mealPlanService';
-import { useAuth } from '../../../features/auth/AuthProvider';
-import { useMealPlan } from '../hooks/useMealPlan';
 
 // NUT-10: fixture inline con la forma REAL del backend (ver
 // .plans/nut-10-integrar-plan-de-comidas/plan.md sección 3). No usar
 // `apps/web/src/modules/meal-plan/mealPlanFixture.ts` (contrato viejo).
+
+// NUT-10 (sexta iteración) — Observación 1 del revisor externo (Request changes): se
+// elimina el bypass de auth local (`UnauthorizedState`, `useAuth().logout()` desde esta
+// página, estado `unauthorized` del hook). El `apiClient`/`AuthProvider` global ya maneja
+// 401/403 de forma consistente para toda la app. Se borran, en consecuencia: los tests que
+// ejercitaban `UnauthorizedState`/el botón "Iniciar sesión", el mock puntual de `useMealPlan`
+// que solo existía para forzar ese estado inexistente en el hook real, y el mock de
+// `../../../features/auth/AuthProvider` (no lo usa ningún otro test de este archivo).
 
 vi.mock('../../../services/mealPlanService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../services/mealPlanService')>();
@@ -18,24 +24,6 @@ vi.mock('../../../services/mealPlanService', async (importOriginal) => {
     mealPlanService: { getCurrentMealPlan: vi.fn(), generateMealPlan: vi.fn() },
   };
 });
-
-// Solo se sobreescribe el valor de retorno puntualmente (mockReturnValueOnce) para el caso
-// `unauthorized`, que hoy no existe en el hook real. El resto de los tests usa la
-// implementación real (`actual.useMealPlan`), envuelta por conveniencia de mockeo.
-vi.mock('../hooks/useMealPlan', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../hooks/useMealPlan')>();
-  return {
-    ...actual,
-    useMealPlan: vi.fn(actual.useMealPlan),
-  };
-});
-
-// NUT-10 (quinta iteración) — post NUT-28: el módulo de auth reemplazó `clearAuthenticated`
-// por `useAuth().logout()` (AuthProvider). `UnauthorizedState` usa ese `logout` real; acá
-// solo se mockea el hook para no depender de un `AuthProvider`/sesión real en este test.
-vi.mock('../../../features/auth/AuthProvider', () => ({
-  useAuth: vi.fn(() => ({ logout: vi.fn() })),
-}));
 
 function buildDay(day: string, date: string, meals: unknown[]) {
   return { id: `day-${date}`, mealPlanId: 'plan-1', day, date, meals };
@@ -223,47 +211,5 @@ describe('MealPlanPage', () => {
 
     await waitFor(() => expect(mealPlanService.generateMealPlan).toHaveBeenCalled());
     expect(await screen.findByText('Tu plan semanal')).toBeInTheDocument();
-  });
-
-  // Decisión 5: `unauthorized` debe ofrecer una acción distinta de "Reintentar". El hook
-  // real todavía no expone este estado, así que se lo forzamos vía mock puntual del hook
-  // para poder ejercitar la pantalla contra él.
-  it('shows a distinct action for "unauthorized", not the generic retry button used for a generic error', async () => {
-    vi.mocked(useMealPlan).mockReturnValueOnce({
-      mealPlan: null,
-      status: 'unauthorized' as never,
-      errorMessage: null,
-      retry: vi.fn(),
-      generate: vi.fn(),
-    });
-
-    renderMealPlanPage();
-
-    expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
-    expect(await screen.findByText(/sesión|iniciar sesión|reautenticar/i)).toBeInTheDocument();
-  });
-
-  // NUT-10 (quinta iteración) — hallazgo BLOQUEANTE del revisor externo: un texto sin acción
-  // no es una salida real para el usuario. La pantalla de "sesión expirada" debe ofrecer un
-  // botón "Iniciar sesión" que invoque `useAuth().logout()` (post NUT-28, ese `logout` ya
-  // limpia la sesión del `AuthProvider` global y navega a `/login` vía React Router).
-  it('offers a working "Iniciar sesión" action on "unauthorized" that logs the session out', async () => {
-    const logout = vi.fn();
-    vi.mocked(useAuth).mockReturnValue({ logout } as never);
-    vi.mocked(useMealPlan).mockReturnValueOnce({
-      mealPlan: null,
-      status: 'unauthorized' as never,
-      errorMessage: null,
-      retry: vi.fn(),
-      generate: vi.fn(),
-    });
-    const user = userEvent.setup();
-
-    renderMealPlanPage();
-
-    const loginButton = await screen.findByRole('button', { name: /iniciar sesión/i });
-    await user.click(loginButton);
-
-    expect(logout).toHaveBeenCalledTimes(1);
   });
 });
