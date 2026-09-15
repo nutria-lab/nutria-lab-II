@@ -10,7 +10,7 @@ describe('Sidebar', () => {
   it('uses the shared, grouped application mark without changing the existing navigation links', () => {
     const { container } = render(
       <MemoryRouter>
-        <Sidebar />
+        <Sidebar onLogout={async () => undefined} />
       </MemoryRouter>,
     );
 
