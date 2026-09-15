@@ -53,7 +53,7 @@ function isAuthenticatedUser(value: unknown): value is AuthenticatedUser {
 }
 
 function loginUrl() {
-  const baseUrl = import.meta.env.VITE_API_URL;
+  const baseUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : '/api';
 
   if (!baseUrl) {
     throw new LoginRequestError('network');

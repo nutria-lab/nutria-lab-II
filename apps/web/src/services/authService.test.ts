@@ -21,6 +21,7 @@ afterEach(() => {
 });
 
 beforeEach(() => {
+  vi.stubEnv('DEV', true);
   vi.stubEnv('VITE_API_URL', 'http://api.nutria.test');
 });
 
@@ -42,6 +43,24 @@ describe('authService.login', () => {
       body: JSON.stringify({ email: credentials.email, password: credentials.password }),
       credentials: 'include',
     });
+  });
+
+  it('uses the same-site API prefix for login outside development', async () => {
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_API_URL', '');
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(user), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(authService.login(credentials)).resolves.toEqual(user);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/login', expect.objectContaining({
+      credentials: 'include',
+    }));
   });
 
   it('classifies a 401 differently from a network failure without exposing response detail', async () => {

@@ -79,15 +79,14 @@ describe('AuthController', () => {
       const result = await controller.login(loginDto, mockRes);
 
       expect(authService.login).toHaveBeenCalledWith(loginDto);
-      expect(mockRes.cookie).toHaveBeenCalledWith(
-        'token',
-        mockToken,
-        expect.objectContaining({
-          httpOnly: true,
-          sameSite: 'strict',
-          maxAge: 24 * 60 * 60 * 1000,
-        }),
-      );
+      expect(mockRes.cookie).toHaveBeenCalledTimes(1);
+      expect(mockRes.cookie).toHaveBeenCalledWith('token', mockToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 24 * 60 * 60 * 1000,
+      });
       expect(result).toEqual(mockUser);
     });
   });
@@ -100,14 +99,19 @@ describe('AuthController', () => {
 
       await controller.logout(mockRes);
 
-      expect(mockRes.clearCookie).toHaveBeenCalledWith(
-        'token',
-        expect.objectContaining({
-          httpOnly: true,
-          sameSite: 'strict',
-          path: '/',
-        }),
-      );
+      expect(mockRes.clearCookie).toHaveBeenCalledTimes(2);
+      expect(mockRes.clearCookie).toHaveBeenNthCalledWith(1, 'token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+      });
+      expect(mockRes.clearCookie).toHaveBeenNthCalledWith(2, 'token', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/auth',
+      });
     });
 
     it('es idempotente: puede ejecutarse múltiples veces sin lanzar errores', async () => {
@@ -117,7 +121,7 @@ describe('AuthController', () => {
 
       await expect(controller.logout(mockRes)).resolves.not.toThrow();
       await expect(controller.logout(mockRes)).resolves.not.toThrow();
-      expect(mockRes.clearCookie).toHaveBeenCalledTimes(2);
+      expect(mockRes.clearCookie).toHaveBeenCalledTimes(4);
     });
   });
 });
