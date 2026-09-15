@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MealPlanPage } from './MealPlanPage';
 import { mealPlanService } from '../../../services/mealPlanService';
-import { clearAuthenticated } from '../../../services/authService';
+import { useAuth } from '../../../features/auth/AuthProvider';
 import { useMealPlan } from '../hooks/useMealPlan';
 
 // NUT-10: fixture inline con la forma REAL del backend (ver
@@ -30,12 +30,11 @@ vi.mock('../hooks/useMealPlan', async (importOriginal) => {
   };
 });
 
-// NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE: `UnauthorizedState` es un callejón sin
-// salida (solo texto, sin acción). La corrección agrega un botón "Iniciar sesión" que debe
-// llamar a `clearAuthenticated()` (mismo par de acciones que ya hace el handler global de
-// `main.tsx`, ahora disparado explícitamente por el usuario en vez de automáticamente).
-vi.mock('../../../services/authService', () => ({
-  clearAuthenticated: vi.fn(),
+// NUT-10 (quinta iteración) — post NUT-28: el módulo de auth reemplazó `clearAuthenticated`
+// por `useAuth().logout()` (AuthProvider). `UnauthorizedState` usa ese `logout` real; acá
+// solo se mockea el hook para no depender de un `AuthProvider`/sesión real en este test.
+vi.mock('../../../features/auth/AuthProvider', () => ({
+  useAuth: vi.fn(() => ({ logout: vi.fn() })),
 }));
 
 function buildDay(day: string, date: string, meals: unknown[]) {
@@ -244,45 +243,27 @@ describe('MealPlanPage', () => {
     expect(await screen.findByText(/sesión|iniciar sesión|reautenticar/i)).toBeInTheDocument();
   });
 
-  // NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE del revisor externo: un texto sin
-  // acción no es una salida real para el usuario. La pantalla de "sesión expirada" debe
-  // ofrecer un botón "Iniciar sesión" que reproduzca el mismo par de acciones que ya
-  // dispara el handler global de `main.tsx` (`clearAuthenticated()` +
-  // `window.location.assign('/login')`), pero como acción explícita en vez de automática.
-  it('offers a working "Iniciar sesión" action on "unauthorized" that clears the session and redirects to /login', async () => {
-    // jsdom's `window.location.assign` is non-configurable in this environment
-    // (`vi.spyOn(window.location, 'assign')` throws "Cannot redefine property: assign"),
-    // so `window.location` itself is replaced with a plain object carrying a mock `assign`,
-    // then restored after the assertion so it doesn't leak into other test files.
-    const originalLocation = window.location;
-    const assignMock = vi.fn();
-    Object.defineProperty(window, 'location', {
-      configurable: true,
-      value: { ...originalLocation, assign: assignMock },
+  // NUT-10 (quinta iteración) — hallazgo BLOQUEANTE del revisor externo: un texto sin acción
+  // no es una salida real para el usuario. La pantalla de "sesión expirada" debe ofrecer un
+  // botón "Iniciar sesión" que invoque `useAuth().logout()` (post NUT-28, ese `logout` ya
+  // limpia la sesión del `AuthProvider` global y navega a `/login` vía React Router).
+  it('offers a working "Iniciar sesión" action on "unauthorized" that logs the session out', async () => {
+    const logout = vi.fn();
+    vi.mocked(useAuth).mockReturnValue({ logout } as never);
+    vi.mocked(useMealPlan).mockReturnValueOnce({
+      mealPlan: null,
+      status: 'unauthorized' as never,
+      errorMessage: null,
+      retry: vi.fn(),
+      generate: vi.fn(),
     });
+    const user = userEvent.setup();
 
-    try {
-      vi.mocked(useMealPlan).mockReturnValueOnce({
-        mealPlan: null,
-        status: 'unauthorized' as never,
-        errorMessage: null,
-        retry: vi.fn(),
-        generate: vi.fn(),
-      });
-      const user = userEvent.setup();
+    renderMealPlanPage();
 
-      renderMealPlanPage();
+    const loginButton = await screen.findByRole('button', { name: /iniciar sesión/i });
+    await user.click(loginButton);
 
-      const loginButton = await screen.findByRole('button', { name: /iniciar sesión/i });
-      await user.click(loginButton);
-
-      expect(clearAuthenticated).toHaveBeenCalledTimes(1);
-      expect(assignMock).toHaveBeenCalledWith('/login');
-    } finally {
-      Object.defineProperty(window, 'location', {
-        configurable: true,
-        value: originalLocation,
-      });
-    }
+    expect(logout).toHaveBeenCalledTimes(1);
   });
 });

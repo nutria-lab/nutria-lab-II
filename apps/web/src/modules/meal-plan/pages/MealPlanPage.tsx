@@ -1,6 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
-import { clearAuthenticated } from '../../../services/authService';
+import { useAuth } from '../../../features/auth/AuthProvider';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
@@ -69,11 +69,15 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 // Decisión 5 del design.md: un 401 no ofrece "Reintentar" (fallaría de nuevo por el mismo
-// motivo); deriva a la acción de reautenticación existente en el resto de la app.
+// motivo); deriva a la acción de reautenticación existente en el resto de la app. Post
+// NUT-28, esa acción es `useAuth().logout()`: limpia la sesión en el AuthProvider global y
+// navega a `/login` vía React Router (reemplaza al viejo `clearAuthenticated` + `window.
+// location.assign`, que dejaron de existir cuando NUT-28 reescribió el módulo de auth).
 function UnauthorizedState() {
+  const { logout } = useAuth();
+
   function handleLogin() {
-    clearAuthenticated();
-    window.location.assign('/login');
+    void logout();
   }
 
   return (
