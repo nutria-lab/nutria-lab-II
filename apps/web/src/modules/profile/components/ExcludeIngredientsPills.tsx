@@ -1,12 +1,12 @@
-import { Pill } from '../../../common/components/Pill';
-import type { Restriction } from '../../../services/nutritionProfileService';
+import { Pill } from "../../../common/components/Pill";
+import type { Restriction } from "../../../services/nutritionProfileService";
 
 const RESTRICTION_OPTIONS: { value: Restriction; label: string }[] = [
-  { value: 'NUTS', label: 'Frutos secos' },
-  { value: 'GLUTEN', label: 'Gluten' },
-  { value: 'DAIRY', label: 'Lácteos' },
-  { value: 'SHELLFISH', label: 'Mariscos' },
-  { value: 'SOY', label: 'Soja' },
+  { value: "NUTS", label: "Frutos secos" },
+  { value: "GLUTEN", label: "Gluten" },
+  { value: "DAIRY", label: "Lácteos" },
+  { value: "SHELLFISH", label: "Mariscos" },
+  { value: "SOY", label: "Soja" },
 ];
 
 type ExcludeIngredientsPillsProps = {
@@ -15,9 +15,17 @@ type ExcludeIngredientsPillsProps = {
   onChange: (value: Restriction[]) => void;
 };
 
-export function ExcludeIngredientsPills({ value, disabled, onChange }: ExcludeIngredientsPillsProps) {
+export function ExcludeIngredientsPills({
+  value,
+  disabled,
+  onChange,
+}: ExcludeIngredientsPillsProps) {
   function toggle(option: Restriction) {
-    onChange(value.includes(option) ? value.filter((item) => item !== option) : [...value, option]);
+    onChange(
+      value.includes(option)
+        ? value.filter((item) => item !== option)
+        : [...value, option],
+    );
   }
 
   return (

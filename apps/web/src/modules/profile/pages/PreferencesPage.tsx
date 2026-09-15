@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
-import { useNutritionProfile } from '../hooks/useNutritionProfile';
-import { GoalSelector } from '../components/GoalSelector';
-import { DietPills } from '../components/DietPills';
-import { ExcludeIngredientsPills } from '../components/ExcludeIngredientsPills';
-import { CookTimeSelector } from '../components/CookTimeSelector';
-import { Banner } from '../../../common/components/Banner';
-import type { NutritionProfile } from '../../../services/nutritionProfileService';
+import { useEffect, useState } from "react";
+import { useNutritionProfile } from "../hooks/useNutritionProfile";
+import { GoalSelector } from "../components/GoalSelector";
+import { DietPills } from "../components/DietPills";
+import { ExcludeIngredientsPills } from "../components/ExcludeIngredientsPills";
+import { CookTimeSelector } from "../components/CookTimeSelector";
+import { Banner } from "../../../common/components/Banner";
+import type { NutritionProfile } from "../../../services/nutritionProfileService";
 
 export function PreferencesPage() {
-  const { profile, isNewProfile, status, errorMessage, save, retry } = useNutritionProfile();
+  const { profile, isNewProfile, status, errorMessage, save, retry } =
+    useNutritionProfile();
   const [formState, setFormState] = useState<NutritionProfile | null>(null);
 
   useEffect(() => {
@@ -21,12 +22,14 @@ export function PreferencesPage() {
   // hay que mostrarlo antes del chequeo de "loading" o el usuario queda
   // viendo "Cargando..." sin salida posible (el 404/perfil nuevo no entra acá,
   // porque ese caso sí llega a setear `profile` con los valores por defecto).
-  if (status === 'error' && !formState) {
+  if (status === "error" && !formState) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-        <p className="font-serif text-lg font-semibold text-neutral-900">Algo salió mal</p>
+        <p className="font-serif text-lg font-semibold text-neutral-900">
+          Algo salió mal
+        </p>
         <p className="mt-2 text-sm text-neutral-500">
-          {errorMessage ?? 'No pudimos cargar tus preferencias.'}
+          {errorMessage ?? "No pudimos cargar tus preferencias."}
         </p>
         <button
           type="button"
@@ -39,7 +42,7 @@ export function PreferencesPage() {
     );
   }
 
-  if (status === 'loading' || !formState) {
+  if (status === "loading" || !formState) {
     return (
       <main className="mx-auto max-w-3xl px-4 py-8 text-center text-sm text-neutral-500 md:px-8">
         Cargando tus preferencias...
@@ -47,23 +50,36 @@ export function PreferencesPage() {
     );
   }
 
-  const isFormValid = Boolean(formState.goal && formState.diet && formState.cookTimePreference);
-  const isSaving = status === 'saving';
+  const isFormValid = Boolean(
+    formState.goal && formState.diet && formState.cookTimePreference,
+  );
+  const isSaving = status === "saving";
 
   return (
     <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 md:px-8">
       <div className="flex items-center justify-between">
-        <h1 className="font-serif text-2xl font-bold text-neutral-900">Preferencias alimentarias</h1>
-        <span className="hidden h-10 w-10 shrink-0 rounded-full bg-brand-green md:block" aria-hidden="true" />
+        <h1 className="font-serif text-2xl font-bold text-neutral-900">
+          Preferencias alimentarias
+        </h1>
+        <span
+          className="hidden h-10 w-10 shrink-0 rounded-full bg-brand-green md:block"
+          aria-hidden="true"
+        />
       </div>
 
-      {status === 'success' && (
-        <Banner variant="success" message="Tus preferencias se guardaron correctamente" />
+      {status === "success" && (
+        <Banner
+          variant="success"
+          message="Tus preferencias se guardaron correctamente"
+        />
       )}
-      {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
-      {status === 'idle' && isNewProfile && (
+      {status === "error" && errorMessage && (
+        <Banner variant="error" message={errorMessage} />
+      )}
+      {status === "idle" && isNewProfile && (
         <p className="text-sm text-neutral-500">
-          Todavía no tenés preferencias guardadas — completá el formulario para crear tu perfil.
+          Todavía no tenés preferencias guardadas — completá el formulario para
+          crear tu perfil.
         </p>
       )}
 
@@ -72,7 +88,9 @@ export function PreferencesPage() {
       </p>
 
       <section className="space-y-3">
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">¿Cuál es tu objetivo principal?</h2>
+        <h2 className="font-serif text-lg font-semibold text-neutral-900">
+          ¿Cuál es tu objetivo principal?
+        </h2>
         <GoalSelector
           value={formState.goal}
           disabled={isSaving}
@@ -81,10 +99,14 @@ export function PreferencesPage() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">Preferencias y alergias</h2>
+        <h2 className="font-serif text-lg font-semibold text-neutral-900">
+          Preferencias y alergias
+        </h2>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Elegí una dieta</p>
+          <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">
+            Elegí una dieta
+          </p>
           <DietPills
             value={formState.diet}
             disabled={isSaving}
@@ -93,21 +115,29 @@ export function PreferencesPage() {
         </div>
 
         <div className="space-y-2">
-          <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">Excluir ingredientes</p>
+          <p className="text-xs font-semibold tracking-wide text-neutral-500 uppercase">
+            Excluir ingredientes
+          </p>
           <ExcludeIngredientsPills
             value={formState.excludedIngredients}
             disabled={isSaving}
-            onChange={(excludedIngredients) => setFormState({ ...formState, excludedIngredients })}
+            onChange={(excludedIngredients) =>
+              setFormState({ ...formState, excludedIngredients })
+            }
           />
         </div>
       </section>
 
       <section className="space-y-3">
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">Tiempo de cocina preferido</h2>
+        <h2 className="font-serif text-lg font-semibold text-neutral-900">
+          Tiempo de cocina preferido
+        </h2>
         <CookTimeSelector
           value={formState.cookTimePreference}
           disabled={isSaving}
-          onChange={(cookTimePreference) => setFormState({ ...formState, cookTimePreference })}
+          onChange={(cookTimePreference) =>
+            setFormState({ ...formState, cookTimePreference })
+          }
         />
       </section>
 
@@ -125,7 +155,7 @@ export function PreferencesPage() {
           onClick={() => save(formState)}
           className="w-full rounded-lg bg-brand-green py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50 md:w-auto md:px-6"
         >
-          {isSaving ? 'Guardando...' : 'Guardar preferencias'}
+          {isSaving ? "Guardando..." : "Guardar preferencias"}
         </button>
       </div>
     </main>

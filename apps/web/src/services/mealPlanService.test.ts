@@ -1,45 +1,49 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mealPlanService } from './mealPlanService';
-import { apiClient } from './apiClient';
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mealPlanService } from "./mealPlanService";
+import { apiClient } from "./apiClient";
 
-vi.mock('./apiClient', () => ({
+vi.mock("./apiClient", () => ({
   apiClient: { get: vi.fn() },
 }));
 
-describe('mealPlanService.getCurrentMealPlan', () => {
+describe("mealPlanService.getCurrentMealPlan", () => {
   beforeEach(() => {
     vi.mocked(apiClient.get).mockReset();
   });
 
-  it('normalizes a day with a missing meals array to an empty array', async () => {
+  it("normalizes a day with a missing meals array to an empty array", async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {
-        id: 'plan-1',
-        weekStart: '2026-08-24',
-        days: [{ date: '2026-08-24' }],
+        id: "plan-1",
+        weekStart: "2026-08-24",
+        days: [{ date: "2026-08-24" }],
       },
     });
 
-    const result = await mealPlanService.getCurrentMealPlan('2026-08-24');
+    const result = await mealPlanService.getCurrentMealPlan("2026-08-24");
 
     expect(result?.days[0].meals).toEqual([]);
   });
 
-  it('returns null when the API responds 404 (no plan for the week)', async () => {
-    const axiosError = Object.assign(new Error('Not Found'), {
+  it("returns null when the API responds 404 (no plan for the week)", async () => {
+    const axiosError = Object.assign(new Error("Not Found"), {
       isAxiosError: true,
       response: { status: 404 },
     });
     vi.mocked(apiClient.get).mockRejectedValue(axiosError);
 
-    const result = await mealPlanService.getCurrentMealPlan('2026-08-24');
+    const result = await mealPlanService.getCurrentMealPlan("2026-08-24");
 
     expect(result).toBeNull();
   });
 
-  it('throws when the response does not look like a MealPlan', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: '<html>not json</html>' });
+  it("throws when the response does not look like a MealPlan", async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: "<html>not json</html>",
+    });
 
-    await expect(mealPlanService.getCurrentMealPlan('2026-08-24')).rejects.toThrow();
+    await expect(
+      mealPlanService.getCurrentMealPlan("2026-08-24"),
+    ).rejects.toThrow();
   });
 });

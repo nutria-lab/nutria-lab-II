@@ -1,24 +1,30 @@
-import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios';
-import { afterEach, describe, expect, it } from 'vitest';
+import {
+  AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from "axios";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   nutritionProfileService,
   NutritionProfileNotFoundError,
   type NutritionProfile,
-} from './nutritionProfileService';
-import { apiClient } from './apiClient';
+} from "./nutritionProfileService";
+import { apiClient } from "./apiClient";
 
 const sampleProfile: NutritionProfile = {
-  goal: 'LOSE_WEIGHT',
-  diet: 'VEGAN',
-  excludedIngredients: ['NUTS'],
-  cookTimePreference: 'STANDARD',
+  goal: "LOSE_WEIGHT",
+  diet: "VEGAN",
+  excludedIngredients: ["NUTS"],
+  cookTimePreference: "STANDARD",
 };
 
 function successAdapter(data: unknown) {
-  return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => ({
+  return async (
+    config: InternalAxiosRequestConfig,
+  ): Promise<AxiosResponse> => ({
     data,
     status: 200,
-    statusText: 'OK',
+    statusText: "OK",
     headers: {},
     config,
   });
@@ -29,7 +35,7 @@ function failingAdapter(status: number) {
     const response: AxiosResponse = {
       data: {},
       status,
-      statusText: 'Error',
+      statusText: "Error",
       headers: {},
       config,
     };
@@ -51,8 +57,8 @@ afterEach(() => {
   apiClient.defaults.adapter = undefined;
 });
 
-describe('nutritionProfileService', () => {
-  it('getProfile returns the profile on success', async () => {
+describe("nutritionProfileService", () => {
+  it("getProfile returns the profile on success", async () => {
     apiClient.defaults.adapter = successAdapter(sampleProfile);
 
     const result = await nutritionProfileService.getProfile();
@@ -60,26 +66,30 @@ describe('nutritionProfileService', () => {
     expect(result).toEqual(sampleProfile);
   });
 
-  it('getProfile throws NutritionProfileNotFoundError on 404', async () => {
+  it("getProfile throws NutritionProfileNotFoundError on 404", async () => {
     apiClient.defaults.adapter = failingAdapter(404);
 
-    await expect(nutritionProfileService.getProfile()).rejects.toBeInstanceOf(NutritionProfileNotFoundError);
+    await expect(nutritionProfileService.getProfile()).rejects.toBeInstanceOf(
+      NutritionProfileNotFoundError,
+    );
   });
 
-  it('getProfile rethrows other errors as-is', async () => {
+  it("getProfile rethrows other errors as-is", async () => {
     apiClient.defaults.adapter = failingAdapter(500);
 
-    await expect(nutritionProfileService.getProfile()).rejects.toThrow('Request failed with status 500');
+    await expect(nutritionProfileService.getProfile()).rejects.toThrow(
+      "Request failed with status 500",
+    );
   });
 
-  it('updateProfile sends the full profile and returns what the server persisted', async () => {
+  it("updateProfile sends the full profile and returns what the server persisted", async () => {
     let capturedConfig: InternalAxiosRequestConfig | undefined;
     apiClient.defaults.adapter = async (config) => {
       capturedConfig = config;
       return {
         data: sampleProfile,
         status: 200,
-        statusText: 'OK',
+        statusText: "OK",
         headers: {},
         config,
       };
@@ -88,7 +98,7 @@ describe('nutritionProfileService', () => {
     const result = await nutritionProfileService.updateProfile(sampleProfile);
 
     expect(result).toEqual(sampleProfile);
-    expect(capturedConfig?.url).toBe('/nutrition-profile');
+    expect(capturedConfig?.url).toBe("/nutrition-profile");
     expect(JSON.parse(capturedConfig?.data as string)).toEqual(sampleProfile);
   });
 });

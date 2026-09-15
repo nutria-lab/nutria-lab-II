@@ -1,10 +1,22 @@
-import { SelectableCard } from '../../../common/components/SelectableCard';
-import type { Goal } from '../../../services/nutritionProfileService';
+import { SelectableCard } from "../../../common/components/SelectableCard";
+import type { Goal } from "../../../services/nutritionProfileService";
 
 const GOAL_OPTIONS: { value: Goal; title: string; description: string }[] = [
-  { value: 'LOSE_WEIGHT', title: 'Bajar de peso', description: 'Déficit calórico equilibrado y saciante.' },
-  { value: 'GAIN_MUSCLE', title: 'Ganar músculo', description: 'Alto en proteínas y superávit nutritivo.' },
-  { value: 'MAINTAIN', title: 'Mantenimiento', description: 'Estabilidad energética y bienestar general.' },
+  {
+    value: "LOSE_WEIGHT",
+    title: "Bajar de peso",
+    description: "Déficit calórico equilibrado y saciante.",
+  },
+  {
+    value: "GAIN_MUSCLE",
+    title: "Ganar músculo",
+    description: "Alto en proteínas y superávit nutritivo.",
+  },
+  {
+    value: "MAINTAIN",
+    title: "Mantenimiento",
+    description: "Estabilidad energética y bienestar general.",
+  },
 ];
 
 type GoalSelectorProps = {

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { mealPlanService, type MealPlan } from '../../../services/mealPlanService';
-import { formatLocalDateKey } from '../utils';
+import { useCallback, useEffect, useState } from "react";
+import {
+  mealPlanService,
+  type MealPlan,
+} from "../../../services/mealPlanService";
+import { formatLocalDateKey } from "../utils";
 
-type Status = 'loading' | 'empty' | 'error' | 'success';
+type Status = "loading" | "empty" | "error" | "success";
 
 function getCurrentWeekStart(): string {
   const now = new Date();
@@ -15,11 +18,11 @@ function getCurrentWeekStart(): string {
 
 export function useMealPlan(weekStart: string = getCurrentWeekStart()) {
   const [mealPlan, setMealPlan] = useState<MealPlan | null>(null);
-  const [status, setStatus] = useState<Status>('loading');
+  const [status, setStatus] = useState<Status>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    setStatus('loading');
+    setStatus("loading");
     setErrorMessage(null);
 
     mealPlanService
@@ -27,16 +30,16 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()) {
       .then((data) => {
         if (data) {
           setMealPlan(data);
-          setStatus('success');
+          setStatus("success");
         } else {
           setMealPlan(null);
-          setStatus('empty');
+          setStatus("empty");
         }
       })
       .catch(() => {
         // No se borra el último `mealPlan` válido: si ya había uno cargado, sigue disponible.
-        setStatus('error');
-        setErrorMessage('No pudimos cargar tu plan semanal. Intentá de nuevo.');
+        setStatus("error");
+        setErrorMessage("No pudimos cargar tu plan semanal. Intentá de nuevo.");
       });
   }, [weekStart]);
 

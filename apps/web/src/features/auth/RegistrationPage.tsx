@@ -1,22 +1,27 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
-import nutriaIcon from '../../assets/nutria-icon.png';
-import { RegisterRequestError, registerService, type RegisterErrorKind } from '../../services/registerService';
+import nutriaIcon from "../../assets/nutria-icon.png";
+import {
+  RegisterRequestError,
+  registerService,
+  type RegisterErrorKind,
+} from "../../services/registerService";
 import {
   MINIMUM_PASSWORD_LENGTH,
   type RegistrationFieldErrors,
   type RegistrationValues,
   validateRegistrationFields,
-} from './registrationValidation';
+} from "./registrationValidation";
 
 type RegistrationField = keyof RegistrationValues;
 const requestErrorMessages = {
-  emailAlreadyExists: 'Ya existe una cuenta con este email.',
-  validation: 'No pudimos validar los datos. Revisá los campos e intentá nuevamente.',
-  timeout: 'No pudimos confirmar si tu cuenta fue creada. Intentá nuevamente.',
-  network: 'No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.',
-  unexpected: 'No pudimos crear tu cuenta en este momento. Intentá nuevamente.',
+  emailAlreadyExists: "Ya existe una cuenta con este email.",
+  validation:
+    "No pudimos validar los datos. Revisá los campos e intentá nuevamente.",
+  timeout: "No pudimos confirmar si tu cuenta fue creada. Intentá nuevamente.",
+  network: "No pudimos conectarnos. Revisá tu conexión e intentá nuevamente.",
+  unexpected: "No pudimos crear tu cuenta en este momento. Intentá nuevamente.",
 } as const satisfies Record<RegisterErrorKind, string>;
 
 type RegistrationRequestError = {
@@ -24,13 +29,14 @@ type RegistrationRequestError = {
   showLoginLink?: boolean;
 };
 
-const indeterminateRegistrationMessage = 'No pudimos confirmar si tu cuenta fue creada. Es posible que ya exista.';
+const indeterminateRegistrationMessage =
+  "No pudimos confirmar si tu cuenta fue creada. Es posible que ya exista.";
 
 const initialValues: RegistrationValues = {
-  fullName: '',
-  email: '',
-  password: '',
-  confirmPassword: '',
+  fullName: "",
+  email: "",
+  password: "",
+  confirmPassword: "",
 };
 
 function OutlineLeaf() {
@@ -66,13 +72,16 @@ export function RegistrationPage() {
   const navigate = useNavigate();
   const [values, setValues] = useState<RegistrationValues>(initialValues);
   const [errors, setErrors] = useState<RegistrationFieldErrors>({});
-  const [visited, setVisited] = useState<Partial<Record<RegistrationField, boolean>>>({});
+  const [visited, setVisited] = useState<
+    Partial<Record<RegistrationField, boolean>>
+  >({});
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
-  const [requestError, setRequestError] = useState<RegistrationRequestError | null>(null);
+  const [requestError, setRequestError] =
+    useState<RegistrationRequestError | null>(null);
   const [hasTimedOut, setHasTimedOut] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -97,14 +106,24 @@ export function RegistrationPage() {
     };
   }, []);
 
-  function validateVisitedField(field: RegistrationField, nextValues: RegistrationValues) {
+  function validateVisitedField(
+    field: RegistrationField,
+    nextValues: RegistrationValues,
+  ) {
     const nextValidation = validateRegistrationFields(nextValues);
 
     setErrors((currentErrors) => {
       let nextErrors = updateFieldError(currentErrors, field, nextValidation);
 
-      if (field === 'password' && (visited.confirmPassword || currentErrors.confirmPassword)) {
-        nextErrors = updateFieldError(nextErrors, 'confirmPassword', nextValidation);
+      if (
+        field === "password" &&
+        (visited.confirmPassword || currentErrors.confirmPassword)
+      ) {
+        nextErrors = updateFieldError(
+          nextErrors,
+          "confirmPassword",
+          nextValidation,
+        );
       }
 
       return nextErrors;
@@ -119,7 +138,10 @@ export function RegistrationPage() {
 
     if (visited[field] || errors[field]) {
       validateVisitedField(field, nextValues);
-    } else if (field === 'password' && (visited.confirmPassword || errors.confirmPassword)) {
+    } else if (
+      field === "password" &&
+      (visited.confirmPassword || errors.confirmPassword)
+    ) {
       validateVisitedField(field, nextValues);
     }
   }
@@ -148,7 +170,12 @@ export function RegistrationPage() {
 
     const nextErrors = validateRegistrationFields(values);
     setHasSubmitted(true);
-    setVisited({ fullName: true, email: true, password: true, confirmPassword: true });
+    setVisited({
+      fullName: true,
+      email: true,
+      password: true,
+      confirmPassword: true,
+    });
     setErrors(nextErrors);
 
     if (Object.keys(nextErrors).length > 0) {
@@ -168,20 +195,25 @@ export function RegistrationPage() {
     const abortController = new AbortController();
     registrationAbortControllerRef.current = abortController;
 
-    void registerService.register(credentials, abortController.signal)
+    void registerService
+      .register(credentials, abortController.signal)
       .then(() => {
         if (!isMountedRef.current || abortController.signal.aborted) {
           return;
         }
 
         registrationAbortControllerRef.current = undefined;
-        setValues((currentValues) => ({ ...currentValues, password: '', confirmPassword: '' }));
+        setValues((currentValues) => ({
+          ...currentValues,
+          password: "",
+          confirmPassword: "",
+        }));
         setIsLoading(false);
         setIsSuccess(true);
         submitInFlightRef.current = false;
         successTimeoutRef.current = setTimeout(() => {
           if (isMountedRef.current) {
-            navigate('/login', { replace: true });
+            navigate("/login", { replace: true });
           }
         }, 250);
       })
@@ -191,8 +223,10 @@ export function RegistrationPage() {
         }
 
         registrationAbortControllerRef.current = undefined;
-        const kind: RegisterErrorKind = error instanceof RegisterRequestError ? error.kind : 'unexpected';
-        const isIndeterminateConflict = hasTimedOut && kind === 'emailAlreadyExists';
+        const kind: RegisterErrorKind =
+          error instanceof RegisterRequestError ? error.kind : "unexpected";
+        const isIndeterminateConflict =
+          hasTimedOut && kind === "emailAlreadyExists";
         const message = isIndeterminateConflict
           ? indeterminateRegistrationMessage
           : requestErrorMessages[kind];
@@ -200,9 +234,9 @@ export function RegistrationPage() {
         submitInFlightRef.current = false;
         setIsLoading(false);
         setRequestError({ message, showLoginLink: isIndeterminateConflict });
-        setHasTimedOut((timedOut) => timedOut || kind === 'timeout');
+        setHasTimedOut((timedOut) => timedOut || kind === "timeout");
 
-        if (kind === 'emailAlreadyExists' && !isIndeterminateConflict) {
+        if (kind === "emailAlreadyExists" && !isIndeterminateConflict) {
           setErrors((currentErrors) => ({ ...currentErrors, email: message }));
         }
       });
@@ -213,14 +247,20 @@ export function RegistrationPage() {
     submitRegistration();
   }
 
-  const inputClassName = 'min-h-12 w-full rounded-lg border border-[#b7b7a8] bg-[#fffefa] px-3 py-2.5 text-base aria-invalid:border-[#9e2f27] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]';
+  const inputClassName =
+    "min-h-12 w-full rounded-lg border border-[#b7b7a8] bg-[#fffefa] px-3 py-2.5 text-base aria-invalid:border-[#9e2f27] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]";
 
   return (
     <main className="min-h-dvh w-full bg-[#f7f1e5] md:grid md:grid-cols-2">
-      <aside className="hidden min-h-dvh items-center justify-center bg-[#b58c43] p-12 text-[#fffdf8] md:flex" aria-hidden="true">
+      <aside
+        className="hidden min-h-dvh items-center justify-center bg-[#b58c43] p-12 text-[#fffdf8] md:flex"
+        aria-hidden="true"
+      >
         <div className="flex max-w-sm flex-col items-center text-center">
           <OutlineLeaf />
-          <p className="mt-8 font-serif text-xl leading-7">Tu bienestar empieza con pequeños pasos.</p>
+          <p className="mt-8 font-serif text-xl leading-7">
+            Tu bienestar empieza con pequeños pasos.
+          </p>
         </div>
       </aside>
 
@@ -230,41 +270,75 @@ export function RegistrationPage() {
       >
         <div className="w-full max-w-[25rem] md:max-w-[23rem]">
           <div className="mb-6 flex justify-center">
-            <img alt="Hoja de NutrIA" className="size-12 rounded-full object-cover" src={nutriaIcon} />
+            <img
+              alt="Hoja de NutrIA"
+              className="size-12 rounded-full object-cover"
+              src={nutriaIcon}
+            />
           </div>
 
           <header className="mb-7 text-center">
-            <h1 id="registration-title" className="m-0 font-serif text-[clamp(2rem,8vw,2.35rem)] font-semibold leading-[1.15] tracking-[-0.025em] text-[#254a36] md:text-4xl">
+            <h1
+              id="registration-title"
+              className="m-0 font-serif text-[clamp(2rem,8vw,2.35rem)] font-semibold leading-[1.15] tracking-[-0.025em] text-[#254a36] md:text-4xl"
+            >
               Creá tu cuenta
             </h1>
-            <p className="mt-2.5 leading-6 text-[#5f675c]">Completá tus datos para empezar a cuidarte.</p>
+            <p className="mt-2.5 leading-6 text-[#5f675c]">
+              Completá tus datos para empezar a cuidarte.
+            </p>
           </header>
 
-          <form className="grid gap-[1.1rem]" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
-            {hasSubmitted && Object.keys(errors).length > 0 && !requestError && (
-              <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
-                {Object.values(errors).join(' ')}
-              </div>
-            )}
+          <form
+            className="grid gap-[1.1rem]"
+            noValidate
+            aria-busy={isLoading || undefined}
+            onSubmit={handleSubmit}
+          >
+            {hasSubmitted &&
+              Object.keys(errors).length > 0 &&
+              !requestError && (
+                <div
+                  className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]"
+                  role="alert"
+                >
+                  {Object.values(errors).join(" ")}
+                </div>
+              )}
             {requestError && (
-              <div className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
+              <div
+                className="rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]"
+                role="alert"
+              >
                 <p className="m-0">{requestError.message}</p>
                 {requestError.showLoginLink && (
-                  <Link className="mt-2 inline-block font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/login">
+                  <Link
+                    className="mt-2 inline-block font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+                    to="/login"
+                  >
                     Ir al inicio de sesión
                   </Link>
                 )}
               </div>
             )}
-            {isLoading && <p aria-live="polite" className="sr-only">Creando cuenta...</p>}
+            {isLoading && (
+              <p aria-live="polite" className="sr-only">
+                Creando cuenta...
+              </p>
+            )}
             {isSuccess && (
-              <p className="m-0 rounded-lg border-l-4 border-[#254a36] bg-[#edf5e9] p-3 text-[#254a36]" role="status">
+              <p
+                className="m-0 rounded-lg border-l-4 border-[#254a36] bg-[#edf5e9] p-3 text-[#254a36]"
+                role="status"
+              >
                 Cuenta creada. Ahora iniciá sesión.
               </p>
             )}
 
             <div className="grid gap-2">
-              <label className="text-sm font-bold" htmlFor="full-name">Nombre</label>
+              <label className="text-sm font-bold" htmlFor="full-name">
+                Nombre
+              </label>
               <input
                 ref={nameRef}
                 className={inputClassName}
@@ -275,16 +349,26 @@ export function RegistrationPage() {
                 required
                 disabled={isLoading || isSuccess}
                 value={values.fullName}
-                aria-invalid={errors.fullName ? 'true' : undefined}
-                aria-describedby={errors.fullName ? 'full-name-error' : undefined}
-                onBlur={() => handleBlur('fullName')}
-                onChange={(event) => handleChange('fullName', event.target.value)}
+                aria-invalid={errors.fullName ? "true" : undefined}
+                aria-describedby={
+                  errors.fullName ? "full-name-error" : undefined
+                }
+                onBlur={() => handleBlur("fullName")}
+                onChange={(event) =>
+                  handleChange("fullName", event.target.value)
+                }
               />
-              {errors.fullName && <p className="m-0 text-[#9e2f27]" id="full-name-error">{errors.fullName}</p>}
+              {errors.fullName && (
+                <p className="m-0 text-[#9e2f27]" id="full-name-error">
+                  {errors.fullName}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <label className="text-sm font-bold" htmlFor="email">Correo electrónico</label>
+              <label className="text-sm font-bold" htmlFor="email">
+                Correo electrónico
+              </label>
               <input
                 ref={emailRef}
                 className={inputClassName}
@@ -296,79 +380,118 @@ export function RegistrationPage() {
                 required
                 disabled={isLoading || isSuccess}
                 value={values.email}
-                aria-invalid={errors.email ? 'true' : undefined}
-                aria-describedby={errors.email ? 'email-error' : undefined}
-                onBlur={() => handleBlur('email')}
-                onChange={(event) => handleChange('email', event.target.value)}
+                aria-invalid={errors.email ? "true" : undefined}
+                aria-describedby={errors.email ? "email-error" : undefined}
+                onBlur={() => handleBlur("email")}
+                onChange={(event) => handleChange("email", event.target.value)}
               />
-              {errors.email && <p className="m-0 text-[#9e2f27]" id="email-error">{errors.email}</p>}
+              {errors.email && (
+                <p className="m-0 text-[#9e2f27]" id="email-error">
+                  {errors.email}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <label className="text-sm font-bold" htmlFor="new-password">Contraseña</label>
-              <p className="m-0 text-sm leading-5 text-[#5f675c]" id="password-help">Al menos {MINIMUM_PASSWORD_LENGTH} caracteres.</p>
+              <label className="text-sm font-bold" htmlFor="new-password">
+                Contraseña
+              </label>
+              <p
+                className="m-0 text-sm leading-5 text-[#5f675c]"
+                id="password-help"
+              >
+                Al menos {MINIMUM_PASSWORD_LENGTH} caracteres.
+              </p>
               <div className="relative">
                 <input
                   ref={passwordRef}
                   className={`${inputClassName} pr-[5.5rem]`}
                   id="new-password"
                   name="password"
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPassword ? "text" : "password"}
                   autoComplete="new-password"
                   minLength={MINIMUM_PASSWORD_LENGTH}
                   required
                   disabled={isLoading || isSuccess}
                   value={values.password}
-                  aria-invalid={errors.password ? 'true' : undefined}
-                  aria-describedby={errors.password ? 'password-help password-error' : 'password-help'}
-                  onBlur={() => handleBlur('password')}
-                  onChange={(event) => handleChange('password', event.target.value)}
+                  aria-invalid={errors.password ? "true" : undefined}
+                  aria-describedby={
+                    errors.password
+                      ? "password-help password-error"
+                      : "password-help"
+                  }
+                  onBlur={() => handleBlur("password")}
+                  onChange={(event) =>
+                    handleChange("password", event.target.value)
+                  }
                 />
                 <button
                   className="absolute top-0.5 right-0.5 min-h-12 rounded-md border-0 bg-transparent px-3 py-2 text-sm font-bold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   type="button"
                   disabled={isLoading || isSuccess}
-                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  aria-label={
+                    showPassword ? "Ocultar contraseña" : "Mostrar contraseña"
+                  }
                   aria-pressed={showPassword}
                   onClick={() => setShowPassword((visible) => !visible)}
                 >
-                  {showPassword ? 'Ocultar' : 'Mostrar'}
+                  {showPassword ? "Ocultar" : "Mostrar"}
                 </button>
               </div>
-              {errors.password && <p className="m-0 text-[#9e2f27]" id="password-error">{errors.password}</p>}
+              {errors.password && (
+                <p className="m-0 text-[#9e2f27]" id="password-error">
+                  {errors.password}
+                </p>
+              )}
             </div>
 
             <div className="grid gap-2">
-              <label className="text-sm font-bold" htmlFor="confirm-password">Confirmá tu contraseña</label>
+              <label className="text-sm font-bold" htmlFor="confirm-password">
+                Confirmá tu contraseña
+              </label>
               <div className="relative">
                 <input
                   ref={confirmationRef}
                   className={`${inputClassName} pr-[7.5rem]`}
                   id="confirm-password"
                   name="confirmPassword"
-                  type={showConfirmation ? 'text' : 'password'}
+                  type={showConfirmation ? "text" : "password"}
                   autoComplete="new-password"
                   enterKeyHint="done"
                   required
                   disabled={isLoading || isSuccess}
                   value={values.confirmPassword}
-                  aria-invalid={errors.confirmPassword ? 'true' : undefined}
-                  aria-describedby={errors.confirmPassword ? 'confirm-password-error' : undefined}
-                  onBlur={() => handleBlur('confirmPassword')}
-                  onChange={(event) => handleChange('confirmPassword', event.target.value)}
+                  aria-invalid={errors.confirmPassword ? "true" : undefined}
+                  aria-describedby={
+                    errors.confirmPassword
+                      ? "confirm-password-error"
+                      : undefined
+                  }
+                  onBlur={() => handleBlur("confirmPassword")}
+                  onChange={(event) =>
+                    handleChange("confirmPassword", event.target.value)
+                  }
                 />
                 <button
                   className="absolute top-0.5 right-0.5 min-h-12 rounded-md border-0 bg-transparent px-3 py-2 text-sm font-bold text-[#254a36] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                   type="button"
                   disabled={isLoading || isSuccess}
-                  aria-label={showConfirmation ? 'Ocultar confirmación de contraseña' : 'Mostrar confirmación de contraseña'}
+                  aria-label={
+                    showConfirmation
+                      ? "Ocultar confirmación de contraseña"
+                      : "Mostrar confirmación de contraseña"
+                  }
                   aria-pressed={showConfirmation}
                   onClick={() => setShowConfirmation((visible) => !visible)}
                 >
-                  {showConfirmation ? 'Ocultar' : 'Mostrar'}
+                  {showConfirmation ? "Ocultar" : "Mostrar"}
                 </button>
               </div>
-              {errors.confirmPassword && <p className="m-0 text-[#9e2f27]" id="confirm-password-error">{errors.confirmPassword}</p>}
+              {errors.confirmPassword && (
+                <p className="m-0 text-[#9e2f27]" id="confirm-password-error">
+                  {errors.confirmPassword}
+                </p>
+              )}
             </div>
 
             <button
@@ -376,8 +499,13 @@ export function RegistrationPage() {
               disabled={isLoading || isSuccess}
               type="submit"
             >
-              {isLoading && <span aria-hidden="true" className="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
-              {isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
+              {isLoading && (
+                <span
+                  aria-hidden="true"
+                  className="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none"
+                />
+              )}
+              {isLoading ? "Creando cuenta..." : "Crear cuenta"}
             </button>
             {requestError && (
               <button
@@ -391,7 +519,13 @@ export function RegistrationPage() {
           </form>
 
           <p className="mx-auto mt-7 text-center text-sm text-[#5f675c]">
-            ¿Ya tenés cuenta? <Link className="font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/login">Iniciá sesión</Link>
+            ¿Ya tenés cuenta?{" "}
+            <Link
+              className="font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
+              to="/login"
+            >
+              Iniciá sesión
+            </Link>
           </p>
         </div>
       </section>

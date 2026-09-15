@@ -11,12 +11,12 @@ export type AuthenticatedUser = {
   updatedAt: string;
 };
 
-export type LoginErrorKind = 'invalidCredentials' | 'network';
+export type LoginErrorKind = "invalidCredentials" | "network";
 
 export class LoginRequestError extends Error {
   constructor(public readonly kind: LoginErrorKind) {
     super(kind);
-    this.name = 'LoginRequestError';
+    this.name = "LoginRequestError";
   }
 }
 
@@ -24,10 +24,10 @@ export class LoginRequestError extends Error {
 // propósito, por seguridad). Este flag NO es el token — es solo una señal
 // local de "hubo un login exitoso", para que las rutas privadas puedan
 // decidir sin depender de que una request falle primero.
-const AUTH_FLAG_KEY = 'nutria:isAuthenticated';
+const AUTH_FLAG_KEY = "nutria:isAuthenticated";
 
 export function markAuthenticated() {
-  localStorage.setItem(AUTH_FLAG_KEY, 'true');
+  localStorage.setItem(AUTH_FLAG_KEY, "true");
 }
 
 export function clearAuthenticated() {
@@ -35,31 +35,33 @@ export function clearAuthenticated() {
 }
 
 export function isAuthenticated(): boolean {
-  return localStorage.getItem(AUTH_FLAG_KEY) === 'true';
+  return localStorage.getItem(AUTH_FLAG_KEY) === "true";
 }
 
 function isAuthenticatedUser(value: unknown): value is AuthenticatedUser {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
   const user = value as Record<string, unknown>;
 
-  return typeof user.id === 'string'
-    && typeof user.email === 'string'
-    && (typeof user.name === 'string' || user.name === null)
-    && typeof user.createdAt === 'string'
-    && typeof user.updatedAt === 'string';
+  return (
+    typeof user.id === "string" &&
+    typeof user.email === "string" &&
+    (typeof user.name === "string" || user.name === null) &&
+    typeof user.createdAt === "string" &&
+    typeof user.updatedAt === "string"
+  );
 }
 
 function loginUrl() {
-  const baseUrl = import.meta.env.VITE_API_URL;
+  const baseUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : "/api";
 
   if (!baseUrl) {
-    throw new LoginRequestError('network');
+    throw new LoginRequestError("network");
   }
 
-  return `${baseUrl.replace(/\/+$/, '')}/auth/login`;
+  return `${baseUrl.replace(/\/+$/, "")}/auth/login`;
 }
 
 export const authService = {
@@ -68,38 +70,41 @@ export const authService = {
 
     try {
       response = await fetch(loginUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: credentials.email, password: credentials.password }),
-        credentials: 'include',
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: credentials.email,
+          password: credentials.password,
+        }),
+        credentials: "include",
       });
     } catch (error) {
       if (error instanceof LoginRequestError) {
         throw error;
       }
 
-      throw new LoginRequestError('network');
+      throw new LoginRequestError("network");
     }
 
     if (response.status === 401) {
-      throw new LoginRequestError('invalidCredentials');
+      throw new LoginRequestError("invalidCredentials");
     }
 
     if (response.status !== 200) {
-      throw new LoginRequestError('network');
+      throw new LoginRequestError("network");
     }
 
     try {
       const user: unknown = await response.json();
 
       if (!isAuthenticatedUser(user)) {
-        throw new LoginRequestError('network');
+        throw new LoginRequestError("network");
       }
 
       markAuthenticated();
       return user;
     } catch {
-      throw new LoginRequestError('network');
+      throw new LoginRequestError("network");
     }
   },
 };

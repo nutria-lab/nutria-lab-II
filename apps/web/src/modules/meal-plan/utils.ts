@@ -1,34 +1,46 @@
-import type { Ingredient, MealPlanDay, MealType } from '../../services/mealPlanService';
+import type {
+  Ingredient,
+  MealPlanDay,
+  MealType,
+} from "../../services/mealPlanService";
 
-const DAY_ABBREVIATIONS = ['DOM', 'LUN', 'MAR', 'MIE', 'JUE', 'VIE', 'SAB'];
+const DAY_ABBREVIATIONS = ["DOM", "LUN", "MAR", "MIE", "JUE", "VIE", "SAB"];
 
-const WEEKDAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+const WEEKDAY_NAMES = [
+  "domingo",
+  "lunes",
+  "martes",
+  "miércoles",
+  "jueves",
+  "viernes",
+  "sábado",
+];
 
 const MONTH_NAMES = [
-  'enero',
-  'febrero',
-  'marzo',
-  'abril',
-  'mayo',
-  'junio',
-  'julio',
-  'agosto',
-  'septiembre',
-  'octubre',
-  'noviembre',
-  'diciembre',
+  "enero",
+  "febrero",
+  "marzo",
+  "abril",
+  "mayo",
+  "junio",
+  "julio",
+  "agosto",
+  "septiembre",
+  "octubre",
+  "noviembre",
+  "diciembre",
 ];
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
-  BREAKFAST: 'Desayuno',
-  LUNCH: 'Almuerzo',
-  SNACK: 'Merienda',
-  DINNER: 'Cena',
+  BREAKFAST: "Desayuno",
+  LUNCH: "Almuerzo",
+  SNACK: "Merienda",
+  DINNER: "Cena",
 };
 
 // Evita el corrimiento de día que da new Date('YYYY-MM-DD') (lo interpreta como UTC).
 export function parseLocalDate(dateStr: string): Date {
-  const [year, month, day] = dateStr.split('-').map(Number);
+  const [year, month, day] = dateStr.split("-").map(Number);
   return new Date(year, month - 1, day);
 }
 
@@ -36,8 +48,8 @@ export function parseLocalDate(dateStr: string): Date {
 // de la fecha, sin pasar por toISOString() (que convierte a UTC y puede correr el día).
 export function formatLocalDateKey(date: Date): string {
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
@@ -58,7 +70,7 @@ export function formatFullDate(dateStr: string): string {
 
 export function formatWeekRange(days: MealPlanDay[]): string {
   if (days.length === 0) {
-    return '';
+    return "";
   }
   const first = parseLocalDate(days[0].date);
   const last = parseLocalDate(days[days.length - 1].date);
@@ -78,5 +90,5 @@ export function formatIngredient(ingredient: Ingredient): string {
     parts.push(ingredient.unit);
   }
   parts.push(ingredient.name);
-  return parts.join(' ');
+  return parts.join(" ");
 }

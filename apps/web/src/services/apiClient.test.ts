@@ -2,17 +2,17 @@ import {
   AxiosError,
   type AxiosResponse,
   type InternalAxiosRequestConfig,
-} from 'axios';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+} from "axios";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { apiClient, setAuthFailureHandler } from './apiClient';
+import { apiClient, setAuthFailureHandler } from "./apiClient";
 
 function failingAdapter(status: number) {
   return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
     const response: AxiosResponse = {
       data: {},
       status,
-      statusText: 'Error',
+      statusText: "Error",
       headers: {},
       config,
     };
@@ -29,43 +29,62 @@ function failingAdapter(status: number) {
 
 function networkErrorAdapter() {
   return async (config: InternalAxiosRequestConfig): Promise<AxiosResponse> => {
-    throw new AxiosError(
-      'Network Error',
-      AxiosError.ERR_NETWORK,
-      config,
-    );
+    throw new AxiosError("Network Error", AxiosError.ERR_NETWORK, config);
   };
+}
+
+function successfulAdapter() {
+  return async (
+    config: InternalAxiosRequestConfig,
+  ): Promise<AxiosResponse> => ({
+    data: { id: "profile-1" },
+    status: 200,
+    statusText: "OK",
+    headers: {},
+    config,
+  });
 }
 
 afterEach(() => {
   setAuthFailureHandler(null);
 });
 
-describe('apiClient', () => {
-  it('usa la URL de API configurada por ambiente', () => {
+describe("apiClient", () => {
+  it("usa la URL de API configurada por ambiente", () => {
     expect(apiClient.defaults.baseURL).toBe(import.meta.env.VITE_API_URL);
   });
 
-  it('configura Axios para enviar credenciales de sesión', () => {
+  it("configura Axios para enviar credenciales de sesión", () => {
     expect(apiClient.defaults.withCredentials).toBe(true);
   });
 
+  it("permite la primera respuesta protegida válida tras login sin activar la redirección de 401", async () => {
+    const handler = vi.fn();
+    setAuthFailureHandler(handler);
+
+    await expect(
+      apiClient.get("/nutrition-profile", { adapter: successfulAdapter() }),
+    ).resolves.toMatchObject({ status: 200, data: { id: "profile-1" } });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it.each([401, 403])(
-    'maneja una respuesta %s de una ruta protegida',
+    "maneja una respuesta %s de una ruta protegida",
     async (status) => {
       const handler = vi.fn();
       setAuthFailureHandler(handler);
 
       await expect(
-        apiClient.get('/protected', { adapter: failingAdapter(status) }),
+        apiClient.get("/protected", { adapter: failingAdapter(status) }),
       ).rejects.toBeInstanceOf(AxiosError);
 
       expect(handler).toHaveBeenCalledTimes(1);
     },
   );
 
-  it.each(['/auth/login', '/auth/logout'])(
-    'no maneja automáticamente errores de %s',
+  it.each(["/auth/login", "/auth/logout"])(
+    "no maneja automáticamente errores de %s",
     async (url) => {
       const handler = vi.fn();
       setAuthFailureHandler(handler);
@@ -78,12 +97,12 @@ describe('apiClient', () => {
     },
   );
 
-  it('permite excluir explícitamente una request pública', async () => {
+  it("permite excluir explícitamente una request pública", async () => {
     const handler = vi.fn();
     setAuthFailureHandler(handler);
 
     await expect(
-      apiClient.get('/public', {
+      apiClient.get("/public", {
         adapter: failingAdapter(401),
         skipAuthErrorHandling: true,
       }),
@@ -93,12 +112,12 @@ describe('apiClient', () => {
   });
 
   it.each([400, 404, 422, 500])(
-    'propaga un error HTTP %s sin tratarlo como error de autenticación',
+    "propaga un error HTTP %s sin tratarlo como error de autenticación",
     async (status) => {
       const handler = vi.fn();
       setAuthFailureHandler(handler);
 
-      const request = apiClient.get('/resource', {
+      const request = apiClient.get("/resource", {
         adapter: failingAdapter(status),
       });
 
@@ -110,12 +129,12 @@ describe('apiClient', () => {
     },
   );
 
-  it('propaga errores de red sin limpiar la sesión', async () => {
+  it("propaga errores de red sin limpiar la sesión", async () => {
     const handler = vi.fn();
     setAuthFailureHandler(handler);
 
     await expect(
-      apiClient.get('/resource', { adapter: networkErrorAdapter() }),
+      apiClient.get("/resource", { adapter: networkErrorAdapter() }),
     ).rejects.toMatchObject({
       code: AxiosError.ERR_NETWORK,
     });
@@ -123,10 +142,10 @@ describe('apiClient', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
-  it('conserva el AxiosError original después de manejar un 401', async () => {
+  it("conserva el AxiosError original después de manejar un 401", async () => {
     setAuthFailureHandler(vi.fn());
 
-    const request = apiClient.get('/protected', {
+    const request = apiClient.get("/protected", {
       adapter: failingAdapter(401),
     });
 
@@ -135,7 +154,7 @@ describe('apiClient', () => {
     });
   });
 
-  it('deduplica el manejo de varios 401/403 simultáneos', async () => {
+  it("deduplica el manejo de varios 401/403 simultáneos", async () => {
     let releaseHandler!: () => void;
 
     const handler = vi.fn(
@@ -148,11 +167,11 @@ describe('apiClient', () => {
     setAuthFailureHandler(handler);
 
     const first = apiClient
-      .get('/one', { adapter: failingAdapter(401) })
+      .get("/one", { adapter: failingAdapter(401) })
       .catch((error) => error);
 
     const second = apiClient
-      .get('/two', { adapter: failingAdapter(403) })
+      .get("/two", { adapter: failingAdapter(403) })
       .catch((error) => error);
 
     await vi.waitFor(() => {
@@ -167,13 +186,13 @@ describe('apiClient', () => {
   });
 });
 
-describe('auth failure handler resilience', () => {
-  it('conserva el AxiosError original aunque falle el handler de sesión', async () => {
+describe("auth failure handler resilience", () => {
+  it("conserva el AxiosError original aunque falle el handler de sesión", async () => {
     setAuthFailureHandler(async () => {
-      throw new Error('logout local failed');
+      throw new Error("logout local failed");
     });
 
-    const request = apiClient.get('/protected', {
+    const request = apiClient.get("/protected", {
       adapter: failingAdapter(401),
     });
 
@@ -183,13 +202,13 @@ describe('auth failure handler resilience', () => {
   });
 });
 
-describe('already handled auth errors', () => {
-  it('no vuelve a manejar una request cuyo error de autenticación ya fue tratado', async () => {
+describe("already handled auth errors", () => {
+  it("no vuelve a manejar una request cuyo error de autenticación ya fue tratado", async () => {
     const handler = vi.fn();
     setAuthFailureHandler(handler);
 
     await expect(
-      apiClient.get('/protected', {
+      apiClient.get("/protected", {
         adapter: failingAdapter(401),
         authErrorHandled: true,
       }),

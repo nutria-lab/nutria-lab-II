@@ -1,26 +1,26 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from "react";
 import {
   nutritionProfileService,
   NutritionProfileNotFoundError,
   type NutritionProfile,
-} from '../../../services/nutritionProfileService';
+} from "../../../services/nutritionProfileService";
 
-type Status = 'loading' | 'idle' | 'saving' | 'success' | 'error';
+type Status = "loading" | "idle" | "saving" | "success" | "error";
 
 const DEFAULT_PROFILE: NutritionProfile = {
-  goal: 'LOSE_WEIGHT',
-  diet: 'VEGAN',
+  goal: "LOSE_WEIGHT",
+  diet: "VEGAN",
   excludedIngredients: [],
-  cookTimePreference: 'STANDARD',
+  cookTimePreference: "STANDARD",
 };
 
 function validateProfile(profile: NutritionProfile): string | null {
   if (!profile.goal || !profile.diet || !profile.cookTimePreference) {
-    return 'Completá objetivo, dieta y tiempo de cocina antes de guardar.';
+    return "Completá objetivo, dieta y tiempo de cocina antes de guardar.";
   }
   const uniqueRestrictions = new Set(profile.excludedIngredients);
   if (uniqueRestrictions.size !== profile.excludedIngredients.length) {
-    return 'Hay ingredientes excluidos repetidos.';
+    return "Hay ingredientes excluidos repetidos.";
   }
   return null;
 }
@@ -28,11 +28,11 @@ function validateProfile(profile: NutritionProfile): string | null {
 export function useNutritionProfile() {
   const [profile, setProfile] = useState<NutritionProfile | null>(null);
   const [isNewProfile, setIsNewProfile] = useState(false);
-  const [status, setStatus] = useState<Status>('loading');
+  const [status, setStatus] = useState<Status>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    setStatus('loading');
+    setStatus("loading");
     setErrorMessage(null);
 
     nutritionProfileService
@@ -40,7 +40,7 @@ export function useNutritionProfile() {
       .then((data) => {
         setProfile(data);
         setIsNewProfile(false);
-        setStatus('idle');
+        setStatus("idle");
       })
       .catch((error) => {
         // 404 = todavía no hay perfil: no es un fallo técnico, se habilita
@@ -48,13 +48,15 @@ export function useNutritionProfile() {
         if (error instanceof NutritionProfileNotFoundError) {
           setProfile(DEFAULT_PROFILE);
           setIsNewProfile(true);
-          setStatus('idle');
+          setStatus("idle");
           return;
         }
         // Un 401 ya dispara el redirect a /login desde el interceptor de `http`;
         // acá solo queda reflejar el error por si el componente sigue montado.
-        setStatus('error');
-        setErrorMessage('No pudimos cargar tus preferencias. Intentá de nuevo.');
+        setStatus("error");
+        setErrorMessage(
+          "No pudimos cargar tus preferencias. Intentá de nuevo.",
+        );
       });
   }, []);
 
@@ -65,22 +67,22 @@ export function useNutritionProfile() {
   const save = useCallback(async (next: NutritionProfile) => {
     const validationError = validateProfile(next);
     if (validationError) {
-      setStatus('error');
+      setStatus("error");
       setErrorMessage(validationError);
       return;
     }
 
-    setStatus('saving');
+    setStatus("saving");
     setErrorMessage(null);
     try {
       const saved = await nutritionProfileService.updateProfile(next);
       setProfile(saved);
       setIsNewProfile(false);
-      setStatus('success');
+      setStatus("success");
     } catch {
       // No se toca `next` ni el formState del llamador: sigue disponible para reintentar.
-      setStatus('error');
-      setErrorMessage('No pudimos guardar tus preferencias. Intentá de nuevo.');
+      setStatus("error");
+      setErrorMessage("No pudimos guardar tus preferencias. Intentá de nuevo.");
     }
   }, []);
 

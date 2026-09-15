@@ -1,5 +1,5 @@
-import { SelectableCard } from '../../../common/components/SelectableCard';
-import type { CookTimePreference } from '../../../services/nutritionProfileService';
+import { SelectableCard } from "../../../common/components/SelectableCard";
+import type { CookTimePreference } from "../../../services/nutritionProfileService";
 
 const COOK_TIME_OPTIONS: {
   value: CookTimePreference;
@@ -7,9 +7,24 @@ const COOK_TIME_OPTIONS: {
   valueLabel: string;
   description: string;
 }[] = [
-  { value: 'QUICK', title: 'Rápido', valueLabel: '15m', description: 'Comidas rápidas y saludables para días ocupados.' },
-  { value: 'STANDARD', title: 'Estándar', valueLabel: '30m', description: 'El equilibrio perfecto entre facilidad y sabor.' },
-  { value: 'GOURMET', title: 'Gourmet', valueLabel: '60m', description: 'Sabores elaborados para quienes disfrutan cocinar.' },
+  {
+    value: "QUICK",
+    title: "Rápido",
+    valueLabel: "15m",
+    description: "Comidas rápidas y saludables para días ocupados.",
+  },
+  {
+    value: "STANDARD",
+    title: "Estándar",
+    valueLabel: "30m",
+    description: "El equilibrio perfecto entre facilidad y sabor.",
+  },
+  {
+    value: "GOURMET",
+    title: "Gourmet",
+    valueLabel: "60m",
+    description: "Sabores elaborados para quienes disfrutan cocinar.",
+  },
 ];
 
 type CookTimeSelectorProps = {
@@ -18,7 +33,11 @@ type CookTimeSelectorProps = {
   onChange: (value: CookTimePreference) => void;
 };
 
-export function CookTimeSelector({ value, disabled, onChange }: CookTimeSelectorProps) {
+export function CookTimeSelector({
+  value,
+  disabled,
+  onChange,
+}: CookTimeSelectorProps) {
   return (
     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
       {COOK_TIME_OPTIONS.map((option) => (

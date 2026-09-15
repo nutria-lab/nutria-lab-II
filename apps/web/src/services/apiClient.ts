@@ -1,6 +1,6 @@
-import axios, { type AxiosError } from 'axios';
+import axios, { type AxiosError } from "axios";
 
-declare module 'axios' {
+declare module "axios" {
   interface AxiosRequestConfig {
     skipAuthErrorHandling?: boolean;
     authErrorHandled?: boolean;
@@ -12,17 +12,14 @@ type AuthFailureHandler = () => void | Promise<void>;
 let authFailureHandler: AuthFailureHandler | null = null;
 let authFailureInFlight: Promise<void> | null = null;
 
-const EXCLUDED_AUTH_PATHS = new Set([
-  '/auth/login',
-  '/auth/logout',
-]);
+const EXCLUDED_AUTH_PATHS = new Set(["/auth/login", "/auth/logout"]);
 
-const backendUrl = import.meta.env.VITE_API_URL;
+const backendUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : "/api";
 
 if (!backendUrl) {
   // Falla rápido y explícito: sin esto, las requests saldrían con una base
   // URL vacía y los errores de red se verían como fallas genéricas.
-  throw new Error('VITE_API_URL no está configurada.');
+  throw new Error("VITE_API_URL no está configurada.");
 }
 
 export const apiClient = axios.create({
@@ -44,7 +41,10 @@ function isExcludedAuthPath(url?: string) {
   }
 
   try {
-    const pathname = new URL(url, 'http://localhost').pathname.replace(/\/+$/, '');
+    const pathname = new URL(url, "http://localhost").pathname.replace(
+      /\/+$/,
+      "",
+    );
     return EXCLUDED_AUTH_PATHS.has(pathname);
   } catch {
     return false;

@@ -1,4 +1,4 @@
-import { CheckIcon } from './CheckIcon';
+import { CheckIcon } from "./CheckIcon";
 
 type SelectableCardProps = {
   title: string;
@@ -24,11 +24,13 @@ export function SelectableCard({
       disabled={disabled}
       aria-pressed={selected}
       className={`w-full rounded-xl border bg-white p-4 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-        selected ? 'border-brand-green' : 'border-neutral-200'
+        selected ? "border-brand-green" : "border-neutral-200"
       }`}
     >
       <div className="flex items-center justify-between">
-        <span className="font-serif text-lg font-semibold text-neutral-900">{title}</span>
+        <span className="font-serif text-lg font-semibold text-neutral-900">
+          {title}
+        </span>
         {selected && (
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-green text-white">
             <CheckIcon className="h-3.5 w-3.5" />
@@ -36,7 +38,9 @@ export function SelectableCard({
         )}
       </div>
       {valueLabel && (
-        <div className="font-serif text-lg font-semibold text-brand-green">{valueLabel}</div>
+        <div className="font-serif text-lg font-semibold text-brand-green">
+          {valueLabel}
+        </div>
       )}
       <p className="mt-1 text-sm text-neutral-500">{description}</p>
     </button>

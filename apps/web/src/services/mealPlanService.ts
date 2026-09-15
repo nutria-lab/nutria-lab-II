@@ -1,7 +1,7 @@
-import axios from 'axios';
-import { apiClient } from './apiClient';
+import axios from "axios";
+import { apiClient } from "./apiClient";
 
-export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'SNACK';
+export type MealType = "BREAKFAST" | "LUNCH" | "DINNER" | "SNACK";
 
 export type Ingredient = {
   name: string;
@@ -38,12 +38,14 @@ export type MealPlan = {
 export const mealPlanService = {
   async getCurrentMealPlan(weekStart: string): Promise<MealPlan | null> {
     try {
-      const response = await apiClient.get<MealPlan>('/meal-plans/current', {
+      const response = await apiClient.get<MealPlan>("/meal-plans/current", {
         params: { weekStart },
       });
       const data = response.data;
       if (!data || !Array.isArray(data.days)) {
-        throw new Error('La respuesta del servidor no tiene el formato esperado.');
+        throw new Error(
+          "La respuesta del servidor no tiene el formato esperado.",
+        );
       }
       // Normaliza `meals` por día: si algún día viene sin el array (o mal formado),
       // que se comporte como un día sin comidas en vez de romper a quien lo consuma.

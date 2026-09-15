@@ -1,6 +1,6 @@
-import axios from 'axios';
+import axios from "axios";
 
-import { apiClient } from './apiClient';
+import { apiClient } from "./apiClient";
 
 export type RegisterCredentials = {
   email: string;
@@ -16,55 +16,58 @@ export type RegisteredUser = {
   updatedAt: string;
 };
 
-export type RegisterErrorKind = 'emailAlreadyExists' | 'validation' | 'timeout' | 'network' | 'unexpected';
+export type RegisterErrorKind =
+  "emailAlreadyExists" | "validation" | "timeout" | "network" | "unexpected";
 
 const REGISTRATION_TIMEOUT_MS = 10_000;
 
 export class RegisterRequestError extends Error {
   constructor(public readonly kind: RegisterErrorKind) {
     super(kind);
-    this.name = 'RegisterRequestError';
+    this.name = "RegisterRequestError";
   }
 }
 
 function isRegisteredUser(value: unknown): value is RegisteredUser {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
   const user = value as Record<string, unknown>;
 
-  return typeof user.id === 'string'
-    && typeof user.email === 'string'
-    && (typeof user.name === 'string' || user.name === null)
-    && typeof user.createdAt === 'string'
-    && typeof user.updatedAt === 'string';
+  return (
+    typeof user.id === "string" &&
+    typeof user.email === "string" &&
+    (typeof user.name === "string" || user.name === null) &&
+    typeof user.createdAt === "string" &&
+    typeof user.updatedAt === "string"
+  );
 }
 
 function registrationErrorKind(error: unknown): RegisterErrorKind {
   if (!axios.isAxiosError(error)) {
-    return 'unexpected';
+    return "unexpected";
   }
 
   const status = error.response?.status;
 
-  if (error.code === 'ECONNABORTED') {
-    return 'timeout';
+  if (error.code === "ECONNABORTED") {
+    return "timeout";
   }
 
   if (error.code === axios.AxiosError.ERR_CANCELED) {
-    return 'network';
+    return "network";
   }
 
   if (status === 409) {
-    return 'emailAlreadyExists';
+    return "emailAlreadyExists";
   }
 
   if (status === 400 || status === 422) {
-    return 'validation';
+    return "validation";
   }
 
-  return error.response ? 'unexpected' : 'network';
+  return error.response ? "unexpected" : "network";
 }
 
 export const registerService = {
@@ -81,7 +84,7 @@ export const registerService = {
 
     try {
       const response = await apiClient.post<RegisteredUser>(
-        '/auth/register',
+        "/auth/register",
         payload,
         {
           skipAuthErrorHandling: true,
@@ -91,7 +94,7 @@ export const registerService = {
       );
 
       if (!isRegisteredUser(response.data)) {
-        throw new RegisterRequestError('unexpected');
+        throw new RegisterRequestError("unexpected");
       }
 
       return response.data;

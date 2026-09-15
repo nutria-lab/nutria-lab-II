@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { Sidebar } from './Sidebar';
+import type { ReactNode } from "react";
+import { Sidebar } from "./Sidebar";
 
 type AppLayoutProps = {
   children: ReactNode;

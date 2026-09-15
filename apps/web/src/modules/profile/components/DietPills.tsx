@@ -1,13 +1,13 @@
-import { Pill } from '../../../common/components/Pill';
-import type { Diet } from '../../../services/nutritionProfileService';
+import { Pill } from "../../../common/components/Pill";
+import type { Diet } from "../../../services/nutritionProfileService";
 
 const DIET_OPTIONS: { value: Diet; label: string }[] = [
-  { value: 'VEGAN', label: 'Vegano' },
-  { value: 'VEGETARIAN', label: 'Vegetariano' },
-  { value: 'PALEO', label: 'Paleo' },
-  { value: 'KETO', label: 'Keto' },
-  { value: 'PESCATARIAN', label: 'Pescetariano' },
-  { value: 'ALL', label: 'Todo' },
+  { value: "VEGAN", label: "Vegano" },
+  { value: "VEGETARIAN", label: "Vegetariano" },
+  { value: "PALEO", label: "Paleo" },
+  { value: "KETO", label: "Keto" },
+  { value: "PESCATARIAN", label: "Pescetariano" },
+  { value: "ALL", label: "Todo" },
 ];
 
 type DietPillsProps = {
