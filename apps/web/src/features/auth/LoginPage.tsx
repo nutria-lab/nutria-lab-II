@@ -17,7 +17,7 @@ function OutlineLeaf() {
   );
 }
 
-export type LoginPageStatus = 'idle' | 'loading' | 'invalidCredentials' | 'networkError';
+export type LoginPageStatus = 'idle' | 'restoring' | 'loading' | 'invalidCredentials' | 'networkError';
 
 export type LoginSubmission = {
   email: string;
@@ -39,11 +39,13 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const isLoading = status === 'loading';
+  const isRestoring = status === 'restoring';
+  const isBusy = isLoading || isRestoring;
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (isLoading) {
+    if (isBusy) {
       return;
     }
 
@@ -64,7 +66,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
   }
 
   function handleRetry() {
-    if (!isLoading) {
+    if (!isBusy) {
       submitValidCredentials();
     }
   }
@@ -118,7 +120,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
             <p className="mt-2.5 leading-6 text-[#5f675c]">Ingresá tus datos para continuar</p>
           </header>
 
-          <form className="grid gap-[1.1rem]" noValidate aria-busy={isLoading || undefined} onSubmit={handleSubmit}>
+          <form className="grid gap-[1.1rem]" noValidate aria-busy={isBusy || undefined} onSubmit={handleSubmit}>
             {status === 'invalidCredentials' && (
               <p className="m-0 rounded-lg border-l-4 border-[#9e2f27] bg-[#fff1ee] p-3 text-[#6d211c]" role="alert">
                 El correo o la contraseña no son correctos.
@@ -152,6 +154,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                 autoComplete="username"
                 required
                 value={email}
+                disabled={isRestoring}
                 aria-invalid={errors.email ? 'true' : undefined}
                 aria-describedby={errors.email ? 'email-error' : undefined}
                 onChange={(event) => handleEmailChange(event.target.value)}
@@ -171,6 +174,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                   autoComplete="current-password"
                   required
                   value={password}
+                  disabled={isRestoring}
                   aria-invalid={errors.password ? 'true' : undefined}
                   aria-describedby={errors.password ? 'password-error' : undefined}
                   onChange={(event) => handlePasswordChange(event.target.value)}
@@ -180,6 +184,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                   type="button"
                   aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                   aria-pressed={showPassword}
+                  disabled={isRestoring}
                   onClick={() => setShowPassword((visible) => !visible)}
                 >
                   {showPassword ? 'Ocultar' : 'Mostrar'}
@@ -195,12 +200,14 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
                   id="remember-me"
                   name="rememberMe"
                   type="checkbox"
+                  disabled={isRestoring}
                 />
                 <span>Recordarme</span>
               </label>
               <button
                 className="inline-flex min-h-11 cursor-pointer items-center border-0 bg-transparent py-2 text-sm font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
                 type="button"
+                disabled={isRestoring}
               >
                 ¿Olvidaste tu contraseña?
               </button>
@@ -208,7 +215,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
 
             <button
               className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 bg-[#254a36] px-4 py-3 font-extrabold text-[#fffdf8] disabled:cursor-wait disabled:bg-[#345b45] disabled:opacity-100 focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]"
-              disabled={isLoading}
+              disabled={isBusy}
               type="submit"
             >
               {isLoading && <span aria-hidden="true" className="size-4 shrink-0 animate-spin rounded-full border-2 border-current border-r-transparent motion-reduce:animate-none" />}
@@ -218,7 +225,13 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
           </form>
 
           <p className="mx-auto mt-7 text-center text-sm text-[#5f675c]">
-            ¿No tenés cuenta? <Link className="font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35]" to="/register">Registrate</Link>
+            ¿No tenés cuenta? <Link
+              aria-disabled={isRestoring || undefined}
+              className="font-bold text-[#254a36] underline underline-offset-[0.18em] focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[#c88b35] aria-disabled:cursor-not-allowed aria-disabled:opacity-60"
+              onClick={isRestoring ? (event) => event.preventDefault() : undefined}
+              tabIndex={isRestoring ? -1 : undefined}
+              to="/register"
+            >Registrate</Link>
           </p>
         </div>
       </section>
