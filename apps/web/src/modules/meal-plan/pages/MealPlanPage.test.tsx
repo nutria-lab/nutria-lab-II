@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MealPlanPage } from './MealPlanPage';
 import { mealPlanService } from '../../../services/mealPlanService';
+import { clearAuthenticated } from '../../../services/authService';
 import { useMealPlan } from '../hooks/useMealPlan';
 
 // NUT-10: fixture inline con la forma REAL del backend (ver
@@ -28,6 +29,14 @@ vi.mock('../hooks/useMealPlan', async (importOriginal) => {
     useMealPlan: vi.fn(actual.useMealPlan),
   };
 });
+
+// NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE: `UnauthorizedState` es un callejón sin
+// salida (solo texto, sin acción). La corrección agrega un botón "Iniciar sesión" que debe
+// llamar a `clearAuthenticated()` (mismo par de acciones que ya hace el handler global de
+// `main.tsx`, ahora disparado explícitamente por el usuario en vez de automáticamente).
+vi.mock('../../../services/authService', () => ({
+  clearAuthenticated: vi.fn(),
+}));
 
 function buildDay(day: string, date: string, meals: unknown[]) {
   return { id: `day-${date}`, mealPlanId: 'plan-1', day, date, meals };
@@ -233,5 +242,47 @@ describe('MealPlanPage', () => {
 
     expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
     expect(await screen.findByText(/sesión|iniciar sesión|reautenticar/i)).toBeInTheDocument();
+  });
+
+  // NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE del revisor externo: un texto sin
+  // acción no es una salida real para el usuario. La pantalla de "sesión expirada" debe
+  // ofrecer un botón "Iniciar sesión" que reproduzca el mismo par de acciones que ya
+  // dispara el handler global de `main.tsx` (`clearAuthenticated()` +
+  // `window.location.assign('/login')`), pero como acción explícita en vez de automática.
+  it('offers a working "Iniciar sesión" action on "unauthorized" that clears the session and redirects to /login', async () => {
+    // jsdom's `window.location.assign` is non-configurable in this environment
+    // (`vi.spyOn(window.location, 'assign')` throws "Cannot redefine property: assign"),
+    // so `window.location` itself is replaced with a plain object carrying a mock `assign`,
+    // then restored after the assertion so it doesn't leak into other test files.
+    const originalLocation = window.location;
+    const assignMock = vi.fn();
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...originalLocation, assign: assignMock },
+    });
+
+    try {
+      vi.mocked(useMealPlan).mockReturnValueOnce({
+        mealPlan: null,
+        status: 'unauthorized' as never,
+        errorMessage: null,
+        retry: vi.fn(),
+        generate: vi.fn(),
+      });
+      const user = userEvent.setup();
+
+      renderMealPlanPage();
+
+      const loginButton = await screen.findByRole('button', { name: /iniciar sesión/i });
+      await user.click(loginButton);
+
+      expect(clearAuthenticated).toHaveBeenCalledTimes(1);
+      expect(assignMock).toHaveBeenCalledWith('/login');
+    } finally {
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: originalLocation,
+      });
+    }
   });
 });

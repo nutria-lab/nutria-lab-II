@@ -91,7 +91,7 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     setErrorMessage(null);
 
     return mealPlanService
-      .generateMealPlan(controller.signal)
+      .generateMealPlan(weekStart, controller.signal)
       .then((data) => {
         if (latestRequestIdRef.current !== requestId) {
           return;
@@ -115,7 +115,7 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
         setStatus('error');
         setErrorMessage('No pudimos generar tu plan semanal. Intentá de nuevo.');
       });
-  }, []);
+  }, [weekStart]);
 
   const retry = useCallback(() => {
     if (lastActionRef.current === 'generate') {

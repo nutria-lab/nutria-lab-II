@@ -155,6 +155,25 @@ describe('useMealPlan', () => {
     expect(result.current.status).not.toBe('error');
   });
 
+  // NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE: `generateMealPlan` ahora requiere
+  // `weekStart` como primer argumento (el backend lo exige en el body). No alcanza con
+  // verificar que se llama: hay que verificar que el hook le pasa el MISMO `weekStart`
+  // con el que fue invocado, no `undefined` ni una fecha distinta.
+  it('calls generateMealPlan with the same weekStart the hook was invoked with', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(null);
+    vi.mocked(mealPlanService.generateMealPlan).mockResolvedValue(REAL_MEAL_PLAN as never);
+
+    const { result } = renderHook(() => useMealPlan('2026-08-24'));
+    await waitFor(() => expect(result.current.status).toBe('empty'));
+
+    await act(async () => {
+      await result.current.generate?.();
+    });
+
+    expect(mealPlanService.generateMealPlan).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(mealPlanService.generateMealPlan).mock.calls[0]?.[0]).toBe('2026-08-24');
+  });
+
   it('does not fail nor invent data when a meal has no associated recipe (recipe: null)', async () => {
     vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_MEAL_PLAN as never);
 

@@ -198,13 +198,17 @@ describe('mealPlanService.generateMealPlan', () => {
     vi.mocked(apiClient.post).mockReset();
   });
 
-  it('calls POST /meal-plans/generate and returns the generated plan in the real shape', async () => {
+  it('calls POST /meal-plans/generate with weekStart in the body and returns the generated plan in the real shape', async () => {
     const backendResponse = buildRealMealPlanResponse();
     vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
 
-    const result = await mealPlanService.generateMealPlan();
+    const result = await mealPlanService.generateMealPlan('2026-08-24');
 
     expect(vi.mocked(apiClient.post).mock.calls[0]?.[0]).toBe('/meal-plans/generate');
+    // NUT-10 (cuarta iteración) — hallazgo BLOQUEANTE: el backend exige `weekStart` en el
+    // body (`GenerateMealPlanDto.weekStart`, `@IsNotEmpty()`/`@IsDateString()`). Antes se
+    // mandaba `undefined`, lo que hace fallar la generación con un error de validación.
+    expect(vi.mocked(apiClient.post).mock.calls[0]?.[1]).toEqual({ weekStart: '2026-08-24' });
     expect(result).toEqual(backendResponse);
   });
 
@@ -212,7 +216,7 @@ describe('mealPlanService.generateMealPlan', () => {
     const backendResponse = buildRealMealPlanResponse();
     vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
 
-    await mealPlanService.generateMealPlan();
+    await mealPlanService.generateMealPlan('2026-08-24');
 
     const call = vi.mocked(apiClient.post).mock.calls[0];
     const config = call?.[call.length - 1] as
@@ -232,7 +236,7 @@ describe('mealPlanService.generateMealPlan', () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: backendResponse });
     const controller = new AbortController();
 
-    await mealPlanService.generateMealPlan(controller.signal);
+    await mealPlanService.generateMealPlan('2026-08-24', controller.signal);
 
     const call = vi.mocked(apiClient.post).mock.calls[0];
     const config = call?.[call.length - 1] as { signal?: AbortSignal } | undefined;
@@ -246,7 +250,7 @@ describe('mealPlanService.generateMealPlan', () => {
     });
     vi.mocked(apiClient.post).mockRejectedValueOnce(unauthorizedError);
 
-    const rejection = await mealPlanService.generateMealPlan().catch((error) => error);
+    const rejection = await mealPlanService.generateMealPlan('2026-08-24').catch((error) => error);
     expect(rejection).toBeInstanceOf(MealPlanRequestError);
     expect(rejection).toMatchObject({ kind: 'unauthorized' });
   });

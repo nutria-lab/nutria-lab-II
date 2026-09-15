@@ -116,9 +116,12 @@ export const mealPlanService = {
     }
   },
 
-  async generateMealPlan(signal: AbortSignal = new AbortController().signal): Promise<MealPlan | null> {
+  async generateMealPlan(
+    weekStart: string,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<MealPlan | null> {
     try {
-      const response = await apiClient.post<MealPlan>('/meal-plans/generate', undefined, {
+      const response = await apiClient.post<MealPlan>('/meal-plans/generate', { weekStart }, {
         skipAuthErrorHandling: true,
         timeout: MEAL_PLAN_REQUEST_TIMEOUT_MS,
         signal,
