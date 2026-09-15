@@ -92,6 +92,20 @@ describe('apiClient', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('does not treat the expected unauthenticated /auth/me restoration response as a global session failure', async () => {
+    const handler = vi.fn();
+    setAuthFailureHandler(handler);
+
+    await expect(
+      apiClient.get('/auth/me', {
+        adapter: failingAdapter(401),
+        skipAuthErrorHandling: true,
+      }),
+    ).rejects.toMatchObject({ response: { status: 401 } });
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it.each([400, 404, 422, 500])(
     'propaga un error HTTP %s sin tratarlo como error de autenticación',
     async (status) => {
