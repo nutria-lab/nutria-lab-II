@@ -7,7 +7,7 @@ describe('AppLayout', () => {
   it('keeps the desktop sidebar while composing the mobile navigation and reserving its safe-area-aware space', () => {
     render(
       <MemoryRouter initialEntries={['/goals']}>
-        <AppLayout>
+        <AppLayout onLogout={async () => undefined}>
           <p>Page content</p>
         </AppLayout>
       </MemoryRouter>,
