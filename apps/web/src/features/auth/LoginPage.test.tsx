@@ -18,14 +18,20 @@ describe('LoginPage', () => {
 
     expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.getByText('Ingresá tus datos para continuar')).toBeVisible();
-    expect(screen.getByRole('img', { name: /hoja de nutria/i })).toBeVisible();
+    const [wordmark, isotype] = Array.from(document.querySelectorAll('img'));
+    expect(wordmark).toHaveAttribute('src', expect.stringContaining('nutria-wordmark.png'));
+    expect(wordmark).toHaveAttribute('alt', 'NutrIA');
+    expect(isotype).toHaveAttribute('src', expect.stringContaining('nutria-isotype.png'));
+    expect(isotype).toHaveAttribute('alt', '');
+    expect(isotype).toHaveAttribute('aria-hidden', 'true');
+    expect(wordmark?.parentElement).toHaveClass('justify-between', 'min-w-0');
+    expect(screen.getAllByRole('img', { name: 'NutrIA' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
     const register = screen.getByRole('link', { name: 'Registrate' });
     expect(register).toBeVisible();
     expect(register).toHaveAttribute('href', '/register');
     expect(register.parentElement).toHaveTextContent('¿No tenés cuenta? Registrate');
     expect(screen.queryByText('Tu bienestar, a tu ritmo')).not.toBeInTheDocument();
-    expect(screen.queryByText(/^NutrIA$/)).not.toBeInTheDocument();
     expect(document.querySelector('form')).toBeInTheDocument();
 
     const email = screen.getByLabelText(/correo/i);

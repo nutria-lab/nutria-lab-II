@@ -13,7 +13,7 @@ describe('AppLayout', () => {
       </MemoryRouter>,
     );
 
-    const sidebar = screen.getByText('NutrIA').closest('aside');
+    const sidebar = screen.getByRole('img', { name: 'NutrIA' }).closest('aside');
     expect(sidebar).toHaveClass('hidden', 'md:block');
 
     expect(screen.getByRole('navigation', { name: 'Mobile navigation' })).toBeInTheDocument();

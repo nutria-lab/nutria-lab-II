@@ -1,10 +1,12 @@
 import { NavLink } from 'react-router-dom';
 import { PRIMARY_NAVIGATION_ITEMS } from './navigation';
 
+import { BrandMark } from './BrandMark';
+
 export function Sidebar({ onLogout }: { onLogout: () => Promise<void> }) {
   return (
     <aside className="hidden w-56 shrink-0 border-r border-neutral-200 bg-white px-4 py-6 md:block">
-      <p className="mb-6 font-serif text-lg font-bold text-brand-green">NutrIA</p>
+      <BrandMark variant="app" />
       <nav className="space-y-1">
         {PRIMARY_NAVIGATION_ITEMS.map((item) => (
           <NavLink

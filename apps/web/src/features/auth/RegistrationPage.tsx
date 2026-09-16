@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import nutriaIcon from '../../assets/nutria-icon.png';
+import { BrandMark } from '../../common/components/BrandMark';
 import { RegisterRequestError, registerService, type RegisterErrorKind } from '../../services/registerService';
 import {
   MINIMUM_PASSWORD_LENGTH,
@@ -229,9 +229,7 @@ export function RegistrationPage() {
         className="grid min-h-dvh w-full place-items-center bg-[#f7f1e5] px-6 py-10 md:px-[clamp(2.5rem,7vw,7rem)] md:py-12"
       >
         <div className="w-full max-w-[25rem] md:max-w-[23rem]">
-          <div className="mb-6 flex justify-center">
-            <img alt="Hoja de NutrIA" className="size-12 rounded-full object-cover" src={nutriaIcon} />
-          </div>
+          <BrandMark variant="auth" />
 
           <header className="mb-7 text-center">
             <h1 id="registration-title" className="m-0 font-serif text-[clamp(2rem,8vw,2.35rem)] font-semibold leading-[1.15] tracking-[-0.025em] text-[#254a36] md:text-4xl">
