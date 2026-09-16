@@ -15,80 +15,96 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL;
-const pool = new Pool({ connectionString }); // Creamos un pool de conexiones, para que sea mas rapido
-const adapter = new PrismaPg(pool); // Metodo en donde le paso el pool y prisma se puede conectar
-const prisma = new PrismaClient({ adapter });
+export const PECHUGA_POLLO_SEED = {
+  name: 'Pechuga de Pollo',
+  type: IngredientType.MEAT,
+  description: 'Corte magro de pollo, ideal para dietas altas en proteínas.',
+  defaultUnit: 'g',
+  nutritionalValues: { calories: 165, protein: 31, carbs: 0, fat: 3.6, sodium: 74 },
+  properties: ['Alto en Proteína', 'Bajo en Grasa']
+};
+
+export const ARROZ_INTEGRAL_SEED = {
+  name: 'Arroz Integral',
+  type: IngredientType.GRAIN,
+  description: 'Grano entero rico en fibra.',
+  defaultUnit: 'g',
+  nutritionalValues: { calories: 111, protein: 2.6, carbs: 23, fat: 0.9, fiber: 1.8 },
+  properties: ['Sin Gluten', 'Alto en Fibra']
+};
+
+export const RECETA_POLLO_ID = '11111111-1111-1111-1111-111111111111';
+
+export const RECETA_POLLO_SEED = {
+  title: 'Pollo con Arroz',
+  description: 'Pechuga de pollo con arroz integral',
+  prepMinutes: 10,
+  cookMinutes: 20,
+  categories: ['HIGH_PROTEIN', 'GLUTEN_FREE'] as any,
+  ingredients: [
+    { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
+    { name: 'Arroz Integral', quantity: 100, unit: 'g' },
+  ],
+  instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
+  nutritionalValues: { calories: 420, protein: 36, carbs: 45, fat: 8 },
+  properties: ['Alto en Proteína', 'Sin Gluten']
+};
+
+export async function seedBaseData(client: any) {
+  const pechuga = await client.ingredient.upsert({
+    where: { name: PECHUGA_POLLO_SEED.name },
+    update: {
+      type: PECHUGA_POLLO_SEED.type,
+      description: PECHUGA_POLLO_SEED.description,
+      defaultUnit: PECHUGA_POLLO_SEED.defaultUnit,
+      nutritionalValues: PECHUGA_POLLO_SEED.nutritionalValues,
+      properties: PECHUGA_POLLO_SEED.properties,
+    },
+    create: PECHUGA_POLLO_SEED,
+  });
+
+  const arroz = await client.ingredient.upsert({
+    where: { name: ARROZ_INTEGRAL_SEED.name },
+    update: {
+      type: ARROZ_INTEGRAL_SEED.type,
+      description: ARROZ_INTEGRAL_SEED.description,
+      defaultUnit: ARROZ_INTEGRAL_SEED.defaultUnit,
+      nutritionalValues: ARROZ_INTEGRAL_SEED.nutritionalValues,
+      properties: ARROZ_INTEGRAL_SEED.properties,
+    },
+    create: ARROZ_INTEGRAL_SEED,
+  });
+
+  const recipePollo = await client.recipe.upsert({
+    where: { id: RECETA_POLLO_ID },
+    update: RECETA_POLLO_SEED,
+    create: {
+      id: RECETA_POLLO_ID,
+      ...RECETA_POLLO_SEED,
+    },
+  });
+
+  return { pechuga, arroz, recipePollo };
+}
+
+function getPrismaClient() {
+  const connectionString = process.env.DATABASE_URL;
+  const pool = new Pool({ connectionString });
+  const adapter = new PrismaPg(pool);
+  const prisma = new PrismaClient({ adapter });
+  return { prisma, pool };
+}
 
 async function main() {
   console.log('Iniciando el proceso de seeding...\n');
+  const { prisma, pool } = getPrismaClient();
 
-  // ---------------------------------------------------------------------------
-  // 1. INGREDIENTES Y RECETAS (Datos base)
-  // ---------------------------------------------------------------------------
-  console.log('Procesando ingredientes y recetas base...');
-  
-  await prisma.ingredient.upsert({
-    where: { name: 'Pechuga de Pollo' },
-    update: {},
-    create: {
-      name: 'Pechuga de Pollo',
-      type: IngredientType.MEAT,
-      description: 'Corte magro de pollo, ideal para dietas altas en proteínas.',
-      defaultUnit: 'g',
-      nutritionalValues: { calories: 165, protein: 31, carbs: 0, fat: 3.6, sodium: 74 },
-      properties: ['Alto en Proteína', 'Bajo en Grasa']
-    }
-  });
-
-  await prisma.ingredient.upsert({
-    where: { name: 'Arroz Integral' },
-    update: {},
-    create: {
-      name: 'Arroz Integral',
-      type: IngredientType.GRAIN,
-      description: 'Grano entero rico en fibra.',
-      defaultUnit: 'g',
-      nutritionalValues: { calories: 111, protein: 2.6, carbs: 23, fat: 0.9, fiber: 1.8 },
-      properties: ['Sin Gluten', 'Alto en Fibra']
-    }
-  });
-
-  // Fijamos un UUID inventado pero valido para nuestra receta de prueba
-  const RECETA_POLLO_ID = '11111111-1111-1111-1111-111111111111';
-
-  const recipePollo = await prisma.recipe.upsert({
-    where: { id: RECETA_POLLO_ID },
-    update: {
-      title: 'Pollo con Arroz',
-      description: 'Pechuga de pollo con arroz integral',
-      prepMinutes: 10,
-      cookMinutes: 20,
-      categories: ['HIGH_PROTEIN', 'GLUTEN_FREE'],
-      ingredients: [
-        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
-        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
-      ],
-      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
-      nutritionalValues: { calories: 420, protein: 36, carbs: 45, fat: 8 },
-      properties: ['Alto en Proteína', 'Sin Gluten']
-    },
-    create: {
-      id: RECETA_POLLO_ID,
-      title: 'Pollo con Arroz',
-      description: 'Pechuga de pollo con arroz integral',
-      prepMinutes: 10,
-      cookMinutes: 20,
-      categories: ['HIGH_PROTEIN', 'GLUTEN_FREE'],
-      ingredients: [
-        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
-        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
-      ],
-      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
-      nutritionalValues: { calories: 420, protein: 36, carbs: 45, fat: 8 },
-      properties: ['Alto en Proteína', 'Sin Gluten']
-    }
-  });
+  try {
+    // ---------------------------------------------------------------------------
+    // 1. INGREDIENTES Y RECETAS (Datos base)
+    // ---------------------------------------------------------------------------
+    console.log('Procesando ingredientes y recetas base...');
+    const { recipePollo } = await seedBaseData(prisma);
 
   // ---------------------------------------------------------------------------
   // 2. CREACION DE USUARIOS
@@ -240,14 +256,16 @@ async function main() {
     }
   }
 
-  console.log('\nSeeding completado con exito.');
+    console.log('\nSeeding completado con exito.');
+  } finally {
+    await prisma.$disconnect();
+    await pool.end();
+  }
 }
 
-main()
-  .catch((e) => {
+if (process.env.NODE_ENV !== 'test') {
+  main().catch((e) => {
     console.error('Ocurrio un error durante el seeding:\n', e);
     process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
   });
+}

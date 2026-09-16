@@ -1,55 +1,55 @@
-import { IsString, IsNumber, ValidateNested, ArrayMinSize, IsArray, IsOptional, IsEnum, IsObject, Min } from 'class-validator';
+import { IsString, IsNumber, ValidateNested, ArrayMinSize, IsArray, IsEnum, IsObject, Min, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 import { RecipeIngredientItemDto, RecipeNutritionalValuesDto } from './create-recipe.dto';
 import { RecipeCategory } from '@/generated/prisma/client';
 import { NormalizeProperties } from '@/utils/normalize-properties.util';
 
 export class UpdateRecipeDto {
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   title?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   description?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @IsEnum(RecipeCategory, { each: true })
-  @IsOptional()
   categories?: RecipeCategory[];
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber()
   @Min(0)
-  @IsOptional()
   prepMinutes?: number;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber()
   @Min(0)
-  @IsOptional()
   cookMinutes?: number;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @ValidateNested({ each: true })
   @ArrayMinSize(1)
   @Type(() => RecipeIngredientItemDto)
-  @IsOptional()
   ingredients?: RecipeIngredientItemDto[];
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   @ArrayMinSize(1)
-  @IsOptional()
   instructions?: string[];
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsObject()
   @ValidateNested()
   @Type(() => RecipeNutritionalValuesDto)
-  @IsOptional()
   nutritionalValues?: RecipeNutritionalValuesDto;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   @NormalizeProperties()
-  @IsOptional()
   properties?: string[];
 }

@@ -1,35 +1,35 @@
-import { IsString, IsEnum, ValidateNested, IsOptional, IsObject, IsArray } from 'class-validator';
+import { IsString, IsEnum, ValidateNested, IsObject, IsArray, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IngredientType } from '@/generated/prisma/client';
 import { IngredientNutritionalValuesDto } from './create-ingredient.dto';
 import { NormalizeProperties } from '@/utils/normalize-properties.util';
 
 export class UpdateIngredientDto {
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   name?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsEnum(IngredientType)
-  @IsOptional()
   type?: IngredientType;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   description?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   defaultUnit?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsObject()
   @ValidateNested()
   @Type(() => IngredientNutritionalValuesDto)
-  @IsOptional()
   nutritionalValues?: IngredientNutritionalValuesDto;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsArray()
   @IsString({ each: true })
   @NormalizeProperties()
-  @IsOptional()
   properties?: string[];
 }

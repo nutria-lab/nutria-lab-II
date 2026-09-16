@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsNumber, ValidateNested, IsOptional, IsObject, Min, IsArray } from 'class-validator';
+import { IsString, IsEnum, IsNumber, ValidateNested, IsObject, Min, IsArray, ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IngredientType } from '@/generated/prisma/client';
 import { NormalizeProperties } from '@/utils/normalize-properties.util';
@@ -20,14 +20,14 @@ export class IngredientNutritionalValuesDto {
   @Min(0)
   fat!: number;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber()
   @Min(0)
-  @IsOptional()
   fiber?: number;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsNumber()
   @Min(0)
-  @IsOptional()
   sodium?: number;
 }
 
@@ -38,12 +38,12 @@ export class CreateIngredientDto {
   @IsEnum(IngredientType)
   type!: IngredientType;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   description?: string;
 
+  @ValidateIf((_, value) => value !== undefined)
   @IsString()
-  @IsOptional()
   defaultUnit?: string;
 
   @IsObject()
