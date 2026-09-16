@@ -12,6 +12,7 @@ export class RecipeRepository {
       data: {
         ...data,
         ingredients: data.ingredients as any,
+        nutritionalValues: data.nutritionalValues as any,
       },
     });
   }
@@ -38,6 +39,7 @@ export class RecipeRepository {
       data: {
         ...data,
         ...(data.ingredients ? { ingredients: data.ingredients as any } : {}),
+        ...(data.nutritionalValues ? { nutritionalValues: data.nutritionalValues as any } : {}),
       },
     });
   }

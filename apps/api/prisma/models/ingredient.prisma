@@ -9,13 +9,16 @@ enum IngredientType {
 }
 
 model Ingredient {
-  id                String             @id @default(uuid())
-  name              String             @unique
+  id                String         @id @default(uuid())
+  name              String         @unique
   type              IngredientType
+  description       String?
+  defaultUnit       String?
   nutritionalValues Json
-  
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  properties        String[]       @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("ingredients")
 }

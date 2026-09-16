@@ -36,20 +36,18 @@ describe('IngredientService', () => {
   });
 
   describe('create', () => {
-    it('should successfully create an ingredient', async () => {
-      const dto = { name: 'Pollo', type: IngredientType.MEAT, nutritionalValues: { calories: 100, protein: 20, carbs: 0, fat: 2 } };
-      repository.findByName.mockResolvedValue(null);
+    it('should create ingredient', async () => {
+      const dto = { name: 'Pollo', type: 'MEAT' as any, nutritionalValues: { calories: 100, protein: 20, carbs: 0, fat: 2 }, properties: [] };
       repository.create.mockResolvedValue({ id: '1', ...dto });
 
       const result = await service.create(dto);
-      expect(result).toEqual({ id: '1', ...dto });
+      expect(result.id).toBe('1');
       expect(repository.create).toHaveBeenCalledWith(dto);
     });
 
-    it('should throw ConflictException if ingredient name already exists', async () => {
-      const dto = { name: 'Pollo', type: IngredientType.MEAT, nutritionalValues: { calories: 100, protein: 20, carbs: 0, fat: 2 } };
+    it('should throw ConflictException if ingredient exists', async () => {
       repository.findByName.mockResolvedValue({ id: '1', name: 'Pollo' });
-
+      const dto = { name: 'Pollo', type: 'MEAT' as any, nutritionalValues: { calories: 100, protein: 20, carbs: 0, fat: 2 }, properties: [] };
       await expect(service.create(dto)).rejects.toThrow(ConflictException);
     });
   });

@@ -15,68 +15,33 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-const connectionString = process.env.DATABASE_URL;
-const pool = new Pool({ connectionString }); // Creamos un pool de conexiones, para que sea mas rapido
-const adapter = new PrismaPg(pool); // Metodo en donde le paso el pool y prisma se puede conectar
-const prisma = new PrismaClient({ adapter });
+export {
+  PECHUGA_POLLO_SEED,
+  ARROZ_INTEGRAL_SEED,
+  RECETA_POLLO_ID,
+  RECETA_POLLO_SEED,
+  seedBaseData,
+} from '../src/prisma/seed-data';
+import { seedBaseData } from '../src/prisma/seed-data';
+
+function getPrismaClient() {
+  const connectionString = process.env.DATABASE_URL;
+  const pool = new Pool({ connectionString });
+  const adapter = new PrismaPg(pool);
+  const prisma = new PrismaClient({ adapter });
+  return { prisma, pool };
+}
 
 async function main() {
   console.log('Iniciando el proceso de seeding...\n');
+  const { prisma, pool } = getPrismaClient();
 
-  // ---------------------------------------------------------------------------
-  // 1. INGREDIENTES Y RECETAS (Datos base)
-  // ---------------------------------------------------------------------------
-  console.log('Procesando ingredientes y recetas base...');
-  
-  await prisma.ingredient.upsert({
-    where: { name: 'Pechuga de Pollo' },
-    update: {},
-    create: {
-      name: 'Pechuga de Pollo',
-      type: IngredientType.MEAT,
-      nutritionalValues: { calories: 165, protein: 31, carbs: 0, fat: 3.6 }
-    }
-  });
-
-  await prisma.ingredient.upsert({
-    where: { name: 'Arroz Integral' },
-    update: {},
-    create: {
-      name: 'Arroz Integral',
-      type: IngredientType.GRAIN,
-      nutritionalValues: { calories: 111, protein: 2.6, carbs: 23, fat: 0.9 }
-    }
-  });
-
-  // Fijamos un UUID inventado pero valido para nuestra receta de prueba
-  const RECETA_POLLO_ID = '11111111-1111-1111-1111-111111111111';
-
-  const recipePollo = await prisma.recipe.upsert({
-    where: { id: RECETA_POLLO_ID },
-    update: {
-      title: 'Pollo con Arroz',
-      description: 'Pechuga de pollo con arroz integral',
-      prepMinutes: 10,
-      cookMinutes: 20,
-      ingredients: [
-        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
-        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
-      ],
-      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
-    },
-    create: {
-      id: RECETA_POLLO_ID,
-      title: 'Pollo con Arroz',
-      description: 'Pechuga de pollo con arroz integral',
-      prepMinutes: 10,
-      cookMinutes: 20,
-      ingredients: [
-        { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
-        { name: 'Arroz Integral', quantity: 100, unit: 'g' },
-      ],
-      instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
-    }
-  });
+  try {
+    // ---------------------------------------------------------------------------
+    // 1. INGREDIENTES Y RECETAS (Datos base)
+    // ---------------------------------------------------------------------------
+    console.log('Procesando ingredientes y recetas base...');
+    const { recipePollo } = await seedBaseData(prisma);
 
   // ---------------------------------------------------------------------------
   // 2. CREACION DE USUARIOS
@@ -228,14 +193,16 @@ async function main() {
     }
   }
 
-  console.log('\nSeeding completado con exito.');
+    console.log('\nSeeding completado con exito.');
+  } finally {
+    await prisma.$disconnect();
+    await pool.end();
+  }
 }
 
-main()
-  .catch((e) => {
+if (process.env.NODE_ENV !== 'test') {
+  main().catch((e) => {
     console.error('Ocurrio un error durante el seeding:\n', e);
     process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
   });
+}
