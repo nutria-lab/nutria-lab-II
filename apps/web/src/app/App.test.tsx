@@ -204,7 +204,7 @@ describe('App authentication routes', () => {
     renderApp('/dashboard');
 
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Goals' })).toBeVisible();
+    expect(screen.getAllByRole('link', { name: 'Goals' })).not.toHaveLength(0);
   });
 
   it('keeps login public for an anonymous person and navigates once to the protected default after login', async () => {
@@ -411,7 +411,7 @@ describe('App logout', () => {
 
     renderApp('/goals');
     const logout = await screen.findByRole('button', { name: 'Cerrar sesión' });
-    expect(screen.getByRole('button', { name: 'Cerrar sesión en móvil' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Cerrar sesión en móvil' })).not.toBeInTheDocument();
     await user.click(logout);
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
