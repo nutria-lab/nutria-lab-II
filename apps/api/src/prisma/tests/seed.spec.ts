@@ -4,7 +4,7 @@ import {
   ARROZ_INTEGRAL_SEED,
   RECETA_POLLO_SEED,
   RECETA_POLLO_ID,
-} from '../../../prisma/seed';
+} from '../seed-data';
 
 describe('Seed Idempotency & Pre-existing Records Update', () => {
   it('updates pre-existing records with full metadata (description, defaultUnit, properties, fiber, sodium)', async () => {
