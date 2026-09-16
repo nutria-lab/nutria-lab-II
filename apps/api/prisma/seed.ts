@@ -34,7 +34,10 @@ async function main() {
     create: {
       name: 'Pechuga de Pollo',
       type: IngredientType.MEAT,
-      nutritionalValues: { calories: 165, protein: 31, carbs: 0, fat: 3.6 }
+      description: 'Corte magro de pollo, ideal para dietas altas en proteínas.',
+      defaultUnit: 'g',
+      nutritionalValues: { calories: 165, protein: 31, carbs: 0, fat: 3.6, sodium: 74 },
+      properties: ['Alto en Proteína', 'Bajo en Grasa']
     }
   });
 
@@ -44,7 +47,10 @@ async function main() {
     create: {
       name: 'Arroz Integral',
       type: IngredientType.GRAIN,
-      nutritionalValues: { calories: 111, protein: 2.6, carbs: 23, fat: 0.9 }
+      description: 'Grano entero rico en fibra.',
+      defaultUnit: 'g',
+      nutritionalValues: { calories: 111, protein: 2.6, carbs: 23, fat: 0.9, fiber: 1.8 },
+      properties: ['Sin Gluten', 'Alto en Fibra']
     }
   });
 
@@ -58,11 +64,14 @@ async function main() {
       description: 'Pechuga de pollo con arroz integral',
       prepMinutes: 10,
       cookMinutes: 20,
+      categories: ['HIGH_PROTEIN', 'GLUTEN_FREE'],
       ingredients: [
         { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
         { name: 'Arroz Integral', quantity: 100, unit: 'g' },
       ],
       instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
+      nutritionalValues: { calories: 420, protein: 36, carbs: 45, fat: 8 },
+      properties: ['Alto en Proteína', 'Sin Gluten']
     },
     create: {
       id: RECETA_POLLO_ID,
@@ -70,11 +79,14 @@ async function main() {
       description: 'Pechuga de pollo con arroz integral',
       prepMinutes: 10,
       cookMinutes: 20,
+      categories: ['HIGH_PROTEIN', 'GLUTEN_FREE'],
       ingredients: [
         { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
         { name: 'Arroz Integral', quantity: 100, unit: 'g' },
       ],
       instructions: ['Cortar el pollo', 'Cocinar el pollo', 'Hervir el arroz'],
+      nutritionalValues: { calories: 420, protein: 36, carbs: 45, fat: 8 },
+      properties: ['Alto en Proteína', 'Sin Gluten']
     }
   });
 

@@ -1,15 +1,15 @@
 model PlannedMeal {
-  id                String        @id @default(uuid())
+  id                String      @id @default(uuid())
   dayId             String
-  day               MealPlanDay   @relation(fields: [dayId], references: [id], onDelete: Cascade)
+  day               MealPlanDay @relation(fields: [dayId], references: [id], onDelete: Cascade)
   mealType          MealType
   title             String
   recipeId          String?
-  recipe            Recipe?       @relation(fields: [recipeId], references: [id], onDelete: SetNull)
+  recipe            Recipe?     @relation(fields: [recipeId], references: [id], onDelete: SetNull)
   nutritionalValues Json
 
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("planned_meals")
 }

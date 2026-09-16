@@ -49,7 +49,7 @@ describe('RecipeService', () => {
 
   describe('create', () => {
     it('should create recipe', async () => {
-      const dto = { title: 'Receta Test', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [] };
+      const dto = { title: 'Receta Test', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
       repository.create.mockResolvedValue({ id: '1', ...dto });
 
       const result = await service.create(dto as any);

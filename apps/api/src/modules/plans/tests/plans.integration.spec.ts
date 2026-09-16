@@ -15,6 +15,9 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
     cookMinutes: 35,
     ingredients: [{ name: 'Pechuga de Pollo', quantity: 200, unit: 'g' }],
     instructions: ['Cortar los vegetales', 'Sazonar el pollo', 'Hornear 35 minutos a 180C'],
+    categories: [],
+    properties: [],
+    nutritionalValues: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -126,9 +129,13 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
     expect(capturedRecipeData.ingredients).toEqual([
       { name: 'Pechuga de Pollo', quantity: 200, unit: 'g' },
     ]);
+    // Confirma compatibilidad: no envía metadata y sostiene la creación exclusivamente con los defaults de Prisma
+    expect(capturedRecipeData.categories).toBeUndefined();
+    expect(capturedRecipeData.properties).toBeUndefined();
+    expect(capturedRecipeData.nutritionalValues).toBeUndefined();
   });
 
-  it('GET / findPlanByWeek devuelve la receta con instructions como array y no steps', async () => {
+  it('GET / findPlanByWeek devuelve la receta con instructions como array y defaults del contrato NUT-20', async () => {
     const result = await repository.findPlanByWeek('user-uuid-1', new Date('2026-09-14T00:00:00Z'));
 
     expect(result).toBeDefined();
@@ -152,5 +159,10 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
       'Hornear 35 minutos a 180C',
     ]);
     expect(recipe.steps).toBeUndefined();
+
+    // Verificación de compatibilidad con el nuevo contrato NUT-20
+    expect(recipe.categories).toEqual([]);
+    expect(recipe.properties).toEqual([]);
+    expect(recipe.nutritionalValues).toBeNull();
   });
 });
