@@ -258,16 +258,6 @@ describe('RecipeCatalogList', () => {
     expect(screen.queryByText(/no encontramos recetas/i)).not.toBeInTheDocument();
   });
 
-  it('calls onCreateIngredient when the "+ Ingrediente" pill is clicked', async () => {
-    const onCreateIngredient = vi.fn();
-    const user = userEvent.setup();
-    renderCatalogList({ onCreateIngredient });
-
-    await user.click(screen.getByRole('button', { name: '+ Ingrediente' }));
-
-    expect(onCreateIngredient).toHaveBeenCalledTimes(1);
-  });
-
   it('calls onSelectRecipe(id) when a card is clicked', async () => {
     const onSelectRecipe = vi.fn();
     const user = userEvent.setup();
@@ -299,6 +289,46 @@ describe('RecipeCatalogList', () => {
 
     expect(cardFor(VEGAN_RECIPE)).toHaveAttribute('aria-current', 'true');
     expect(cardFor(VEGETARIAN_RECIPE)).not.toHaveAttribute('aria-current', 'true');
+  });
+
+  // NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
+  // mockups de Stitch de la pantalla de recetas): hoy las tarjetas de receta no tienen ningún
+  // placeholder de imagen. Se agrega uno a la izquierda de cada tarjeta — mismo criterio ya
+  // usado en el detalle: skeleton estático, NO una foto real, porque el backend no expone
+  // ninguna URL de imagen. Nuevo testid a introducir: `recipe-card-thumbnail`, uno por
+  // tarjeta. Se espera ROJO hoy: el testid no existe todavía.
+  describe('RecipeCatalogList — miniatura de imagen por tarjeta (ajuste visual NUT-20)', () => {
+    it('renders an image placeholder thumbnail on every recipe card', () => {
+      renderCatalogList();
+
+      expect(within(cardFor(VEGAN_RECIPE)).getByTestId('recipe-card-thumbnail')).toBeInTheDocument();
+      expect(
+        within(cardFor(VEGETARIAN_RECIPE)).getByTestId('recipe-card-thumbnail'),
+      ).toBeInTheDocument();
+      expect(
+        within(cardFor(HIGH_PROTEIN_GF_RECIPE)).getByTestId('recipe-card-thumbnail'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  // NUT-20 (ajuste visual pedido directamente por la PO): hoy cada tarjeta sólo muestra las
+  // calorías (`{calories} kcal`), sin ningún badge de proteína. Se agrega un badge visible con
+  // el valor de proteína, formato "Ng prot" (p. ej. "12g prot"), sólo cuando
+  // `recipe.nutritionalValues` existe (mismo criterio de guarda ya usado para las calorías).
+  // `VEGETARIAN_RECIPE.nutritionalValues.protein` es 12 → "12g prot". Se espera ROJO hoy: el
+  // badge de proteína no existe todavía.
+  describe('RecipeCatalogList — badge de proteína por tarjeta (ajuste visual NUT-20)', () => {
+    it('shows a "12g prot" protein badge when the recipe has nutritionalValues', () => {
+      renderCatalogList();
+
+      expect(within(cardFor(VEGETARIAN_RECIPE)).getByText(/12\s*g\s*prot/i)).toBeInTheDocument();
+    });
+
+    it('omits the protein badge when nutritionalValues is null, same as it omits calories', () => {
+      renderCatalogList();
+
+      expect(within(cardFor(HIGH_PROTEIN_GF_RECIPE)).queryByText(/g\s*prot/i)).not.toBeInTheDocument();
+    });
   });
 
   describe('RecipeCatalogList — backend real pre-NUT-61 sin categories/nutritionalValues/properties', () => {

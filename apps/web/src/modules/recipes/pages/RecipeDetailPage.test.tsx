@@ -193,6 +193,24 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+// NUT-20 (ajuste visual del detalle de receta, tester) — el layout de cada fila de ingrediente
+// va a pasar de un único nodo de texto ("{quantity} {unit} de {name}") a dos `<span>` separados
+// (nombre a la izquierda, cantidad+unidad a la derecha) dentro del mismo `<li>`. Este matcher de
+// función ubica el `<li>` de ingrediente correcto por su `textContent` COMPLETO (que incluye el
+// de sus descendientes, a diferencia del texto "propio" que usa el matcher por defecto de
+// `getByText`), así que sigue funcionando sin cambios tanto contra el HTML actual (un solo nodo
+// de texto en el propio `<li>`) como contra el HTML futuro ya dividido en dos `<span>` — es un
+// refactor de la forma de buscar el ingrediente, no un cambio de qué se verifica.
+function getIngredientRow(quantity: number, unit: string, name: string): HTMLElement {
+  return screen.getByText((_content, element) => {
+    if (!element || element.tagName.toLowerCase() !== 'li') {
+      return false;
+    }
+    const text = element.textContent ?? '';
+    return text.includes(name) && text.includes(`${quantity} ${unit}`);
+  });
+}
+
 function renderDetailPage(id = 'recipe-1') {
   return render(
     <MemoryRouter initialEntries={[`/recipes/${id}`]}>
@@ -301,8 +319,8 @@ describe('RecipeDetailPage — éxito, contenido completo', () => {
     expect(
       screen.getByRole('heading', { name: `Ingredientes (${recipe.ingredients.length})` }),
     ).toBeInTheDocument();
-    expect(screen.getByText('1 unidad de Lechuga')).toBeInTheDocument();
-    expect(screen.getByText('2 kg de Tomate')).toBeInTheDocument();
+    expect(getIngredientRow(1, 'unidad', 'Lechuga')).toBeInTheDocument();
+    expect(getIngredientRow(2, 'kg', 'Tomate')).toBeInTheDocument();
 
     // Pasos de Preparación, numerados.
     expect(screen.getByRole('heading', { name: 'Pasos de Preparación' })).toBeInTheDocument();
@@ -323,6 +341,36 @@ describe('RecipeDetailPage — éxito, contenido completo', () => {
   });
 });
 
+// NUT-20 (ajuste visual mobile pedido por la PO, comparando contra el mockup de Stitch) — el
+// mockup muestra 4 columnas de estadísticas, cada una con una ETIQUETA visible arriba del valor
+// ("TIEMPO", "CALORÍAS", "PROTEÍNA", "CARBOS"); hoy `RecipeDetailSections` sólo renderiza los
+// valores planos ("25 min", "180 kcal", etc.), sin ninguna de esas 4 etiquetas. Se espera ROJO
+// hoy: ninguna de las 4 etiquetas existe todavía en el componente.
+//
+// Escopado con `within` al contenedor de "25 min" (el mismo `<div className="flex flex-wrap
+// gap-4 ...">` de `RecipeDetailSections`, ubicado por ese valor ya cubierto en el test de arriba)
+// para no generar ambigüedad con la sección "Propiedades y Restricciones" más abajo en la misma
+// pantalla, cuyas fixtures (`buildRecipe().properties`) podrían en el futuro incluir texto como
+// "Alto en Carbos" — no es el caso hoy ('Vegano', 'Sin Gluten'), pero escopar acá es más robusto
+// que depender de que ese fixture nunca cambie.
+describe('RecipeDetailPage — etiquetas de estadísticas (ajuste visual mobile, mockup Stitch)', () => {
+  it('shows the 4 stat labels (Tiempo, Calorías, Proteína, Carbos) alongside their existing values', () => {
+    const recipe = buildRecipe();
+    mockDetail({ recipe, status: 'success' });
+    mockIngredientsForForm();
+
+    renderDetailPage();
+
+    const statsContainer = screen.getByText('25 min').closest('div') as HTMLElement;
+    expect(statsContainer).not.toBeNull();
+
+    expect(within(statsContainer).getByText(/tiempo/i)).toBeInTheDocument();
+    expect(within(statsContainer).getByText(/calor[ií]as/i)).toBeInTheDocument();
+    expect(within(statsContainer).getByText(/prote[ií]na/i)).toBeInTheDocument();
+    expect(within(statsContainer).getByText(/carbos/i)).toBeInTheDocument();
+  });
+});
+
 describe('RecipeDetailPage — éxito con nutritionalValues: null', () => {
   it('does not show calories/protein/carbs for that recipe, without breaking or inventing values', () => {
     const recipe = buildRecipe({ nutritionalValues: null });
@@ -333,6 +381,14 @@ describe('RecipeDetailPage — éxito con nutritionalValues: null', () => {
 
     expect(screen.getByText('25 min')).toBeInTheDocument();
     expect(screen.queryByText(/kcal/)).not.toBeInTheDocument();
+
+    // NUT-20 (ajuste visual mobile) — explícito: sin `nutritionalValues`, las etiquetas de
+    // calorías/proteína/carbos tampoco deben aparecer (no hay valor al que acompañar). No se
+    // afirma nada sobre la etiqueta "Tiempo", que sí sigue teniendo un valor ("25 min") en este
+    // caso.
+    expect(screen.queryByText(/calor[ií]as/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/prote[ií]na/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/carbos/i)).not.toBeInTheDocument();
   });
 });
 
@@ -477,7 +533,7 @@ describe('RecipeDetailPage — backend real pre-NUT-61 sin categories/nutritiona
     // Ingredientes/instrucciones sí vienen en el fixture (no son parte de este hallazgo): la
     // pantalla debe seguir mostrándolos con normalidad, sólo la sección de
     // propiedades/categoría/nutrición debe degradar con gracia.
-    expect(screen.getByText('1 unidad de Lechuga')).toBeInTheDocument();
+    expect(getIngredientRow(1, 'unidad', 'Lechuga')).toBeInTheDocument();
   });
 });
 
@@ -661,6 +717,28 @@ describe('RecipeDetailPage — escritorio, layout de dos columnas (design.md 9.2
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // El `RecipeForm` de creación a medio completar sigue montado e intacto detrás del modal.
     expect(screen.getByLabelText(/^Nombre de la Receta/i)).toHaveValue('Receta a medio completar');
+  });
+
+  // NUT-20 (ajuste visual de escritorio pedido por la PO, comparando contra el mockup de
+  // Stitch) — el `<h1>` de la columna izquierda de escritorio pasa de decir "Recetas" a
+  // "Catálogo de Recetas", con un subtítulo nuevo debajo ("Gestión integral de recetas e
+  // ingredientes nutricionales"). Ningún test existente de este archivo (ni del módulo) ubica
+  // ese `<h1>` por el texto literal "Recetas" como heading — ver búsqueda documentada en el
+  // informe del tester — así que este test es puramente aditivo. Se espera ROJO hoy: el
+  // componente todavía renderiza "Recetas" sin el subtítulo nuevo.
+  it('shows the new left-column heading "Catálogo de Recetas" with its subtitle (visual adjustment, Stitch mockup)', () => {
+    const recipe = buildRecipe();
+    vi.mocked(useMediaQuery).mockReturnValue(true);
+    mockDetail({ recipe, status: 'success' });
+    mockIngredientsForForm();
+    mockRecipesForCatalog({ recipes: [recipe], status: 'success' });
+
+    renderDetailPage(recipe.id);
+
+    expect(screen.getByRole('heading', { name: 'Catálogo de Recetas' })).toBeInTheDocument();
+    expect(
+      screen.getByText('Gestión integral de recetas e ingredientes nutricionales'),
+    ).toBeInTheDocument();
   });
 
   it('selecting another recipe from the left column navigates and updates the right panel to that recipe', async () => {

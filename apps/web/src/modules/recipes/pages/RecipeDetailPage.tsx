@@ -104,9 +104,29 @@ function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
     : 'Sin categoría';
   return (
     <div className="relative h-48 w-full overflow-hidden rounded-2xl bg-brand-cream-dark">
-      <span className="absolute left-3 top-3 rounded-full bg-brand-green/10 px-3 py-1 text-xs font-semibold text-brand-green-dark">
-        {primaryCategory}
-      </span>
+      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — degradé oscuro sutil para que el título
+          en blanco superpuesto se lea bien sobre el skeleton sólido (y sobre una foto real en
+          el futuro). */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/50 to-transparent"
+      />
+      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — badge de categoría y título de la receta
+          reubicados abajo, superpuestos a la imagen (antes: badge arriba, título por separado
+          debajo de la imagen). El badge se envuelve en su propio `<div>` (en vez de quedar como
+          hermano directo/único del `<h2>`) para que `RecipeDetailPage.test.tsx` ("éxito,
+          contenido completo") siga pudiendo ubicar el badge vía
+          `recipeTitleHeading.previousElementSibling` seguido de `within(...).getByText(...)`,
+          que requiere que ese hermano sea un contenedor con el texto en un descendiente, no el
+          propio nodo de texto. */}
+      <div className="absolute bottom-3 left-3 right-3 space-y-1">
+        <div>
+          <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white">
+            {primaryCategory}
+          </span>
+        </div>
+        <h2 className="font-serif text-lg font-bold text-white">{recipe.title}</h2>
+      </div>
     </div>
   );
 }
@@ -122,13 +142,46 @@ function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
 
   return (
     <>
+      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — 4 columnas con etiqueta arriba y valor
+          abajo. Cada columna usa `<span className="flex flex-col ...">` (no `<div>`) a propósito:
+          `RecipeDetailPage.test.tsx` ubica este contenedor con
+          `screen.getByText('25 min').closest('div')`, así que el primer ancestro `<div>` real de
+          ese valor debe seguir siendo ESTE contenedor exterior (el que agrupa las 4 columnas),
+          no una columna individual — de lo contrario el test nuevo sólo vería la etiqueta
+          "Tiempo" y no las otras 3. */}
       <div className="flex flex-wrap gap-4 text-sm text-neutral-600">
-        <span>{totalMinutes} min</span>
+        <span className="flex flex-col items-start gap-0.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Tiempo
+          </span>
+          <span className="font-semibold text-neutral-900">{totalMinutes} min</span>
+        </span>
         {Boolean(recipe.nutritionalValues) ? (
           <>
-            <span>{recipe.nutritionalValues!.calories} kcal</span>
-            <span>{recipe.nutritionalValues!.protein} g</span>
-            <span>{recipe.nutritionalValues!.carbs} g</span>
+            <span className="flex flex-col items-start gap-0.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Calorías
+              </span>
+              <span className="font-semibold text-neutral-900">
+                {recipe.nutritionalValues!.calories} kcal
+              </span>
+            </span>
+            <span className="flex flex-col items-start gap-0.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Proteína
+              </span>
+              <span className="font-semibold text-neutral-900">
+                {recipe.nutritionalValues!.protein} g
+              </span>
+            </span>
+            <span className="flex flex-col items-start gap-0.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                Carbos
+              </span>
+              <span className="font-semibold text-neutral-900">
+                {recipe.nutritionalValues!.carbs} g
+              </span>
+            </span>
           </>
         ) : (
           <span>Valores nutricionales no especificados</span>
@@ -146,7 +199,10 @@ function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
         </h2>
         <ul className="mt-1 space-y-1 text-sm text-neutral-700">
           {recipe.ingredients.map((item, index) => (
-            <li key={`${item.name}-${index}`}>{`${item.quantity} ${item.unit} de ${item.name}`}</li>
+            <li key={`${item.name}-${index}`} className="flex items-center justify-between">
+              <span>{item.name}</span>
+              <span className="font-semibold text-brand-green-dark">{`${item.quantity} ${item.unit}`}</span>
+            </li>
           ))}
         </ul>
       </section>
@@ -277,8 +333,6 @@ function MobileRecipeDetail({
 
         <RecipeImagePlaceholder recipe={recipe} />
 
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">{recipe.title}</h2>
-
         <RecipeDetailSections recipe={recipe} />
 
         <div className="flex justify-end pt-2">
@@ -376,15 +430,29 @@ function DesktopRecipeDetail({
   return (
     <div className="mx-auto flex max-w-6xl gap-6 px-4 py-6 md:px-8">
       <div className="w-full max-w-sm shrink-0 space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="font-serif text-2xl font-bold text-neutral-900">Recetas</h1>
-          <button
-            type="button"
-            onClick={() => setPanelMode('create')}
-            className="min-h-[44px] rounded-lg bg-brand-green px-4 text-sm font-semibold text-white"
-          >
-            Nueva Receta
-          </button>
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h1 className="font-serif text-2xl font-bold text-neutral-900">Catálogo de Recetas</h1>
+            <p className="text-sm text-neutral-500">
+              Gestión integral de recetas e ingredientes nutricionales
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setModalKind('ingredient')}
+              className="min-h-[44px] rounded-lg bg-brand-cream-dark px-4 text-sm font-semibold text-neutral-700"
+            >
+              + Ingrediente
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanelMode('create')}
+              className="min-h-[44px] rounded-lg bg-brand-green px-4 text-sm font-semibold text-white"
+            >
+              Nueva Receta
+            </button>
+          </div>
         </div>
 
         <RecipeCatalogList
@@ -392,10 +460,10 @@ function DesktopRecipeDetail({
           status={catalog.status}
           errorMessage={catalog.errorMessage}
           onRetry={catalog.retry}
+          onRefresh={catalog.refetch}
           selectedId={recipe.id}
           onSelectRecipe={(newId) => navigate(`/recipes/${newId}`)}
           onCreateRecipe={() => setPanelMode('create')}
-          onCreateIngredient={() => setModalKind('ingredient')}
         />
       </div>
 
@@ -455,8 +523,6 @@ function DesktopRecipeDetail({
             </div>
 
             <RecipeImagePlaceholder recipe={recipe} />
-
-            <h2 className="font-serif text-lg font-semibold text-neutral-900">{recipe.title}</h2>
 
             <RecipeDetailSections recipe={recipe} />
           </>

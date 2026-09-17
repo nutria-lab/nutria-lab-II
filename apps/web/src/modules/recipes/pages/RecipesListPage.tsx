@@ -16,6 +16,62 @@ import { useRecipes } from '../hooks/useRecipes';
 // vacío, sigue mostrando el listado tal cual (ahora vía `RecipeCatalogList`).
 const DESKTOP_MEDIA_QUERY = '(min-width: 768px)';
 
+// NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
+// mockups de Stitch de la pantalla de recetas): reemplaza el header anterior (`<h1>Recetas</h1>`
+// + "Actualizar") por ícono + título "NutrIA" + subtítulo "Recetario & Catálogo", con el botón
+// "+ Ingrediente" (que antes vivía como chip dentro de `RecipeCatalogList`) reubicado acá. El
+// botón "Actualizar" se muda a la fila "N RECETAS DISPONIBLES" dentro de `RecipeCatalogList`.
+function RecipesHeader({
+  onCreateIngredient,
+  onCreateRecipe,
+}: {
+  onCreateIngredient: () => void;
+  onCreateRecipe: () => void;
+}) {
+  return (
+    <div data-testid="recipes-header" className="flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green/10 text-brand-green">
+          <svg
+            aria-hidden="true"
+            className="h-5 w-5"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+            viewBox="0 0 24 24"
+          >
+            <path d="M12 22c-4.4 0-8-3.6-8-8 0-6 8-12 8-12s8 6 8 12c0 4.4-3.6 8-8 8Z" />
+            <path d="M12 22V10" />
+          </svg>
+        </span>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate font-serif text-lg font-bold text-neutral-900">NutrIA</p>
+          <p className="truncate text-xs text-neutral-500">Recetario &amp; Catálogo</p>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          onClick={onCreateIngredient}
+          className="min-h-9 rounded-full bg-brand-cream-dark px-3 text-xs font-semibold text-neutral-700"
+        >
+          + Ingrediente
+        </button>
+        <button
+          type="button"
+          onClick={onCreateRecipe}
+          aria-label="Nueva Receta"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green text-lg font-semibold text-white"
+        >
+          <span aria-hidden="true">+</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function RecipesListPage() {
   const navigate = useNavigate();
   const { recipes, status, errorMessage, retry, refetch } = useRecipes();
@@ -125,25 +181,19 @@ export function RecipesListPage() {
       <>
         <div aria-hidden={modalKind !== null} className="mx-auto flex max-w-6xl gap-6 px-4 py-6 md:px-8">
           <div className="w-full max-w-sm shrink-0 space-y-4">
-            <div className="flex items-center justify-between">
-              <h1 className="font-serif text-2xl font-bold text-neutral-900">Recetas</h1>
-              <button
-                type="button"
-                onClick={refetch}
-                className="min-h-[44px] rounded-lg bg-brand-cream-dark px-4 text-sm font-semibold text-neutral-700"
-              >
-                Actualizar
-              </button>
-            </div>
+            <RecipesHeader
+              onCreateIngredient={() => setModalKind('ingredient')}
+              onCreateRecipe={() => setModalKind('recipe')}
+            />
 
             <RecipeCatalogList
               recipes={recipes}
               status={status}
               errorMessage={errorMessage}
               onRetry={retry}
+              onRefresh={refetch}
               onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
               onCreateRecipe={() => setModalKind('recipe')}
-              onCreateIngredient={() => setModalKind('ingredient')}
             />
           </div>
 
@@ -172,31 +222,25 @@ export function RecipesListPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
+    <main className="mx-auto max-w-3xl space-y-3 px-4 pb-6 pt-4 md:px-8">
       {/* Ocultada del árbol de accesibilidad mientras hay un modal abierto: evita colisiones
           de query (p. ej. el chip de filtro "VEGAN" de esta lista vs. el chip de categoría
           "VEGAN" del `RecipeForm` dentro del modal) y sigue el patrón estándar de diálogos
           modales de no exponer el contenido de fondo a lectores de pantalla. */}
-      <div aria-hidden={modalKind !== null} className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="font-serif text-2xl font-bold text-neutral-900">Recetas</h1>
-          <button
-            type="button"
-            onClick={refetch}
-            className="min-h-[44px] rounded-lg bg-brand-cream-dark px-4 text-sm font-semibold text-neutral-700"
-          >
-            Actualizar
-          </button>
-        </div>
+      <div aria-hidden={modalKind !== null} className="space-y-3">
+        <RecipesHeader
+          onCreateIngredient={() => setModalKind('ingredient')}
+          onCreateRecipe={() => setModalKind('recipe')}
+        />
 
         <RecipeCatalogList
           recipes={recipes}
           status={shouldRedirectToDesktopDetail ? 'loading' : status}
           errorMessage={errorMessage}
           onRetry={retry}
+          onRefresh={refetch}
           onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
           onCreateRecipe={() => setModalKind('recipe')}
-          onCreateIngredient={() => setModalKind('ingredient')}
         />
       </div>
 

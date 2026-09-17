@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { INGREDIENT_TYPE_LABELS, RECIPE_CATEGORY_LABELS } from './labels';
+import {
+  INGREDIENT_TYPE_LABELS,
+  RECIPE_CATEGORY_BADGE_CLASSES,
+  RECIPE_CATEGORY_LABELS,
+} from './labels';
 import type { RecipeCategory } from '../../services/recipeService';
 import type { IngredientType } from '../../services/ingredientService';
 
@@ -54,6 +58,35 @@ describe('RECIPE_CATEGORY_LABELS', () => {
       LOW_CARB: 'Bajo en Carbohidratos',
       OTHER: 'Otra',
     });
+  });
+});
+
+// NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
+// mockups de Stitch de la pantalla de recetas): hoy TODAS las categorías de receta usan el
+// mismo verde de marca para su badge (ver `RecipeCatalogList.tsx` línea ~197,
+// `bg-brand-green/10 text-brand-green-dark` fijo). El mockup pide un color de badge distinto
+// por categoría. `RECIPE_CATEGORY_BADGE_CLASSES` todavía NO EXISTE: se espera ROJO hoy por
+// export inexistente. No se fija el valor exacto de cada color (eso lo decide el
+// implementer) — sólo que: (a) el mapa es exhaustivo sobre las 7 categorías, y (b) al menos
+// dos categorías distintas terminan con clases distintas entre sí (para probar que no es el
+// mismo color repetido para todas).
+describe('RECIPE_CATEGORY_BADGE_CLASSES', () => {
+  it('has exactly the 7 keys of RecipeCategory, no more and no less', () => {
+    expect(Object.keys(RECIPE_CATEGORY_BADGE_CLASSES).sort()).toEqual(
+      [...RECIPE_CATEGORY_KEYS].sort(),
+    );
+  });
+
+  it('maps every RecipeCategory to a non-empty class string', () => {
+    RECIPE_CATEGORY_KEYS.forEach((category) => {
+      expect(typeof RECIPE_CATEGORY_BADGE_CLASSES[category]).toBe('string');
+      expect(RECIPE_CATEGORY_BADGE_CLASSES[category].trim().length).toBeGreaterThan(0);
+    });
+  });
+
+  it('uses a different class value for at least two different categories (not the same color repeated for all)', () => {
+    const distinctValues = new Set(Object.values(RECIPE_CATEGORY_BADGE_CLASSES));
+    expect(distinctValues.size).toBeGreaterThan(1);
   });
 });
 

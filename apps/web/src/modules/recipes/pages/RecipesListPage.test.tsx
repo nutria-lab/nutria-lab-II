@@ -827,6 +827,68 @@ describe('RecipesListPage', () => {
   // no) mientras el formulario siga abierto, hasta que se cierre/guarde/cancele. Mismo criterio
   // de `rerender(...)` que el resto de este archivo para simular un resize en caliente. Se
   // espera ROJO hoy: tras el resize, la página navega a `/recipes/{id}` y el modal desaparece.
+  // NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
+  // mockups de Stitch de la pantalla de recetas). Dos decisiones ya tomadas por la PO, no se
+  // reabren acá:
+  //   1. El header pasa de `<h1>Recetas</h1>` + "Actualizar" a: ícono + título "NutrIA" +
+  //      subtítulo "Recetario & Catálogo" (ambos como texto visible), con el botón
+  //      "+ Ingrediente" (que hoy vive como chip dentro de `RecipeCatalogList`) movido a ese
+  //      mismo header, fuera de la fila de chips de categoría. El botón "Actualizar" se muda a
+  //      una fila nueva ("N RECETAS DISPONIBLES" + "Actualizar"), debajo de los chips y antes
+  //      de la lista de tarjetas.
+  //   2. Cada categoría tendrá un color de badge distinto (ver `labels.test.ts` para
+  //      `RECIPE_CATEGORY_BADGE_CLASSES`; no cubierto en este archivo).
+  // Se espera ROJO hoy en los tres tests de este bloque: ninguno de estos elementos existe
+  // todavía en `RecipesListPage.tsx`/`RecipeCatalogList.tsx`.
+  describe('RecipesListPage — rediseño de header y catálogo (ajuste visual NUT-20)', () => {
+    it('shows "NutrIA" as the title and "Recetario & Catálogo" as the subtitle in the header', () => {
+      mockUseRecipes({ recipes: ALL_RECIPES, status: 'success' });
+
+      renderRecipesListPage();
+
+      expect(screen.getByText('NutrIA')).toBeInTheDocument();
+      expect(screen.getByText('Recetario & Catálogo')).toBeInTheDocument();
+    });
+
+    // Criterio del tester para declarar sin ambigüedad "el header" vs. "la fila de chips de
+    // categoría", ya que ambos pueden contener en algún momento un elemento con texto/aria
+    // que matchee /ingrediente/i: dos testids nuevos a introducir por el implementer,
+    // documentados acá porque no hay ningún marcador existente que distinga esos dos
+    // contenedores hoy.
+    //   - `recipes-header` en `RecipesListPage.tsx`: envuelve ícono + "NutrIA" +
+    //     "Recetario & Catálogo" + el botón "+ Ingrediente" reubicado.
+    //   - `recipe-category-chips` en `RecipeCatalogList.tsx`: envuelve la fila de chips de
+    //     categoría (el mismo `<div>` que hoy ya contiene el chip "Todas (N)").
+    it('places the "+ Ingrediente" action in the header, outside the category chip row', () => {
+      mockUseRecipes({ recipes: ALL_RECIPES, status: 'success' });
+
+      renderRecipesListPage();
+
+      const chipsRow = screen.getByTestId('recipe-category-chips');
+      // Confirma que efectivamente encontramos la fila de chips correcta (sigue conteniendo
+      // el chip "Todas (N)" de siempre).
+      expect(within(chipsRow).getByRole('button', { name: 'Todas (3)' })).toBeInTheDocument();
+      expect(within(chipsRow).queryByRole('button', { name: /ingrediente/i })).not.toBeInTheDocument();
+
+      const header = screen.getByTestId('recipes-header');
+      expect(within(header).getByRole('button', { name: /ingrediente/i })).toBeInTheDocument();
+    });
+
+    it('shows an "N RECETAS DISPONIBLES" count below the category chips, and its "Actualizar" action still calls refetch', async () => {
+      const refetch = vi.fn();
+      mockUseRecipes({ recipes: ALL_RECIPES, status: 'success', refetch });
+      const user = userEvent.setup();
+
+      renderRecipesListPage();
+
+      expect(screen.getByText(/3 recetas disponibles/i)).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Actualizar' }));
+
+      expect(refetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('RecipesListPage — freeze de layout mientras el formulario de "Nueva Receta" está abierto (Hallazgo 2, novena iteración)', () => {
     function RecipeDetailFreezeProbe() {
       const { id } = useParams();

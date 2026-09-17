@@ -3,19 +3,36 @@ import { useMemo, useState } from 'react';
 import { Banner } from '../../../common/components/Banner';
 import { Pill } from '../../../common/components/Pill';
 import type { Recipe, RecipeCategory } from '../../../services/recipeService';
-import { RECIPE_CATEGORY_LABELS } from '../labels';
+import { RECIPE_CATEGORY_BADGE_CLASSES, RECIPE_CATEGORY_LABELS } from '../labels';
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
+// Fallback neutro para tarjetas sin categoría (backend real pre-NUT-61), mismo criterio ya
+// usado por el badge de texto ("Sin categoría").
+const UNCATEGORIZED_BADGE_CLASSES = 'bg-neutral-400 text-white';
 
 export type RecipeCatalogListProps = {
   recipes: Recipe[];
   status: 'loading' | 'empty' | 'error' | 'success';
   errorMessage: string | null;
   onRetry: () => void;
+  // NUT-20 (ajuste visual pedido por la PO): botón "Actualizar" reubicado a la fila
+  // "N RECETAS DISPONIBLES" de este componente. Se mantiene separado de `onRetry` (que sigue
+  // siendo el disparador del botón "Reintentar" del estado de error) porque en `RecipesListPage`
+  // ambos apuntan a funciones distintas dentro de los tests unitarios, aunque en producción
+  // `useRecipes` los implemente con la misma función. Opcional (con fallback a `onRetry`) porque
+  // `RecipeCatalogList.test.tsx` (archivo de test, no editable en esta ronda) no la pasa en
+  // ninguno de sus renders.
+  onRefresh?: () => void;
   selectedId?: string | null;
   onSelectRecipe: (id: string) => void;
   onCreateRecipe: () => void;
-  onCreateIngredient: () => void;
+  // NUT-20: ya NO se usa acá (el chip "+ Ingrediente" se movió al header de
+  // `RecipesListPage`/columna izquierda de `DesktopRecipeDetail`). Se mantiene opcional y sin
+  // destructurar únicamente porque `RecipeCatalogList.test.tsx` (archivo de test, no editable en
+  // esta ronda) todavía la sigue pasando en varios de sus renders; sin este campo el build
+  // fallaría por "excess property" en ese test. Candidato a limpieza cuando el tester actualice
+  // ese archivo.
+  onCreateIngredient?: () => void;
 };
 
 function LoadingSkeleton() {
@@ -80,17 +97,18 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 // Extraído de `RecipesListPage.tsx` (design.md sección 9.2/9.3): buscador/chips/tarjetas de
 // listado, reutilizado tanto por `RecipesListPage` (mobile) como por la columna izquierda de
 // `RecipeDetailPage` en escritorio. Agnóstico de navegación/router a propósito — quien lo usa
-// decide qué hacer con `onSelectRecipe`/`onCreateRecipe`/`onCreateIngredient`. Búsqueda y
-// filtro de categoría son estado interno, no props controladas.
+// decide qué hacer con `onSelectRecipe`/`onCreateRecipe`. El chip "+ Ingrediente" que vivía acá
+// se movió al header de `RecipesListPage` (ajuste visual NUT-20); este componente ya no conoce
+// esa acción. Búsqueda y filtro de categoría son estado interno, no props controladas.
 export function RecipeCatalogList({
   recipes,
   status,
   errorMessage,
   onRetry,
+  onRefresh,
   selectedId = null,
   onSelectRecipe,
   onCreateRecipe,
-  onCreateIngredient,
 }: RecipeCatalogListProps) {
   const [selectedCategory, setSelectedCategory] = useState<RecipeCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -130,24 +148,37 @@ export function RecipeCatalogList({
   const hasNoFilterResults = recipes.length > 0 && filteredRecipes.length === 0;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
-      <div>
+      <div className="relative">
         <label htmlFor="recipe-search" className="sr-only">
           Buscar recetas
         </label>
+        <svg
+          aria-hidden="true"
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400"
+          fill="none"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3-3" />
+        </svg>
         <input
           id="recipe-search"
           type="text"
           value={searchTerm}
           onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder="Buscar recetas por nombre"
-          className="min-h-[44px] w-full rounded-lg border border-brand-cream-dark bg-white px-4 text-sm text-neutral-900"
+          placeholder="Buscar por nombre o ingrediente..."
+          className="min-h-10 w-full rounded-full border border-brand-cream-dark bg-white pl-9 pr-4 text-sm text-neutral-900"
         />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div data-testid="recipe-category-chips" className="flex flex-wrap gap-2">
         <Pill
           label={`Todas (${recipes.length})`}
           selected={selectedCategory === null}
@@ -161,7 +192,20 @@ export function RecipeCatalogList({
             onClick={() => setSelectedCategory(category)}
           />
         ))}
-        <Pill label="+ Ingrediente" selected={false} onClick={onCreateIngredient} />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          {`${recipes.length} recetas disponibles`}
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh ?? onRetry}
+          className="text-xs font-semibold text-brand-green-dark"
+        >
+          <span aria-hidden="true">↻ </span>
+          Actualizar
+        </button>
       </div>
 
       {hasNoFilterResults ? (
@@ -176,6 +220,9 @@ export function RecipeCatalogList({
             const primaryCategory = primaryCategoryRaw
               ? RECIPE_CATEGORY_LABELS[primaryCategoryRaw]
               : 'Sin categoría';
+            const categoryBadgeClasses = primaryCategoryRaw
+              ? RECIPE_CATEGORY_BADGE_CLASSES[primaryCategoryRaw]
+              : UNCATEGORIZED_BADGE_CLASSES;
             const isSelected = selectedId != null && selectedId === recipe.id;
             return (
               <div
@@ -191,23 +238,43 @@ export function RecipeCatalogList({
                     onSelectRecipe(recipe.id);
                   }
                 }}
-                className="cursor-pointer space-y-2 rounded-2xl bg-white p-4 shadow-lg"
+                className="flex cursor-pointer gap-3 rounded-2xl bg-white p-4 shadow-lg"
               >
-                <div className="flex items-center justify-between">
-                  <span className="rounded-full bg-brand-green/10 px-3 py-1 text-xs font-semibold text-brand-green-dark">
-                    {primaryCategory}
-                  </span>
-                  <span className="text-xs text-neutral-500">{totalMinutes} min</span>
+                {/* Placeholder de imagen (skeleton estático, NO una foto real: el backend no
+                    expone ninguna URL de imagen), mismo criterio que `RecipeImagePlaceholder`
+                    de `RecipeDetailPage.tsx`, en tamaño chico para la tarjeta del listado. */}
+                <div
+                  data-testid="recipe-card-thumbnail"
+                  className="h-16 w-16 shrink-0 rounded-xl bg-brand-cream-dark"
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${categoryBadgeClasses}`}
+                    >
+                      {primaryCategory}
+                    </span>
+                    <span className="text-xs text-neutral-500">{totalMinutes} min</span>
+                  </div>
+                  <h3 className="font-serif text-lg font-semibold text-neutral-900">
+                    {recipe.title}
+                  </h3>
+                  {/* La tarjeta actualmente seleccionada (p. ej. columna izquierda de escritorio,
+                      `RecipeDetailPage`) omite la descripción para no duplicarla textualmente
+                      contra la sección "Descripción" que el panel derecho ya muestra al mismo
+                      tiempo para esa misma receta. */}
+                  {!isSelected && <p className="text-sm text-neutral-500">{recipe.description}</p>}
+                  {Boolean(recipe.nutritionalValues) && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className="text-xs text-neutral-500">
+                        {recipe.nutritionalValues!.calories} kcal
+                      </span>
+                      <span className="rounded-full bg-brand-green/10 px-2 py-0.5 text-xs font-semibold text-brand-green-dark">
+                        {`${recipe.nutritionalValues!.protein}g prot`}
+                      </span>
+                    </div>
+                  )}
                 </div>
-                <h3 className="font-serif text-lg font-semibold text-neutral-900">{recipe.title}</h3>
-                {/* La tarjeta actualmente seleccionada (p. ej. columna izquierda de escritorio,
-                    `RecipeDetailPage`) omite la descripción para no duplicarla textualmente
-                    contra la sección "Descripción" que el panel derecho ya muestra al mismo
-                    tiempo para esa misma receta. */}
-                {!isSelected && <p className="text-sm text-neutral-500">{recipe.description}</p>}
-                {Boolean(recipe.nutritionalValues) && (
-                  <p className="text-xs text-neutral-500">{recipe.nutritionalValues!.calories} kcal</p>
-                )}
               </div>
             );
           })}
