@@ -392,6 +392,69 @@ describe('App authentication routes', () => {
   });
 });
 
+// NUT-20 (quinta iteración, tester): la ruta `/recipes` todavía monta `<PlaceholderPage
+// title="Recipes" />` en `App.tsx` (ver plan.md sección 5) y `/recipes/:id` todavía no existe
+// como ruta. Mismo patrón ya usado por el resto de este archivo para rutas protegidas (p. ej.
+// `/dashboard`): no se mockea el servicio/hook de la página, se deja el `apiClient` real con
+// su adapter reemplazado, para verificar el wiring de ruteo de punta a punta contra la página
+// real (`RecipesListPage`/`RecipeDetailPage`, ver sus propios `*.test.tsx` para la cobertura
+// exhaustiva de cada una en aislamiento). Se espera ROJO hoy: `/recipes` sigue mostrando el
+// placeholder y `/recipes/:id` ni siquiera es una ruta declarada.
+describe('App recipes routes', () => {
+  it('mounts the real RecipesListPage (not the placeholder) at /recipes for an authenticated visitor', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        return response(config, authenticatedUser);
+      }
+
+      if (config.url === '/recipes') {
+        return response(config, []);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/recipes');
+
+    expect(await screen.findByText(/todavía no tenés recetas/i)).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Recipes' })).not.toBeInTheDocument();
+  });
+
+  it('mounts the real RecipeDetailPage (not the placeholder) at /recipes/:id for an authenticated visitor', async () => {
+    const recipe = {
+      id: 'recipe-99',
+      title: 'Bowl de Quinoa',
+      description: 'Bowl fresco con quinoa y vegetales de estación.',
+      categories: ['VEGAN'],
+      prepMinutes: 10,
+      cookMinutes: 5,
+      ingredients: [{ name: 'Quinoa', quantity: 1, unit: 'taza' }],
+      instructions: ['Cocinar la quinoa.', 'Mezclar con los vegetales.'],
+      nutritionalValues: { calories: 200, protein: 8, carbs: 30, fat: 4 },
+      properties: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        return response(config, authenticatedUser);
+      }
+
+      if (config.url === '/recipes/recipe-99') {
+        return response(config, recipe);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/recipes/recipe-99');
+
+    expect(await screen.findByRole('heading', { name: 'Detalle de Receta' })).toBeVisible();
+    expect(screen.getByText(recipe.description)).toBeVisible();
+  });
+});
+
 describe('App logout', () => {
   it('offers an accessible logout control, clears local access first, and redirects even when remote logout fails', async () => {
     const user = userEvent.setup();

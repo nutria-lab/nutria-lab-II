@@ -8,6 +8,8 @@ import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
 import { LoginRequestError } from '../services/authService';
 import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
+import { RecipeDetailPage } from '../modules/recipes/pages/RecipeDetailPage';
+import { RecipesListPage } from '../modules/recipes/pages/RecipesListPage';
 
 function LoginRoute() {
   const { status: authStatus, login } = useAuth();
@@ -77,7 +79,8 @@ export function App() {
               <Route path="/" element={<Navigate to="/goals" replace />} />
               <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
               <Route path="/meal-plan" element={<MealPlanPage />} />
-              <Route path="/recipes" element={<PlaceholderPage title="Recipes" />} />
+              <Route path="/recipes" element={<RecipesListPage />} />
+              <Route path="/recipes/:id" element={<RecipeDetailPage />} />
               <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
               <Route path="/goals" element={<PreferencesPage />} />
             </Routes>
