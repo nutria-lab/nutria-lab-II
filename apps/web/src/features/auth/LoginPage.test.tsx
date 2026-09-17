@@ -24,7 +24,7 @@ describe('LoginPage', () => {
     expect(isotype).toHaveAttribute('src', expect.stringContaining('nutria-isotype.png'));
     expect(isotype).toHaveAttribute('alt', '');
     expect(isotype).toHaveAttribute('aria-hidden', 'true');
-    expect(wordmark?.parentElement).toHaveClass('justify-between', 'min-w-0');
+    expect(wordmark?.parentElement).toHaveClass('justify-center', 'min-w-0');
     expect(screen.getAllByRole('img', { name: 'NutrIA' })).toHaveLength(1);
     expect(screen.getByRole('button', { name: '¿Olvidaste tu contraseña?' })).toBeVisible();
     const register = screen.getByRole('link', { name: 'Registrate' });

@@ -24,7 +24,7 @@ describe('BrandMark', () => {
   it('renders the official Linear wordmark first and its decorative isotype second for authentication', () => {
     const { container } = render(<BrandMark variant="auth" />);
 
-    expect(container.firstElementChild).toHaveClass('flex', 'justify-between');
+    expect(container.firstElementChild).toHaveClass('flex', 'justify-center');
     expect(container.firstElementChild).toHaveClass('min-w-0');
     expectOfficialBrandAssets(container);
     expectNoAdditionalFocusableControls(container);
