@@ -6,20 +6,20 @@ type BrandMarkProps = {
 };
 
 const variantClasses = {
-  auth: 'mb-6 flex w-full min-w-0 items-center justify-between gap-4 sm:gap-6',
-  app: 'mb-6 flex min-w-0 items-center justify-center gap-2',
+  auth: 'mb-6 flex w-full min-w-0 items-center justify-center gap-1',
+  app: 'mb-6 flex min-w-0 items-center justify-center gap-1',
 } as const;
 
 const wordmarkClasses = {
-  auth: 'block h-auto w-full max-w-[min(58%,18rem)] object-contain',
+  auth: 'block h-auto w-36 max-w-full object-contain',
   app: 'block h-auto w-28 max-w-full object-contain',
 } as const;
 
 const isotypeClasses = {
-  auth: 'block h-10 w-10 shrink-0 object-contain sm:h-12 sm:w-12',
-  app: 'block h-8 w-8 shrink-0 object-contain',
+  auth: 'block h-16 w-16 shrink-0 object-contain',
+  app: 'block h-11 w-11 shrink-0 object-contain',
 } as const;
-
+    
 export function BrandMark({ variant }: BrandMarkProps) {
   return (
     <div className={variantClasses[variant]}>
