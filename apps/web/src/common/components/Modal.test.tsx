@@ -152,6 +152,28 @@ describe('Modal — dismissible (Hallazgo 2, cuarto review)', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
+  // Hallazgo de review externo, verificado en el código real: Modal.tsx línea ~72-79, el botón
+  // "✕" (aria-label "Cerrar") llama a `onClose` incondicionalmente, sin mirar `dismissible`,
+  // a diferencia del overlay y de Escape (que sí lo respetan, ver tests arriba). Esto permite
+  // cerrar el modal por la "✕" con `dismissible={false}` y abandonar una mutación en curso.
+  // Se contrasta con el test "invokes onClose when the close button... is clicked" de arriba
+  // (dismissible por default / true), que sí debe seguir invocando onClose. Se espera ROJO hoy.
+  it('with dismissible={false}, clicking the close button ("✕", aria-label "Cerrar") does NOT invoke onClose', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <Modal open onClose={onClose} title="Nueva Receta" dismissible={false}>
+        <p>Contenido del formulario</p>
+      </Modal>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Cerrar' }));
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
   it('with dismissible={true} explicitly, the overlay/Escape keep closing the modal (no regression)', async () => {
     const onClose = vi.fn();
     const user = userEvent.setup();

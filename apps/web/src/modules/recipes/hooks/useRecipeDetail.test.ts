@@ -136,6 +136,40 @@ describe('useRecipeDetail', () => {
     });
   });
 
+  // NUT-20 (bug 3 confirmado por revisión de código) — a diferencia del caso de arriba (un
+  // `retry()` que reintenta el MISMO id), acá el `id` pedido CAMBIA (navegación de
+  // `/recipes/a` a `/recipes/b`) y el fetch para el id NUEVO falla con un error genérico
+  // (no `notFound`). El criterio de "no pisar un dato ya válido en pantalla" es correcto
+  // sólo cuando se reintenta el MISMO id que ya tenía cargado — es incorrecto acá, porque
+  // deja mostrando la receta A completa (con sus acciones de editar/eliminar) en una
+  // pantalla que ya pidió la receta B. El hook debe trackear a qué id pertenece el `recipe`
+  // en estado, y limpiarlo a `null` (con `status: 'error'`) cuando el fetch que falla es
+  // para un id DISTINTO del que el `recipe` actual representa. Se espera ROJO hoy: el hook
+  // no trackea el id del `recipe` cargado, así que conserva la receta A intacta.
+  describe('cambio de id con fetch fallido para el id nuevo (bug real, no debe seguir mostrando la receta anterior)', () => {
+    it('clears `recipe` to null and sets status "error" when the id changes and the fetch for the NEW id fails with a generic error', async () => {
+      const recipeA = buildRecipe({ id: 'recipe-a', title: 'Receta A' });
+      vi.mocked(recipeService.getById).mockImplementation(((id: string) => {
+        if (id === 'recipe-a') {
+          return Promise.resolve(recipeA);
+        }
+        return Promise.reject(new Error('network error'));
+      }) as never);
+
+      const { result, rerender } = renderHook(({ id }) => useRecipeDetail(id), {
+        initialProps: { id: 'recipe-a' },
+      });
+
+      await waitFor(() => expect(result.current.status).toBe('success'));
+      expect(result.current.recipe).toEqual(recipeA);
+
+      rerender({ id: 'recipe-b' });
+
+      await waitFor(() => expect(result.current.status).toBe('error'));
+      expect(result.current.recipe).toBeNull();
+    });
+  });
+
   it('retry() requests the same id again', async () => {
     vi.mocked(recipeService.getById).mockRejectedValueOnce(new Error('network error'));
 

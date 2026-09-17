@@ -111,7 +111,10 @@ async function fillMinimalValidIngredientForm(user: ReturnType<typeof userEvent.
 // `RecipeForm.test.tsx` para el detalle exhaustivo de cada campo/criterio).
 async function fillMinimalValidRecipeForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Nueva Receta De Prueba');
-  await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+  // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: los
+  // chips de categoría muestran la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de
+  // `labels.ts`), nunca el valor RAW del enum en inglés/mayúsculas.
+  await user.click(screen.getByRole('button', { name: 'Vegano' }));
   await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
   await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
   await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Una descripción breve de prueba.');
@@ -336,10 +339,12 @@ describe('RecipesListPage', () => {
     expect(within(cardFor(VEGETARIAN_RECIPE)).getByText('55 min')).toBeInTheDocument();
     expect(within(cardFor(HIGH_PROTEIN_GF_RECIPE)).getByText('55 min')).toBeInTheDocument();
 
-    // Badge de categoría: al menos la primera del array `categories`.
-    expect(within(cardFor(VEGAN_RECIPE)).getByText('VEGAN')).toBeInTheDocument();
-    expect(within(cardFor(VEGETARIAN_RECIPE)).getByText('VEGETARIAN')).toBeInTheDocument();
-    expect(within(cardFor(HIGH_PROTEIN_GF_RECIPE)).getByText('HIGH_PROTEIN')).toBeInTheDocument();
+    // Badge de categoría: al menos la primera del array `categories`. NUT-20 (décima
+    // iteración, tester) — corrección de UX pedida directamente por la PO: la etiqueta
+    // traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca el valor RAW del enum.
+    expect(within(cardFor(VEGAN_RECIPE)).getByText('Vegano')).toBeInTheDocument();
+    expect(within(cardFor(VEGETARIAN_RECIPE)).getByText('Vegetariano')).toBeInTheDocument();
+    expect(within(cardFor(HIGH_PROTEIN_GF_RECIPE)).getByText('Alto en Proteína')).toBeInTheDocument();
 
     // Calorías: sólo si `nutritionalValues` no es null.
     expect(within(cardFor(VEGAN_RECIPE)).getByText('180 kcal')).toBeInTheDocument();
@@ -361,14 +366,18 @@ describe('RecipesListPage', () => {
 
     renderRecipesListPage();
 
+    // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: los
+    // chips de filtro muestran la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de
+    // `labels.ts`), nunca el valor RAW del enum. El chip "Todas (N)" no cambia (no representa
+    // una categoría).
     expect(screen.getByRole('button', { name: 'Todas (3)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'VEGAN' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'VEGETARIAN' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'HIGH_PROTEIN' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'GLUTEN_FREE' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Vegano' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Vegetariano' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Alto en Proteína' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sin Gluten' })).toBeInTheDocument();
 
     // Sin duplicados: un único chip por categoría distinta presente en el listado.
-    expect(screen.getAllByRole('button', { name: 'VEGAN' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Vegano' })).toHaveLength(1);
   });
 
   it('filters by category, and a recipe with more than one category shows up under each of them', async () => {
@@ -377,14 +386,17 @@ describe('RecipesListPage', () => {
 
     renderRecipesListPage();
 
-    await user.click(screen.getByRole('button', { name: 'HIGH_PROTEIN' }));
+    // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: se
+    // clickea por la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca por
+    // el valor RAW del enum.
+    await user.click(screen.getByRole('button', { name: 'Alto en Proteína' }));
 
     expect(screen.getByText(HIGH_PROTEIN_GF_RECIPE.title)).toBeInTheDocument();
     expect(screen.queryByText(VEGAN_RECIPE.title)).not.toBeInTheDocument();
     expect(screen.queryByText(VEGETARIAN_RECIPE.title)).not.toBeInTheDocument();
 
-    // La misma receta también aparece bajo su OTRA categoría (`GLUTEN_FREE`).
-    await user.click(screen.getByRole('button', { name: 'GLUTEN_FREE' }));
+    // La misma receta también aparece bajo su OTRA categoría (`GLUTEN_FREE` → "Sin Gluten").
+    await user.click(screen.getByRole('button', { name: 'Sin Gluten' }));
 
     expect(screen.getByText(HIGH_PROTEIN_GF_RECIPE.title)).toBeInTheDocument();
     expect(screen.queryByText(VEGAN_RECIPE.title)).not.toBeInTheDocument();
@@ -519,6 +531,40 @@ describe('RecipesListPage', () => {
     expect(within(dialog).getByText('Nuevo Ingrediente')).toBeInTheDocument();
   });
 
+  // NUT-20 (tester, bug real reportado en vivo por la PO) — mismo tipo de hallazgo que el ya
+  // cubierto arriba para "Nueva Receta"/`useRecipes().refetch`: hoy el `onSuccess` del
+  // `IngredientForm` de este modal sólo hace `setModalKind(null)` (ver `RecipesListPage.tsx`),
+  // sin refrescar el catálogo de ingredientes. Esto hoy "funciona" en esta pantalla puntual
+  // sólo porque el modal de receta se desmonta/remonta al cerrar y reabrir — pero es frágil y
+  // deja el mismo bug latente que sí se manifiesta en `RecipeDetailPage`/`DesktopRecipeDetail`
+  // (panel de receta que NO se desmonta). El fix esperado: ese `onSuccess` también debe invocar
+  // el `refetch()` de `useIngredients()`. Se espera ROJO hoy: `refetch` nunca se llama.
+  it('refetches the ingredient catalog after successfully submitting the "Nuevo Ingrediente" form', async () => {
+    mockUseRecipes({ recipes: ALL_RECIPES, status: 'success' });
+    const ingredientsRefetch = vi.fn();
+    vi.mocked(useIngredients).mockReturnValue({
+      ingredients: [],
+      status: 'empty',
+      errorMessage: null,
+      retry: vi.fn(),
+      refetch: ingredientsRefetch,
+    });
+    vi.mocked(ingredientService.create).mockResolvedValue(buildIngredient());
+    const user = userEvent.setup();
+
+    renderRecipesListPage();
+
+    await user.click(screen.getByRole('button', { name: '+ Ingrediente' }));
+    await screen.findByRole('dialog');
+
+    await fillMinimalValidIngredientForm(user);
+    await user.click(screen.getByRole('button', { name: 'Guardar Ingrediente' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    expect(ingredientsRefetch).toHaveBeenCalledTimes(1);
+  });
+
   it('renders the real IngredientForm inside the "Nuevo Ingrediente" modal, not the old placeholder', async () => {
     mockUseRecipes({ recipes: ALL_RECIPES, status: 'success' });
     const user = userEvent.setup();
@@ -584,7 +630,10 @@ describe('RecipesListPage', () => {
       expect(() => renderRecipesListPage()).not.toThrow();
 
       expect(screen.queryByRole('button', { name: 'undefined' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'VEGAN' })).toBeInTheDocument();
+      // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO:
+      // etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca el valor RAW del
+      // enum.
+      expect(screen.getByRole('button', { name: 'Vegano' })).toBeInTheDocument();
     });
   });
 
@@ -705,7 +754,11 @@ describe('RecipesListPage', () => {
 
       renderWithDetailRoute();
 
-      expect(screen.getByText(/todavía no tenés recetas/i)).toBeInTheDocument();
+      // Bug 4 (design.md 9.4/9.5): con el catálogo vacío, escritorio arma el layout de dos
+      // columnas (una ocurrencia del estado vacío por columna) en vez de una sola — mismo
+      // criterio que el describe "escritorio, catálogo vacío arma el layout de dos columnas"
+      // más abajo en este archivo. Lo que este test verifica sigue intacto: NO hubo redirect.
+      expect(screen.getAllByText(/todavía no tenés recetas/i).length).toBeGreaterThanOrEqual(1);
       expect(screen.queryByText(/Detalle de/)).not.toBeInTheDocument();
     });
   });
@@ -733,6 +786,33 @@ describe('RecipesListPage', () => {
       expect(screen.queryByTestId(`recipe-card-${VEGAN_RECIPE.id}`)).not.toBeInTheDocument();
       expect(screen.queryByRole('textbox', { name: /buscar/i })).not.toBeInTheDocument();
       expect(screen.getByTestId('recipes-loading-skeleton')).toBeInTheDocument();
+    });
+  });
+
+  // NUT-20 (bug 4 confirmado por revisión de código) — design.md 9.4/9.5 (líneas 303/343/353):
+  // "Si el listado está vacío, `/recipes` se queda tal cual, mostrando el layout de dos
+  // columnas con el estado vacío de 9.4 en el panel derecho". Hoy `shouldRedirectToDesktopDetail`
+  // sólo es `true` con `status === 'success' && recipes.length > 0`; con el catálogo REALMENTE
+  // vacío (`status: 'empty'`) en escritorio, la página no arma ningún layout de dos columnas —
+  // sólo renderiza `RecipeCatalogList` (que ya muestra su propio estado vacío, mensaje + CTA)
+  // dentro del mismo `<main>` de una sola columna que usa mobile, sin ningún panel derecho.
+  // Criterio propio del tester (sin testid nuevo, misma convención de queries por rol/texto ya
+  // usada en el resto de este archivo): la columna izquierda sigue siendo `RecipeCatalogList`
+  // montado (que en este estado sólo puede mostrarse a sí mismo vía su propio "Todavía no tenés
+  // recetas" + "Crear receta", ver `RecipeCatalogList.tsx`), y el panel derecho de escritorio
+  // agrega ESE MISMO mensaje/CTA una segunda vez (equivalente de escritorio del estado vacío de
+  // 4.2) — por lo que en escritorio con catálogo vacío deben verse DOS ocurrencias del mensaje y
+  // DOS botones "Crear receta" (una por columna), no una sola como hoy. Se espera ROJO: hoy sólo
+  // hay una ocurrencia (el layout de una sola columna, igual que mobile).
+  describe('RecipesListPage — escritorio, catálogo vacío arma el layout de dos columnas (Bug 4, design.md 9.4/9.5)', () => {
+    it('keeps the left-column recipe list mounted and shows a desktop empty state in the right panel at the same time, instead of collapsing to the single-column mobile screen', () => {
+      vi.mocked(useMediaQuery).mockReturnValue(true);
+      mockUseRecipes({ recipes: [], status: 'empty' });
+
+      renderRecipesListPage();
+
+      expect(screen.getAllByText(/todavía no tenés recetas/i)).toHaveLength(2);
+      expect(screen.getAllByRole('button', { name: /crear receta/i })).toHaveLength(2);
     });
   });
 

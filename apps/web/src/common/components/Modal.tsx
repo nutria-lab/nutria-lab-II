@@ -53,6 +53,12 @@ export function Modal({ open, onClose, title, children, dismissible = true }: Mo
     }
   }
 
+  function handleCloseButtonClick() {
+    if (dismissible) {
+      onClose();
+    }
+  }
+
   return (
     <div
       onClick={handleOverlayClick}
@@ -71,7 +77,7 @@ export function Modal({ open, onClose, title, children, dismissible = true }: Mo
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleCloseButtonClick}
             aria-label="Cerrar"
             className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-brand-cream-dark"
           >

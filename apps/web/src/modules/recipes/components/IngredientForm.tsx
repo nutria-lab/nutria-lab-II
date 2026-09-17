@@ -8,6 +8,7 @@ import {
   type Ingredient,
   type IngredientType,
 } from '../../../services/ingredientService';
+import { INGREDIENT_TYPE_LABELS } from '../labels';
 
 type IngredientFormProps = {
   onSuccess: (ingredient: Ingredient) => void;
@@ -26,15 +27,10 @@ const VALIDATION_ERROR = 'Revisá los campos del formulario e intentá de nuevo.
 const CONNECTIVITY_ERROR = 'No pudimos conectar. Revisá tu conexión e intentá de nuevo.';
 const UNEXPECTED_ERROR = 'Ocurrió un error inesperado. Intentá de nuevo.';
 
-const INGREDIENT_TYPE_OPTIONS: { value: IngredientType; label: string }[] = [
-  { value: 'MEAT', label: 'Carne' },
-  { value: 'VEGETABLE', label: 'Vegetal' },
-  { value: 'FRUIT', label: 'Fruta' },
-  { value: 'DAIRY', label: 'Lácteo' },
-  { value: 'GRAIN', label: 'Grano' },
-  { value: 'SPICE', label: 'Especia' },
-  { value: 'OTHER', label: 'Otro' },
-];
+// Fuente única de verdad de las etiquetas: `labels.ts` (`INGREDIENT_TYPE_LABELS`).
+const INGREDIENT_TYPE_OPTIONS: { value: IngredientType; label: string }[] = (
+  Object.entries(INGREDIENT_TYPE_LABELS) as [IngredientType, string][]
+).map(([value, label]) => ({ value, label }));
 
 type FieldErrors = Partial<
   Record<'name' | 'type' | 'defaultUnit' | 'calories' | 'protein' | 'carbs' | 'fat' | 'fiber' | 'sodium', string>
@@ -275,7 +271,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label htmlFor="ingredient-calories" className="mb-1 block text-sm font-medium text-neutral-700">
-            Calorías *
+            Calorías (kcal) *
           </label>
           <input
             id="ingredient-calories"
@@ -294,7 +290,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
 
         <div>
           <label htmlFor="ingredient-protein" className="mb-1 block text-sm font-medium text-neutral-700">
-            Proteínas *
+            Proteínas (g) *
           </label>
           <input
             id="ingredient-protein"
@@ -313,7 +309,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
 
         <div>
           <label htmlFor="ingredient-carbs" className="mb-1 block text-sm font-medium text-neutral-700">
-            Carbohidratos *
+            Carbohidratos (g) *
           </label>
           <input
             id="ingredient-carbs"
@@ -332,7 +328,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
 
         <div>
           <label htmlFor="ingredient-fat" className="mb-1 block text-sm font-medium text-neutral-700">
-            Grasas *
+            Grasas (g) *
           </label>
           <input
             id="ingredient-fat"
@@ -351,7 +347,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
 
         <div>
           <label htmlFor="ingredient-fiber" className="mb-1 block text-sm font-medium text-neutral-700">
-            Fibra
+            Fibra (g)
           </label>
           <input
             id="ingredient-fiber"
@@ -370,7 +366,7 @@ export function IngredientForm({ onSuccess, onCancel, onSubmittingChange }: Ingr
 
         <div>
           <label htmlFor="ingredient-sodium" className="mb-1 block text-sm font-medium text-neutral-700">
-            Sodio
+            Sodio (mg)
           </label>
           <input
             id="ingredient-sodium"

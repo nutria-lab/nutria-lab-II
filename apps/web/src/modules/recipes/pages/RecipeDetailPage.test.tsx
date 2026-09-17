@@ -9,6 +9,7 @@ import { useRecipes } from '../hooks/useRecipes';
 import { useIngredients } from '../hooks/useIngredients';
 import { useMediaQuery } from '../../../common/hooks/useMediaQuery';
 import { recipeService, RecipeRequestError, type Recipe } from '../../../services/recipeService';
+import { ingredientService, type Ingredient } from '../../../services/ingredientService';
 
 // NUT-20 (quinta iteración, tester) — `RecipeDetailPage` todavía NO EXISTE (ver design.md
 // secciones "Detalle de Receta"/4.1/4.2, y `useRecipeDetail`, ya construido en una iteración
@@ -94,6 +95,22 @@ vi.mock('../../../services/recipeService', async (importOriginal) => {
       ...actual.recipeService,
       update: vi.fn(),
       remove: vi.fn(),
+    },
+  };
+});
+
+// NUT-20 (tester, bug real reportado en vivo por la PO) — necesario para el nuevo describe de
+// más abajo ("ingrediente nuevo visible sin cerrar el panel de receta"): ese test crea un
+// ingrediente real desde el modal "Nuevo Ingrediente" (`IngredientForm`, sin mockear), así que
+// hay que mockear el servicio HTTP que ese formulario real termina llamando — mismo patrón
+// `importOriginal` + override de `create` ya usado en `RecipesListPage.test.tsx`.
+vi.mock('../../../services/ingredientService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../services/ingredientService')>();
+  return {
+    ...actual,
+    ingredientService: {
+      ...actual.ingredientService,
+      create: vi.fn(),
     },
   };
 });
@@ -256,7 +273,19 @@ describe('RecipeDetailPage — éxito, contenido completo', () => {
     expect(screen.getAllByText(recipe.title).length).toBeGreaterThan(0);
 
     // Badge de categoría (la primera) superpuesto al skeleton/placeholder estático de imagen.
-    expect(screen.getByText(recipe.categories[0])).toBeInTheDocument();
+    // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: el
+    // badge muestra la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca el
+    // valor RAW del enum en inglés/mayúsculas (`recipe.categories[0]` es `'VEGAN'`, la etiqueta
+    // esperada es "Vegano"). La fixture además tiene `properties: ['Vegano', ...]` (dato de
+    // dominio no relacionado al enum, ver sección "Propiedades y Restricciones" más abajo en
+    // este mismo test), así que "Vegano" aparece dos veces en la página — la query se escopa al
+    // placeholder de imagen (sin testid en producción: se ubica por posición/rol, tal como el
+    // propio `RecipeImagePlaceholder` lo renderiza — el `<h2>` del título de la receta es
+    // siempre su hermano inmediato siguiente) para no ser ambigua frente a esa otra aparición.
+    const recipeTitleHeading = screen.getByRole('heading', { name: recipe.title });
+    const imagePlaceholder = recipeTitleHeading.previousElementSibling as HTMLElement;
+    expect(within(imagePlaceholder).getByText('Vegano')).toBeInTheDocument();
+    expect(within(imagePlaceholder).queryByText(recipe.categories[0])).not.toBeInTheDocument();
 
     // Stats: tiempo total (prepMinutes + cookMinutes) + valores nutricionales, no nulos acá.
     expect(screen.getByText('25 min')).toBeInTheDocument();
@@ -280,10 +309,15 @@ describe('RecipeDetailPage — éxito, contenido completo', () => {
     expect(screen.getByText('Lavar y cortar los vegetales.')).toBeInTheDocument();
     expect(screen.getByText('Mezclar con aderezo.')).toBeInTheDocument();
 
-    // Propiedades y Restricciones.
-    expect(screen.getByRole('heading', { name: 'Propiedades y Restricciones' })).toBeInTheDocument();
-    expect(screen.getByText('Vegano')).toBeInTheDocument();
-    expect(screen.getByText('Sin Gluten')).toBeInTheDocument();
+    // Propiedades y Restricciones. NUT-20 (décima iteración, tester): escopada al `<section>`
+    // de esta propia lista (localizado por su heading, sin depender de clases CSS) porque el
+    // badge de categoría traducido, de arriba, ahora también dice literalmente "Vegano" —
+    // mismo motivo por el que la aserción del badge se escopó al placeholder de imagen.
+    const propertiesHeading = screen.getByRole('heading', { name: 'Propiedades y Restricciones' });
+    expect(propertiesHeading).toBeInTheDocument();
+    const propertiesSection = propertiesHeading.closest('section') as HTMLElement;
+    expect(within(propertiesSection).getByText('Vegano')).toBeInTheDocument();
+    expect(within(propertiesSection).getByText('Sin Gluten')).toBeInTheDocument();
 
     expect(screen.getByRole('button', { name: CLOSE_DETAIL_LABEL })).toBeInTheDocument();
   });
@@ -652,6 +686,122 @@ describe('RecipeDetailPage — escritorio, layout de dos columnas (design.md 9.2
     await user.click(screen.getByTestId(`recipe-card-${other.id}`));
 
     expect(await screen.findByText(other.description)).toBeInTheDocument();
+  });
+});
+
+// NUT-20 (tester, bug real reportado en vivo por la PO) — en escritorio, `DesktopRecipeDetail`
+// muestra a la vez el panel izquierdo (`RecipeCatalogList`, con el botón "+ Ingrediente") y el
+// panel derecho (`RecipeForm` inline, sin `Modal`, cuando `panelMode` es 'create'/'edit'). Hoy
+// `RecipeForm` pide su propio catálogo de ingredientes llamando a `useIngredients()` una sola
+// vez al montarse — si el usuario crea un ingrediente nuevo desde la izquierda SIN cerrar el
+// panel de receta de la derecha, ese `RecipeForm` (que sigue montado, nunca se desmonta) nunca
+// se entera del ingrediente nuevo hasta recargar la página completa. El fix esperado: la
+// página llama a `useIngredients()` UNA VEZ a nivel de página, le pasa `ingredients`/`status` a
+// `RecipeForm` vía props (`catalogIngredients`/`catalogStatus`), y el `onSuccess` del
+// `IngredientForm` del modal "Nuevo Ingrediente" también invoca el `refetch()` de ESE mismo
+// hook de la página (además del `catalog.refetch()` de recetas que ya hace hoy).
+//
+// Este test mockea `useIngredients` con un `refetch` propio y rastreable cuyo efecto (agregar
+// "Kiwi" al catálogo) sólo ocurre si algo en la producción realmente lo invoca — es agnóstico
+// de qué componente exacto termina llamando al hook (hoy sólo `RecipeForm`, después del fix la
+// propia página), así que sigue siendo válido tanto antes como después del fix. Se espera ROJO
+// hoy: nada en el código actual llama a ese `refetch`, así que "Kiwi" nunca aparece como
+// sugerencia sin recargar.
+describe('RecipeDetailPage — escritorio, ingrediente nuevo visible sin cerrar el panel de receta (bug real reportado por la PO)', () => {
+  function buildIngredientFixture(overrides: Partial<Ingredient> = {}): Ingredient {
+    return {
+      id: 'ingredient-quinoa',
+      name: 'Quinoa',
+      description: 'Cereal andino sin gluten',
+      type: 'GRAIN',
+      defaultUnit: 'g',
+      nutritionalValues: { calories: 120, protein: 4, carbs: 21, fat: 2 },
+      properties: [],
+      createdAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  // Escopado al `dialog` del modal "Nuevo Ingrediente": sin esto, `getByLabelText(/^Nombre/i)`
+  // es ambiguo, porque matchea a la vez el input "Nombre" del propio `IngredientForm`, el
+  // "Nombre de la Receta" del `RecipeForm` que sigue abierto detrás, y el `aria-label` "Nombre
+  // del ingrediente, fila 1" de cada fila de ingrediente de ese mismo `RecipeForm`.
+  async function fillMinimalValidIngredientForm(
+    user: ReturnType<typeof userEvent.setup>,
+    dialog: HTMLElement,
+    name: string,
+  ) {
+    await user.type(within(dialog).getByLabelText(/^Nombre/i), name);
+    await user.selectOptions(within(dialog).getByRole('combobox', { name: /^Tipo/i }), 'GRAIN');
+    await user.type(within(dialog).getByLabelText(/Unidad de Medida Habitual/i), 'unidad');
+    await user.type(within(dialog).getByLabelText(/^Calorías/i), '50');
+    await user.type(within(dialog).getByLabelText(/^Proteínas/i), '1');
+    await user.type(within(dialog).getByLabelText(/^Carbohidratos/i), '10');
+    await user.type(within(dialog).getByLabelText(/^Grasas/i), '0');
+  }
+
+  it('creating an ingredient from the left column makes it appear as a suggestion in the still-open "Nueva Receta" panel, without reloading anything', async () => {
+    const recipe = buildRecipe();
+    vi.mocked(useMediaQuery).mockReturnValue(true);
+    mockDetail({ recipe, status: 'success' });
+    mockRecipesForCatalog({ recipes: [recipe], status: 'success' });
+
+    const kiwi = buildIngredientFixture({ id: 'ingredient-kiwi', name: 'Kiwi' });
+    let ingredientsState: { ingredients: Ingredient[]; status: 'success'; errorMessage: null } = {
+      ingredients: [buildIngredientFixture()],
+      status: 'success',
+      errorMessage: null,
+    };
+    const ingredientsRefetch = vi.fn(() => {
+      ingredientsState = {
+        ingredients: [...ingredientsState.ingredients, kiwi],
+        status: 'success',
+        errorMessage: null,
+      };
+    });
+    vi.mocked(useIngredients).mockImplementation(() => ({
+      ...ingredientsState,
+      retry: vi.fn(),
+      refetch: ingredientsRefetch,
+    }));
+    vi.mocked(ingredientService.create).mockResolvedValue(kiwi);
+
+    const user = userEvent.setup();
+    renderDetailPage(recipe.id);
+
+    await user.click(screen.getByRole('button', { name: 'Nueva Receta' }));
+    expect(screen.getByLabelText(/^Nombre de la Receta/i)).toBeInTheDocument();
+
+    // Catálogo inicial: "Kiwi" todavía no existe, no es una sugerencia.
+    const initialNameInput = screen.getByTestId('ingredient-name-0');
+    const listId = initialNameInput.getAttribute('list');
+    const initialDatalist = document.querySelector(`datalist#${listId}`);
+    const initialOptionValues = Array.from(initialDatalist!.querySelectorAll('option')).map((option) =>
+      option.getAttribute('value'),
+    );
+    expect(initialOptionValues).not.toEqual(expect.arrayContaining(['Kiwi']));
+
+    // Crea el ingrediente nuevo desde la columna izquierda, SIN cerrar el panel de receta.
+    await user.click(screen.getByRole('button', { name: '+ Ingrediente' }));
+    const dialog = await screen.findByRole('dialog');
+    await fillMinimalValidIngredientForm(user, dialog, 'Kiwi');
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar Ingrediente' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // El panel de "Nueva Receta" sigue abierto e intacto: nunca se desmontó ni se recargó nada.
+    expect(screen.getByLabelText(/^Nombre de la Receta/i)).toBeInTheDocument();
+
+    // El ingrediente recién creado ya aparece como sugerencia en el datalist del RecipeForm
+    // que seguía montado, sin recargar la página.
+    const updatedNameInput = screen.getByTestId('ingredient-name-0');
+    const updatedListId = updatedNameInput.getAttribute('list');
+    const updatedDatalist = document.querySelector(`datalist#${updatedListId}`);
+    const updatedOptionValues = Array.from(updatedDatalist!.querySelectorAll('option')).map((option) =>
+      option.getAttribute('value'),
+    );
+    expect(updatedOptionValues).toEqual(expect.arrayContaining(['Kiwi']));
   });
 });
 

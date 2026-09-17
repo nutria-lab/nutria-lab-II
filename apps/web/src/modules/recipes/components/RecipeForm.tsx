@@ -10,13 +10,21 @@ import {
   type RecipeCategory,
   type RecipeIngredientItem,
 } from '../../../services/recipeService';
-import { useIngredients } from '../hooks/useIngredients';
+import type { Ingredient } from '../../../services/ingredientService';
+import { RECIPE_CATEGORY_LABELS } from '../labels';
 
 type RecipeFormProps = {
   mode: 'create' | 'edit';
   initialValues?: Recipe;
   onSuccess: (recipe: Recipe) => void;
   onCancel: () => void;
+  // NUT-20 (bug real reportado por la PO) — antes este componente llamaba a `useIngredients()`
+  // internamente, por lo que un ingrediente creado desde otra parte de la pantalla mientras
+  // este formulario seguía montado nunca se reflejaba en el datalist de sugerencias hasta
+  // recargar la página. Ahora el catálogo lo controla la página padre (que sí puede
+  // `refetch()` tras crear un ingrediente) y se lo pasa por props.
+  catalogIngredients: Ingredient[];
+  catalogStatus: 'loading' | 'empty' | 'error' | 'success';
   // NUT-20 (séptima iteración, tester) — Hallazgo 2 (bloqueante) del cuarto review: invocado
   // con `true` justo antes de disparar la petición y con `false` cuando termina (éxito o
   // error), para que el `Modal` padre pueda dejar de ser cerrable mientras dura el guardado.
@@ -130,9 +138,9 @@ export function RecipeForm({
   onSuccess,
   onCancel,
   onSubmittingChange,
+  catalogIngredients,
+  catalogStatus,
 }: RecipeFormProps) {
-  const { ingredients: catalogIngredients, status: catalogStatus } = useIngredients();
-
   const [title, setTitle] = useState(initialValues?.title ?? '');
   const [categories, setCategories] = useState<RecipeCategory[]>(initialValues?.categories ?? []);
   const [prepMinutes, setPrepMinutes] = useState(initialValues ? String(initialValues.prepMinutes) : '');
@@ -350,7 +358,7 @@ export function RecipeForm({
           {ALL_CATEGORIES.map((category) => (
             <Pill
               key={category}
-              label={category}
+              label={RECIPE_CATEGORY_LABELS[category]}
               selected={categories.includes(category)}
               onClick={() => toggleCategory(category)}
             />
@@ -426,7 +434,7 @@ export function RecipeForm({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label htmlFor="recipe-calories" className="mb-1 block text-sm font-medium text-neutral-700">
-              Calorías *
+              Calorías (kcal) *
             </label>
             <input
               id="recipe-calories"
@@ -445,7 +453,7 @@ export function RecipeForm({
 
           <div>
             <label htmlFor="recipe-protein" className="mb-1 block text-sm font-medium text-neutral-700">
-              Proteínas *
+              Proteínas (g) *
             </label>
             <input
               id="recipe-protein"
@@ -464,7 +472,7 @@ export function RecipeForm({
 
           <div>
             <label htmlFor="recipe-carbs" className="mb-1 block text-sm font-medium text-neutral-700">
-              Carbohidratos *
+              Carbohidratos (g) *
             </label>
             <input
               id="recipe-carbs"
@@ -483,7 +491,7 @@ export function RecipeForm({
 
           <div>
             <label htmlFor="recipe-fat" className="mb-1 block text-sm font-medium text-neutral-700">
-              Grasas *
+              Grasas (g) *
             </label>
             <input
               id="recipe-fat"

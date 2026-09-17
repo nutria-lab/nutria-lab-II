@@ -9,8 +9,11 @@ import { recipeService, RecipeRequestError, type Recipe } from '../../../service
 import { IngredientForm } from '../components/IngredientForm';
 import { RecipeCatalogList } from '../components/RecipeCatalogList';
 import { RecipeForm } from '../components/RecipeForm';
+import { useIngredients } from '../hooks/useIngredients';
 import { useRecipeDetail } from '../hooks/useRecipeDetail';
 import { useRecipes } from '../hooks/useRecipes';
+import { RECIPE_CATEGORY_LABELS } from '../labels';
+import type { Ingredient } from '../../../services/ingredientService';
 
 const DETAIL_TITLE = 'Detalle de Receta';
 const NOT_FOUND_MESSAGE = 'Esta receta ya no está disponible. Puede que haya sido eliminada.';
@@ -92,7 +95,13 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
   // Hallazgo 1 (bloqueante, cuarto review): guarda defensiva para el backend real pre-NUT-61,
   // que puede devolver `categories` como `undefined`.
-  const primaryCategory = (recipe.categories ?? [])[0] ?? 'Sin categoría';
+  const primaryCategoryRaw = (recipe.categories ?? [])[0];
+  // NUT-20 (décima iteración) — corrección de UX pedida directamente por la PO: el badge
+  // muestra la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca el valor
+  // RAW del enum en inglés/mayúsculas.
+  const primaryCategory = primaryCategoryRaw
+    ? RECIPE_CATEGORY_LABELS[primaryCategoryRaw]
+    : 'Sin categoría';
   return (
     <div className="relative h-48 w-full overflow-hidden rounded-2xl bg-brand-cream-dark">
       <span className="absolute left-3 top-3 rounded-full bg-brand-green/10 px-3 py-1 text-xs font-semibold text-brand-green-dark">
@@ -184,6 +193,11 @@ type MobileRecipeDetailProps = {
   closeModal: () => void;
   retry: () => void;
   deleteConfirmDialog: ReactNode;
+  // NUT-20 (bug real reportado por la PO) — `RecipeForm` ya no llama a `useIngredients()`
+  // internamente; el catálogo lo controla `RecipeDetailPage` (nivel de página) y se lo pasa por
+  // props a este subcomponente.
+  catalogIngredients: Ingredient[];
+  catalogStatus: 'loading' | 'empty' | 'error' | 'success';
 };
 
 // Hallazgo 3 (alto, novena iteración): variante mobile, extraída para que `useRecipes()` (sólo
@@ -202,6 +216,8 @@ function MobileRecipeDetail({
   closeModal,
   retry,
   deleteConfirmDialog,
+  catalogIngredients,
+  catalogStatus,
 }: MobileRecipeDetailProps) {
   return (
     <main className="mx-auto max-w-3xl space-y-4 px-4 py-6 md:px-8">
@@ -224,7 +240,18 @@ function MobileRecipeDetail({
               aria-label="Editar"
               className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-brand-cream-dark"
             >
-              <span aria-hidden="true">✎</span>
+              <svg
+                aria-hidden="true"
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+                viewBox="0 0 24 24"
+              >
+                <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" />
+              </svg>
             </button>
             <button
               type="button"
@@ -232,7 +259,18 @@ function MobileRecipeDetail({
               aria-label="Eliminar"
               className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-500 hover:bg-brand-cream-dark"
             >
-              <span aria-hidden="true">🗑</span>
+              <svg
+                aria-hidden="true"
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="1.8"
+                viewBox="0 0 24 24"
+              >
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14ZM10 11v6M14 11v6" />
+              </svg>
             </button>
           </div>
         </div>
@@ -263,6 +301,8 @@ function MobileRecipeDetail({
         <RecipeForm
           mode="edit"
           initialValues={recipe}
+          catalogIngredients={catalogIngredients}
+          catalogStatus={catalogStatus}
           onSuccess={() => {
             closeModal();
             retry();
@@ -295,6 +335,13 @@ type DesktopRecipeDetailProps = {
   isSavingIngredient: boolean;
   setIsSavingIngredient: (value: boolean) => void;
   deleteConfirmDialog: ReactNode;
+  // NUT-20 (bug real reportado por la PO) — mismo catálogo de `RecipeDetailPage`, pasado por
+  // props a ambos `RecipeForm` (create/edit) del panel derecho; `refetchIngredients` se invoca
+  // también al crear un ingrediente nuevo desde la columna izquierda, para que el `RecipeForm`
+  // del panel derecho (que nunca se desmonta) vea el catálogo actualizado sin recargar la página.
+  catalogIngredients: Ingredient[];
+  catalogStatus: 'loading' | 'empty' | 'error' | 'success';
+  refetchIngredients: () => void;
 };
 
 // Hallazgo 3 (alto, novena iteración): `useRecipes()` (usado hoy sólo para alimentar la columna
@@ -318,6 +365,9 @@ function DesktopRecipeDetail({
   isSavingIngredient,
   setIsSavingIngredient,
   deleteConfirmDialog,
+  catalogIngredients,
+  catalogStatus,
+  refetchIngredients,
 }: DesktopRecipeDetailProps) {
   // Columna izquierda de escritorio (design.md 9.2/9.5): mismo hook, misma petición que ya usa
   // `RecipesListPage` — no se pide el detalle de nuevo por este lado.
@@ -353,6 +403,8 @@ function DesktopRecipeDetail({
         {panelMode === 'create' && (
           <RecipeForm
             mode="create"
+            catalogIngredients={catalogIngredients}
+            catalogStatus={catalogStatus}
             onSuccess={(created) => {
               setPanelMode('detail');
               catalog.refetch();
@@ -367,6 +419,8 @@ function DesktopRecipeDetail({
           <RecipeForm
             mode="edit"
             initialValues={recipe}
+            catalogIngredients={catalogIngredients}
+            catalogStatus={catalogStatus}
             onSuccess={() => {
               setPanelMode('detail');
               retry();
@@ -419,6 +473,7 @@ function DesktopRecipeDetail({
           onSuccess={() => {
             closeModal();
             catalog.refetch();
+            refetchIngredients();
           }}
           onCancel={closeModal}
           onSubmittingChange={setIsSavingIngredient}
@@ -442,6 +497,14 @@ export function RecipeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { recipe, status, errorMessage, retry } = useRecipeDetail(id ?? '');
+  // NUT-20 (bug real reportado por la PO) — se llama una única vez a nivel de página (tanto la
+  // variante mobile como la de escritorio consumen el mismo catálogo vía props), en reemplazo
+  // del `useIngredients()` interno que tenía `RecipeForm` antes de este fix.
+  const {
+    ingredients: catalogIngredients,
+    status: catalogStatus,
+    refetch: refetchIngredients,
+  } = useIngredients();
   const isDesktop = useMediaQuery(DESKTOP_MEDIA_QUERY);
 
   const [modalKind, setModalKind] = useState<'edit' | 'delete' | 'ingredient' | null>(null);
@@ -576,6 +639,8 @@ export function RecipeDetailPage() {
         closeModal={closeModal}
         retry={retry}
         deleteConfirmDialog={deleteConfirmDialog}
+        catalogIngredients={catalogIngredients}
+        catalogStatus={catalogStatus}
       />
     );
   }
@@ -599,6 +664,9 @@ export function RecipeDetailPage() {
       isSavingIngredient={isSavingIngredient}
       setIsSavingIngredient={setIsSavingIngredient}
       deleteConfirmDialog={deleteConfirmDialog}
+      catalogIngredients={catalogIngredients}
+      catalogStatus={catalogStatus}
+      refetchIngredients={refetchIngredients}
     />
   );
 }

@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { Banner } from '../../../common/components/Banner';
 import { Pill } from '../../../common/components/Pill';
 import type { Recipe, RecipeCategory } from '../../../services/recipeService';
+import { RECIPE_CATEGORY_LABELS } from '../labels';
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
 
@@ -105,7 +106,11 @@ export function RecipeCatalogList({
     return recipes.filter((recipe) => {
       const recipeCategories = recipe.categories ?? [];
       const matchesCategory = !selectedCategory || recipeCategories.includes(selectedCategory);
-      const matchesSearch = !normalizedSearch || recipe.title.toLowerCase().includes(normalizedSearch);
+      const matchesTitle = recipe.title.toLowerCase().includes(normalizedSearch);
+      const matchesIngredient = (recipe.ingredients ?? []).some((ingredient) =>
+        ingredient.name.toLowerCase().includes(normalizedSearch),
+      );
+      const matchesSearch = !normalizedSearch || matchesTitle || matchesIngredient;
       return matchesCategory && matchesSearch;
     });
   }, [recipes, selectedCategory, searchTerm]);
@@ -151,7 +156,7 @@ export function RecipeCatalogList({
         {categories.map((category) => (
           <Pill
             key={category}
-            label={category}
+            label={RECIPE_CATEGORY_LABELS[category]}
             selected={selectedCategory === category}
             onClick={() => setSelectedCategory(category)}
           />
@@ -167,7 +172,10 @@ export function RecipeCatalogList({
         <div className="space-y-3">
           {filteredRecipes.map((recipe) => {
             const totalMinutes = recipe.prepMinutes + recipe.cookMinutes;
-            const primaryCategory = (recipe.categories ?? [])[0] ?? 'Sin categoría';
+            const primaryCategoryRaw = (recipe.categories ?? [])[0];
+            const primaryCategory = primaryCategoryRaw
+              ? RECIPE_CATEGORY_LABELS[primaryCategoryRaw]
+              : 'Sin categoría';
             const isSelected = selectedId != null && selectedId === recipe.id;
             return (
               <div

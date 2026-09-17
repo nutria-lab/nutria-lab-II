@@ -46,10 +46,12 @@ vi.mock('../hooks/useIngredients', async (importOriginal) => {
 
 // --- Criterios propios del tester (documentados en el informe final) --------------------
 //
-// - Categorías: chips con el nombre RAW del enum `RecipeCategory` (p. ej. "VEGAN"), no una
-//   traducción — mismo criterio ya usado por los chips de filtro de `RecipesListPage`
-//   (`screen.getByRole('button', { name: 'VEGAN' })`), para no introducir un segundo
-//   vocabulario de etiquetas para la misma categoría dentro del mismo módulo. Selección
+// - Categorías: chips con la ETIQUETA TRADUCIDA al español de `RECIPE_CATEGORY_LABELS`
+//   (`labels.ts`, p. ej. "Vegano" para `RecipeCategory: 'VEGAN'`), no el valor RAW del enum
+//   — corrección de UX pedida directamente por la PO (décima iteración): el enum crudo en
+//   inglés/mayúsculas no puede quedar visible en producción
+//   (`screen.getByRole('button', { name: 'Vegano' })`). El VALOR interno que viaja en el
+//   payload sigue siendo el enum crudo (`RecipeCategory`), nunca la traducción. Selección
 //   expuesta vía `aria-pressed` (mismo contrato que `Pill.tsx`, sugerido tal cual por
 //   plan.md sección 3 para estos chips).
 // - Tiempos de preparación/cocción: dos inputs numéricos SEPARADOS (`type="text"
@@ -79,14 +81,17 @@ const VALIDATION_ERROR = 'Revisá los campos del formulario e intentá de nuevo.
 const CONNECTIVITY_ERROR = 'No pudimos conectar. Revisá tu conexión e intentá de nuevo.';
 const UNEXPECTED_ERROR = 'Ocurrió un error inesperado. Intentá de nuevo.';
 
+// NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: las
+// categorías se muestran con la etiqueta traducida al español (`RECIPE_CATEGORY_LABELS` de
+// `labels.ts`), nunca con el valor RAW del enum en inglés/mayúsculas.
 const ALL_CATEGORY_LABELS = [
-  'VEGAN',
-  'VEGETARIAN',
-  'HIGH_PROTEIN',
-  'GLUTEN_FREE',
-  'DAIRY_FREE',
-  'LOW_CARB',
-  'OTHER',
+  'Vegano',
+  'Vegetariano',
+  'Alto en Proteína',
+  'Sin Gluten',
+  'Sin Lácteos',
+  'Bajo en Carbohidratos',
+  'Otra',
 ];
 
 function buildCatalogIngredients(): Ingredient[] {
@@ -200,7 +205,7 @@ async function fillIngredientRow(
 // ingredientes por defecto, y un paso de preparación. Propiedades queda sin tocar (opcional).
 async function fillMinimalValidForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Nueva Receta De Prueba');
-  await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+  await user.click(screen.getByRole('button', { name: 'Vegano' }));
   await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
   await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
   await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Una descripción breve de prueba.');
@@ -230,7 +235,15 @@ afterEach(() => {
 describe('RecipeForm — modo crear, formulario vacío', () => {
   it('arranca con todos los campos vacíos/sin selección y el botón dice "Guardar Receta"', () => {
     mockUseIngredients();
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     expect(screen.getByLabelText(/^Nombre de la Receta/i)).toHaveValue('');
 
@@ -263,13 +276,22 @@ describe('RecipeForm — modo editar, precarga', () => {
   it('precarga todos los campos desde initialValues y el botón dice "Guardar Cambios"', () => {
     mockUseIngredients();
     const recipe = buildRecipe();
-    render(<RecipeForm mode="edit" initialValues={recipe} onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="edit"
+        initialValues={recipe}
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     expect(screen.getByLabelText(/^Nombre de la Receta/i)).toHaveValue(recipe.title);
 
-    expect(screen.getByRole('button', { name: 'VEGAN' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'GLUTEN_FREE' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'VEGETARIAN' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Vegano' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Sin Gluten' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Vegetariano' })).toHaveAttribute('aria-pressed', 'false');
 
     expect(screen.getByLabelText(/Tiempo de Preparación/i)).toHaveValue(String(recipe.prepMinutes));
     expect(screen.getByLabelText(/Tiempo de Cocción/i)).toHaveValue(String(recipe.cookMinutes));
@@ -301,7 +323,15 @@ describe('RecipeForm — validación de campos obligatorios', () => {
   it('no llama a recipeService.create y marca cada campo obligatorio al enviar el formulario en blanco', async () => {
     mockUseIngredients();
     const user = userEvent.setup();
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await user.click(screen.getByRole('button', { name: 'Guardar Receta' }));
 
@@ -326,18 +356,26 @@ describe('RecipeForm — multi-select de categorías', () => {
     mockUseIngredients();
     const user = userEvent.setup();
     vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
-    await user.click(screen.getByRole('button', { name: 'GLUTEN_FREE' }));
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
+    await user.click(screen.getByRole('button', { name: 'Sin Gluten' }));
 
-    expect(screen.getByRole('button', { name: 'VEGAN' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'GLUTEN_FREE' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Vegano' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Sin Gluten' })).toHaveAttribute('aria-pressed', 'true');
 
     // Deselecciona "VEGAN": vuelve a quedar sin marcar.
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
-    expect(screen.getByRole('button', { name: 'VEGAN' })).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByRole('button', { name: 'GLUTEN_FREE' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
+    expect(screen.getByRole('button', { name: 'Vegano' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Sin Gluten' })).toHaveAttribute('aria-pressed', 'true');
 
     await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Sin Gluten');
     await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
@@ -361,7 +399,15 @@ describe('RecipeForm — filas de ingredientes', () => {
   it('"+ Añadir fila" agrega una fila nueva vacía', async () => {
     mockUseIngredients();
     const user = userEvent.setup();
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     expect(nameInputs()).toHaveLength(1);
 
@@ -376,7 +422,15 @@ describe('RecipeForm — filas de ingredientes', () => {
   it('el botón eliminar saca sólo la fila puntual, no todas', async () => {
     mockUseIngredients();
     const user = userEvent.setup();
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await user.click(screen.getByRole('button', { name: '+ Añadir fila' }));
     await user.click(screen.getByRole('button', { name: '+ Añadir fila' }));
@@ -396,10 +450,18 @@ describe('RecipeForm — filas de ingredientes', () => {
   it('una fila con nombre pero sin cantidad/unidad bloquea el envío señalando esa fila puntual', async () => {
     mockUseIngredients();
     const user = userEvent.setup();
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Con Fila Incompleta');
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
     await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
     await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
     await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Descripción breve.');
@@ -423,10 +485,18 @@ describe('RecipeForm — filas de ingredientes', () => {
     mockUseIngredients();
     const user = userEvent.setup();
     vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Con Dos Filas');
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
     await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
     await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
     await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Descripción breve.');
@@ -449,12 +519,41 @@ describe('RecipeForm — filas de ingredientes', () => {
   });
 });
 
-describe('RecipeForm — sugerencias del catálogo de ingredientes', () => {
-  it('ofrece las sugerencias del catálogo vía datalist, sin bloquear texto libre no listado', async () => {
-    mockUseIngredients();
-    const user = userEvent.setup();
-    vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+// NUT-20 (tester, corrección de bug real reportado en vivo por la PO) — antes de esta
+// iteración, `RecipeForm` llamaba a `useIngredients()` internamente, por lo que nunca podía
+// enterarse de un ingrediente creado desde otra parte de la pantalla mientras seguía montado
+// (ver `RecipeDetailPage.tsx`/`DesktopRecipeDetail`: el panel derecho de "Nueva Receta"/"Editar
+// Receta" convive con el botón "Nuevo Ingrediente" de la izquierda, sin desmontarse al crear
+// uno). El fix: `RecipeForm` ahora recibe `catalogIngredients: Ingredient[]` y
+// `catalogStatus: 'loading' | 'empty' | 'error' | 'success'` como props OBLIGATORIAS
+// controladas por la página padre, en reemplazo del `useIngredients()` interno. Cambio de
+// CONTRATO de props, no aditivo: todos los tests de este archivo se adaptaron para pasar estas
+// dos props nuevas (ver informe final del tester para el detalle completo de qué se tocó).
+describe('RecipeForm — catalogIngredients/catalogStatus como props (NUT-20, contrato nuevo)', () => {
+  // Catálogo interno DELIBERADAMENTE DISTINTO del que se pasa por props: si el componente
+  // siguiera leyendo `useIngredients()` por dentro (bug real), el datalist mostraría este
+  // ingrediente "del hook interno" en vez de los de la prop. Se espera ROJO hoy.
+  it('ofrece como sugerencias del datalist los catalogIngredients recibidos por props, ignorando cualquier catálogo que useIngredients devuelva internamente', async () => {
+    mockUseIngredients({
+      ingredients: [
+        {
+          ...buildCatalogIngredients()[0],
+          id: 'internal-hook-ingredient',
+          name: 'Ingrediente Del Hook Interno (no debería aparecer)',
+        },
+      ],
+      status: 'success',
+    });
+    const propIngredients = buildCatalogIngredients();
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={propIngredients}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     const nameInput = screen.getByTestId('ingredient-name-0');
     const listId = nameInput.getAttribute('list');
@@ -467,10 +566,28 @@ describe('RecipeForm — sugerencias del catálogo de ingredientes', () => {
       option.getAttribute('value'),
     );
     expect(optionValues).toEqual(expect.arrayContaining(['Quinoa', 'Lechuga', 'Tomate']));
+    expect(optionValues).not.toEqual(
+      expect.arrayContaining(['Ingrediente Del Hook Interno (no debería aparecer)']),
+    );
+  });
+
+  it('sigue permitiendo texto libre no listado en el nombre del ingrediente, con el catálogo recibido por props', async () => {
+    mockUseIngredients();
+    const user = userEvent.setup();
+    vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     // Texto libre no presente en el catálogo: sigue permitido y no bloquea el envío.
     await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Con Ingrediente Libre');
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
     await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
     await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
     await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Descripción breve.');
@@ -488,10 +605,14 @@ describe('RecipeForm — sugerencias del catálogo de ingredientes', () => {
   });
 });
 
-describe('RecipeForm — catálogo de ingredientes vacío o con error', () => {
+describe('RecipeForm — catálogo de ingredientes vacío o con error (catalogStatus por props)', () => {
   it.each(['empty', 'error'] as const)(
-    'el campo de nombre sigue siendo un input de texto libre funcional cuando useIngredients devuelve status "%s"',
+    'el campo de nombre sigue siendo un input de texto libre funcional cuando catalogStatus es "%s"',
     async (status) => {
+      // Mantiene también sincronizado el mock del hook interno (todavía consumido por la
+      // implementación actual, pre-fix) para no romper este test por una razón ajena a lo que
+      // cubre: acá lo relevante es que sigue funcionando como input de texto libre, no si el
+      // dato viene de la prop o del hook interno (eso ya lo cubre el describe de arriba).
       mockUseIngredients({
         ingredients: [],
         status,
@@ -499,10 +620,18 @@ describe('RecipeForm — catálogo de ingredientes vacío o con error', () => {
       });
       const user = userEvent.setup();
       vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-      render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+      render(
+        <RecipeForm
+          mode="create"
+          catalogIngredients={[]}
+          catalogStatus={status}
+          onSuccess={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
 
       await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Sin Catálogo');
-      await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+      await user.click(screen.getByRole('button', { name: 'Vegano' }));
       await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
       await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '5');
       await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Descripción breve.');
@@ -527,10 +656,18 @@ describe('RecipeForm — pasos de preparación, serialización', () => {
     mockUseIngredients();
     const user = userEvent.setup();
     vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await user.type(screen.getByLabelText(/^Nombre de la Receta/i), 'Receta Con Pasos');
-    await user.click(screen.getByRole('button', { name: 'VEGAN' }));
+    await user.click(screen.getByRole('button', { name: 'Vegano' }));
     await user.type(screen.getByLabelText(/Tiempo de Preparación/i), '10');
     await user.type(screen.getByLabelText(/Tiempo de Cocción/i), '20');
     await user.type(screen.getByLabelText(/^Descripción Breve/i), 'Descripción breve.');
@@ -557,7 +694,15 @@ describe('RecipeForm — serialización de "Propiedades y Restricciones"', () =>
     mockUseIngredients();
     const user = userEvent.setup();
     vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     await user.type(screen.getByLabelText(/Propiedades y Restricciones/i), 'Vegano, Sin Gluten,  Bajo en Sodio');
@@ -572,7 +717,15 @@ describe('RecipeForm — serialización de "Propiedades y Restricciones"', () =>
     mockUseIngredients();
     const user = userEvent.setup();
     vi.mocked(recipeService.create).mockResolvedValue(buildRecipe());
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     await user.click(screen.getByRole('button', { name: 'Guardar Receta' }));
@@ -589,7 +742,15 @@ describe('RecipeForm — envío exitoso en modo crear', () => {
     const onSuccess = vi.fn();
     const created = buildRecipe({ id: 'recipe-new' });
     vi.mocked(recipeService.create).mockResolvedValue(created);
-    render(<RecipeForm mode="create" onSuccess={onSuccess} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={onSuccess}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     await user.click(screen.getByRole('button', { name: 'Guardar Receta' }));
@@ -619,10 +780,19 @@ describe('RecipeForm — envío exitoso en modo editar', () => {
     const onSuccess = vi.fn();
     const updated = buildRecipe({ categories: ['VEGAN', 'GLUTEN_FREE', 'OTHER'] });
     vi.mocked(recipeService.update).mockResolvedValue(updated);
-    render(<RecipeForm mode="edit" initialValues={recipe} onSuccess={onSuccess} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="edit"
+        initialValues={recipe}
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={onSuccess}
+        onCancel={vi.fn()}
+      />,
+    );
 
     // Único cambio: agrega una categoría más a las ya precargadas.
-    await user.click(screen.getByRole('button', { name: 'OTHER' }));
+    await user.click(screen.getByRole('button', { name: 'Otra' }));
 
     await user.click(screen.getByRole('button', { name: 'Guardar Cambios' }));
 
@@ -658,7 +828,15 @@ describe('RecipeForm — estado de envío en curso', () => {
     const { promise, resolve } = createDeferred<Recipe>();
     vi.mocked(recipeService.create).mockReturnValue(promise);
     const onSuccess = vi.fn();
-    render(<RecipeForm mode="create" onSuccess={onSuccess} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={onSuccess}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     const saveButton = screen.getByRole('button', { name: 'Guardar Receta' });
@@ -689,7 +867,15 @@ describe('RecipeForm — error del backend', () => {
       vi.mocked(recipeService.create).mockRejectedValue(new RecipeRequestError(kind));
       const onSuccess = vi.fn();
       const onCancel = vi.fn();
-      render(<RecipeForm mode="create" onSuccess={onSuccess} onCancel={onCancel} />);
+      render(
+        <RecipeForm
+          mode="create"
+          catalogIngredients={buildCatalogIngredients()}
+          catalogStatus="success"
+          onSuccess={onSuccess}
+          onCancel={onCancel}
+        />,
+      );
 
       await fillMinimalValidForm(user);
       await user.click(screen.getByRole('button', { name: 'Guardar Receta' }));
@@ -708,7 +894,15 @@ describe('RecipeForm — error del backend', () => {
       .mockRejectedValueOnce(new RecipeRequestError('network'))
       .mockResolvedValueOnce(buildRecipe());
     const onSuccess = vi.fn();
-    render(<RecipeForm mode="create" onSuccess={onSuccess} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={onSuccess}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     const saveButton = screen.getByRole('button', { name: 'Guardar Receta' });
@@ -737,7 +931,15 @@ describe('RecipeForm — cancelar deshabilitado durante envío y onSubmittingCha
     const user = userEvent.setup();
     const { promise, resolve } = createDeferred<Recipe>();
     vi.mocked(recipeService.create).mockReturnValue(promise);
-    render(<RecipeForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />);
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
 
     await fillMinimalValidForm(user);
     const cancelButton = screen.getByRole('button', { name: 'Cancelar' });
@@ -761,6 +963,8 @@ describe('RecipeForm — cancelar deshabilitado durante envío y onSubmittingCha
     render(
       <RecipeForm
         mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
         onSuccess={onSuccess}
         onCancel={vi.fn()}
         onSubmittingChange={onSubmittingChange}
@@ -786,6 +990,8 @@ describe('RecipeForm — cancelar deshabilitado durante envío y onSubmittingCha
     render(
       <RecipeForm
         mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
         onSuccess={vi.fn()}
         onCancel={vi.fn()}
         onSubmittingChange={onSubmittingChange}
@@ -810,7 +1016,16 @@ describe('RecipeForm — cancelar', () => {
       const onCancel = vi.fn();
       const recipe = mode === 'edit' ? buildRecipe() : undefined;
 
-      render(<RecipeForm mode={mode} initialValues={recipe} onSuccess={vi.fn()} onCancel={onCancel} />);
+      render(
+        <RecipeForm
+          mode={mode}
+          initialValues={recipe}
+          catalogIngredients={buildCatalogIngredients()}
+          catalogStatus="success"
+          onSuccess={vi.fn()}
+          onCancel={onCancel}
+        />,
+      );
 
       await user.click(screen.getByRole('button', { name: 'Cancelar' }));
 
@@ -819,4 +1034,33 @@ describe('RecipeForm — cancelar', () => {
       expect(recipeService.update).not.toHaveBeenCalled();
     },
   );
+});
+
+// NUT-20 (undécima iteración, tester) — mismo pedido directo de la PO que en
+// `IngredientForm.test.tsx`: cada etiqueta de campo numérico de nutrición debe mostrar la
+// unidad entre paréntesis junto al nombre del campo. Se espera ROJO hoy: el componente
+// todavía muestra sólo "Calorías *", "Proteínas *", etc., sin la unidad.
+//
+// Esto NO debería romper ninguno de los `getByLabelText` usados en el resto de este archivo
+// (p. ej. `/^Calorías/i`, `/^Proteínas/i`, `/^Carbohidratos/i`, `/^Grasas/i`): todas esas regex
+// anclan únicamente el INICIO del texto de la etiqueta (`^`) y no exigen que termine ahí, así
+// que agregar "(kcal)"/"(g)" después del nombre del campo sigue matcheando sin cambios.
+describe('RecipeForm — unidades visibles en las etiquetas de nutrición (pedido directo de la PO)', () => {
+  it('muestra la unidad entre paréntesis junto a cada etiqueta numérica de nutrición', () => {
+    mockUseIngredients();
+    render(
+      <RecipeForm
+        mode="create"
+        catalogIngredients={buildCatalogIngredients()}
+        catalogStatus="success"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Calorías \(kcal\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Proteínas \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Carbohidratos \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Grasas \(g\)/)).toBeInTheDocument();
+  });
 });

@@ -72,9 +72,16 @@ function createDeferred<T>() {
 // Completa sólo los campos obligatorios, con valores válidos: nombre, tipo, unidad
 // habitual y los 4 valores nutricionales obligatorios (calorías/proteínas/carbos/grasas).
 // Descripción, fibra, sodio y propiedades quedan sin tocar (todos opcionales).
+//
+// NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: la
+// usuaria selecciona el tipo por su ETIQUETA TRADUCIDA al español ("Grano", de
+// `INGREDIENT_TYPE_LABELS` en `labels.ts`), nunca por el valor RAW del enum ("GRAIN"). El
+// `value` interno de la opción elegida (lo que efectivamente viaja en el payload) sigue
+// siendo el enum crudo — ver la aserción `type: 'GRAIN'` en `lastCreatePayload()` de los
+// tests de abajo, que no cambia.
 async function fillMinimalValidForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/^Nombre/i), 'Quinoa');
-  await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'GRAIN');
+  await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'Grano');
   await user.type(screen.getByLabelText(/Unidad de Medida Habitual/i), 'g');
   await user.type(screen.getByLabelText(/^Calorías/i), '120');
   await user.type(screen.getByLabelText(/^Proteínas/i), '4');
@@ -135,7 +142,7 @@ describe('IngredientForm — validación numérica', () => {
     render(<IngredientForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
 
     await user.type(screen.getByLabelText(/^Nombre/i), 'Quinoa');
-    await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'GRAIN');
+    await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'Grano');
     await user.type(screen.getByLabelText(/Unidad de Medida Habitual/i), 'g');
     await user.type(screen.getByLabelText(/^Calorías/i), 'abc');
     await user.type(screen.getByLabelText(/^Proteínas/i), '4');
@@ -153,7 +160,7 @@ describe('IngredientForm — validación numérica', () => {
     render(<IngredientForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
 
     await user.type(screen.getByLabelText(/^Nombre/i), 'Quinoa');
-    await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'GRAIN');
+    await user.selectOptions(screen.getByRole('combobox', { name: /^Tipo/i }), 'Grano');
     await user.type(screen.getByLabelText(/Unidad de Medida Habitual/i), 'g');
     await user.type(screen.getByLabelText(/^Calorías/i), '120');
     await user.type(screen.getByLabelText(/^Proteínas/i), '-3');
@@ -432,5 +439,27 @@ describe('IngredientForm — cancelar', () => {
 
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(ingredientService.create).not.toHaveBeenCalled();
+  });
+});
+
+// NUT-20 (undécima iteración, tester) — pedido directo de la PO: cada etiqueta de campo
+// numérico de nutrición debe mostrar la unidad entre paréntesis junto al nombre del campo,
+// para que la usuaria sepa en qué unidad cargar el valor sin tener que adivinarlo. Se espera
+// ROJO hoy: el componente todavía muestra sólo "Calorías *", "Fibra", etc., sin la unidad.
+//
+// Esto NO debería romper ninguno de los `getByLabelText` usados en el resto de este archivo
+// (p. ej. `/^Calorías/i`, `/^Fibra/i`, `/^Sodio/i`): todas esas regex anclan únicamente el
+// INICIO del texto de la etiqueta (`^`) y no exigen que termine ahí, así que agregar
+// "(kcal)"/"(g)"/"(mg)" después del nombre del campo sigue matcheando sin cambios.
+describe('IngredientForm — unidades visibles en las etiquetas de nutrición (pedido directo de la PO)', () => {
+  it('muestra la unidad entre paréntesis junto a cada etiqueta numérica de nutrición', () => {
+    render(<IngredientForm onSuccess={vi.fn()} onCancel={vi.fn()} />);
+
+    expect(screen.getByText(/Calorías \(kcal\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Proteínas \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Carbohidratos \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Grasas \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Fibra \(g\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Sodio \(mg\)/)).toBeInTheDocument();
   });
 });

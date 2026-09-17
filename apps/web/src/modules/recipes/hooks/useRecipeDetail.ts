@@ -24,6 +24,11 @@ export function useRecipeDetail(id: string): UseRecipeDetailResult {
   const abortControllerRef = useRef<AbortController | null>(null);
   const currentIdRef = useRef(id);
   currentIdRef.current = id;
+  // Id al que pertenece el `recipe` actualmente guardado en estado (bug 3, NUT-20): permite
+  // distinguir un retry() del MISMO id (donde hay que preservar el último dato válido) de un
+  // cambio de id (navegación a otra receta) cuyo fetch falla, caso en el que no hay que seguir
+  // mostrando la receta anterior bajo una URL que ya apunta a otra.
+  const recipeIdRef = useRef<string | null>(null);
 
   const load = useCallback(() => {
     const targetId = currentIdRef.current;
@@ -42,6 +47,7 @@ export function useRecipeDetail(id: string): UseRecipeDetailResult {
         if (latestRequestIdRef.current !== requestId) {
           return;
         }
+        recipeIdRef.current = targetId;
         setRecipe(data);
         setStatus('success');
       })
@@ -50,6 +56,7 @@ export function useRecipeDetail(id: string): UseRecipeDetailResult {
           return;
         }
         if (error instanceof RecipeRequestError && error.kind === 'notFound') {
+          recipeIdRef.current = null;
           setRecipe(null);
           setStatus('notFound');
           return;
@@ -57,7 +64,13 @@ export function useRecipeDetail(id: string): UseRecipeDetailResult {
         // Hallazgo 3 (alto, cuarto review): a diferencia de "notFound" (el recurso realmente
         // dejó de existir), cualquier otro error es potencialmente transitorio (red, hipo del
         // backend) y no debe pisar un dato ya válido en pantalla — mismo criterio que
-        // `useRecipes`/`useIngredients`/`useMealPlan`.
+        // `useRecipes`/`useIngredients`/`useMealPlan`. Pero eso sólo aplica cuando se reintenta
+        // el MISMO id que ya tenía cargado: si `id` cambió (navegación a otra receta), el
+        // `recipe` en estado pertenece a un id distinto del que se acaba de pedir sin éxito y
+        // hay que limpiarlo para no seguir mostrando la receta anterior bajo la URL nueva.
+        if (recipeIdRef.current !== targetId) {
+          setRecipe(null);
+        }
         setStatus('error');
         setErrorMessage('No pudimos cargar esta receta. Intentá de nuevo.');
       });

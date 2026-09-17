@@ -176,7 +176,10 @@ describe('RecipeCatalogList', () => {
     expect(screen.getByText(HIGH_PROTEIN_GF_RECIPE.title)).toBeInTheDocument();
 
     expect(within(cardFor(VEGAN_RECIPE)).getByText('10 min')).toBeInTheDocument();
-    expect(within(cardFor(VEGAN_RECIPE)).getByText('VEGAN')).toBeInTheDocument();
+    // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: el
+    // badge de categoría de la tarjeta muestra la etiqueta traducida (`RECIPE_CATEGORY_LABELS`
+    // de `labels.ts`), nunca el valor RAW del enum en inglés/mayúsculas.
+    expect(within(cardFor(VEGAN_RECIPE)).getByText('Vegano')).toBeInTheDocument();
     expect(within(cardFor(VEGAN_RECIPE)).getByText('180 kcal')).toBeInTheDocument();
 
     // `nutritionalValues: null` (dato histórico): no rompe, sólo omite las calorías.
@@ -186,22 +189,25 @@ describe('RecipeCatalogList', () => {
   it('renders a filter chip per distinct category plus "Todas (N)", without duplicates', () => {
     renderCatalogList();
 
+    // NUT-20 (décima iteración, tester) — corrección de UX pedida directamente por la PO: los
+    // chips de filtro muestran la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`),
+    // nunca el valor RAW del enum. El chip "Todas (N)" no cambia (no representa una categoría).
     expect(screen.getByRole('button', { name: 'Todas (3)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'VEGAN' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'HIGH_PROTEIN' })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'VEGAN' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Vegano' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Alto en Proteína' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Vegano' })).toHaveLength(1);
   });
 
   it('filters by category, and a recipe with more than one category shows up under each of them', async () => {
     const user = userEvent.setup();
     renderCatalogList();
 
-    await user.click(screen.getByRole('button', { name: 'HIGH_PROTEIN' }));
+    await user.click(screen.getByRole('button', { name: 'Alto en Proteína' }));
 
     expect(screen.getByText(HIGH_PROTEIN_GF_RECIPE.title)).toBeInTheDocument();
     expect(screen.queryByText(VEGAN_RECIPE.title)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'GLUTEN_FREE' }));
+    await user.click(screen.getByRole('button', { name: 'Sin Gluten' }));
 
     expect(screen.getByText(HIGH_PROTEIN_GF_RECIPE.title)).toBeInTheDocument();
 
@@ -226,6 +232,30 @@ describe('RecipeCatalogList', () => {
 
     expect(screen.getByText(/no encontramos recetas/i)).toBeInTheDocument();
     expect(screen.queryByText(/todavía no tenés recetas/i)).not.toBeInTheDocument();
+  });
+
+  // NUT-20 (hallazgo de review externo, verificado en el código real) — `filteredRecipes`
+  // (RecipeCatalogList.tsx línea ~104-112) sólo compara `searchTerm` contra `recipe.title`.
+  // El criterio de aceptación del ticket (design.md:264, "Búsqueda por nombre/ingrediente →
+  // filtra correctamente") exige que también matchee por `recipe.ingredients[].name`. Ninguna
+  // receta de este test se llama "pollo" en el título, pero una tiene el ingrediente "Pechuga
+  // de pollo": buscar "pollo" debe traer esa receta igual. Se espera ROJO hoy (bug real).
+  it('filters by ingredient name too, even when the search term matches no recipe title', async () => {
+    const user = userEvent.setup();
+    const chickenIngredientRecipe: Recipe = {
+      ...VEGETARIAN_RECIPE,
+      id: 'recipe-chicken-ingredient',
+      title: 'Sopa de Verduras',
+      ingredients: [{ name: 'Pechuga de pollo', quantity: 1, unit: 'unidad' }],
+    };
+    renderCatalogList({ recipes: [VEGAN_RECIPE, chickenIngredientRecipe] });
+
+    const searchInput = screen.getByRole('textbox', { name: /buscar/i });
+    await user.type(searchInput, 'pollo');
+
+    expect(screen.getByText(chickenIngredientRecipe.title)).toBeInTheDocument();
+    expect(screen.queryByText(VEGAN_RECIPE.title)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no encontramos recetas/i)).not.toBeInTheDocument();
   });
 
   it('calls onCreateIngredient when the "+ Ingrediente" pill is clicked', async () => {
@@ -286,7 +316,7 @@ describe('RecipeCatalogList', () => {
       ).not.toThrow();
 
       expect(screen.queryByRole('button', { name: 'undefined' })).not.toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'VEGAN' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Vegano' })).toBeInTheDocument();
     });
   });
 });
