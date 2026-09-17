@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import { AppLayout } from './AppLayout';
+import { AppLayout } from '../AppLayout';
 
 describe('AppLayout', () => {
   it('keeps the desktop sidebar while composing the mobile navigation and reserving its safe-area-aware space', () => {
@@ -14,7 +14,7 @@ describe('AppLayout', () => {
     );
 
     const sidebar = screen.getByRole('img', { name: 'NutrIA' }).closest('aside');
-    expect(sidebar).toHaveClass('hidden', 'md:block');
+    expect(sidebar).toHaveClass('hidden', 'md:flex');
 
     expect(screen.getByRole('navigation', { name: 'Mobile navigation' })).toBeInTheDocument();
 

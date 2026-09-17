@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { ConfirmDialog } from './ConfirmDialog';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 // NUT-20 (quinta iteración, tester): `ConfirmDialog` todavía NO EXISTE. Es la primera vez que
 // el proyecto necesita una confirmación de borrado (ver design.md sección 4.2 "Confirmación

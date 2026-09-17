@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { Modal } from './Modal';
+import { Modal } from '../Modal';
 
 // NUT-20 (segunda iteración, tester): el proyecto no tiene todavía ningún patrón de
 // modal/overlay reutilizable (confirmado por el explorer en plan.md, sección 3 —
