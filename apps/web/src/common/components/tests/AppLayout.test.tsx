@@ -14,7 +14,7 @@ describe('AppLayout', () => {
     );
 
     const sidebar = screen.getByRole('img', { name: 'NutrIA' }).closest('aside');
-    expect(sidebar).toHaveClass('hidden', 'md:block');
+    expect(sidebar).toHaveClass('hidden', 'md:flex');
 
     expect(screen.getByRole('navigation', { name: 'Mobile navigation' })).toBeInTheDocument();
 
