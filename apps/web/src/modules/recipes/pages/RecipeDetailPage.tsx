@@ -53,9 +53,9 @@ function LoadingSkeleton() {
       aria-live="polite"
       className="mx-auto max-w-3xl animate-pulse space-y-4 px-4 py-6 md:px-8"
     >
-      <div className="h-48 w-full rounded-2xl bg-brand-cream-dark" />
-      <div className="h-6 w-2/3 rounded bg-brand-cream-dark" />
-      <div className="h-24 w-full rounded bg-brand-cream-dark" />
+      <div className="h-48 w-full rounded-2xl bg-surface-container" />
+      <div className="h-6 w-2/3 rounded bg-surface-container" />
+      <div className="h-24 w-full rounded bg-surface-container" />
     </div>
   );
 }
@@ -63,10 +63,10 @@ function LoadingSkeleton() {
 function NotFoundState() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-      <p className="font-serif text-lg font-semibold text-neutral-900">{NOT_FOUND_MESSAGE}</p>
+      <p className="font-headline text-lg font-semibold text-on-surface">{NOT_FOUND_MESSAGE}</p>
       <Link
         to="/recipes"
-        className="mt-4 inline-block min-h-[44px] rounded-lg bg-brand-green px-6 py-3 text-sm font-semibold text-white"
+        className="mt-4 inline-block min-h-[44px] rounded-xl bg-brand-green px-6 py-3 text-sm font-semibold text-on-primary"
       >
         {BACK_TO_LIST_LABEL}
       </Link>
@@ -77,12 +77,12 @@ function NotFoundState() {
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-      <p className="font-serif text-lg font-semibold text-neutral-900">Algo salió mal</p>
-      <p className="mt-2 text-sm text-neutral-500">{message}</p>
+      <p className="font-headline text-lg font-semibold text-on-surface">Algo salió mal</p>
+      <p className="mt-2 text-sm text-on-surface-variant">{message}</p>
       <button
         type="button"
         onClick={onRetry}
-        className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
+        className="mt-4 min-h-[44px] rounded-xl bg-brand-green px-6 text-sm font-semibold text-on-primary"
       >
         {RETRY_LABEL}
       </button>
@@ -90,126 +90,104 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
+
 // Skeleton/placeholder estático de imagen (design.md sección 2.3) con el badge de categoría
 // superpuesto — compartido entre la variante mobile y la columna derecha de escritorio.
 function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
-  // Hallazgo 1 (bloqueante, cuarto review): guarda defensiva para el backend real pre-NUT-61,
-  // que puede devolver `categories` como `undefined`.
   const primaryCategoryRaw = (recipe.categories ?? [])[0];
-  // NUT-20 (décima iteración) — corrección de UX pedida directamente por la PO: el badge
-  // muestra la etiqueta traducida (`RECIPE_CATEGORY_LABELS` de `labels.ts`), nunca el valor
-  // RAW del enum en inglés/mayúsculas.
   const primaryCategory = primaryCategoryRaw
     ? RECIPE_CATEGORY_LABELS[primaryCategoryRaw]
     : 'Sin categoría';
   return (
-    <div className="relative h-48 w-full overflow-hidden rounded-2xl bg-brand-cream-dark">
-      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — degradé oscuro sutil para que el título
-          en blanco superpuesto se lea bien sobre el skeleton sólido (y sobre una foto real en
-          el futuro). */}
+    <div className="relative h-48 w-full overflow-hidden rounded-2xl bg-surface-container">
       <div
         aria-hidden="true"
-        className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/50 to-transparent"
+        className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-on-surface/50 to-transparent"
       />
-      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — badge de categoría y título de la receta
-          reubicados abajo, superpuestos a la imagen (antes: badge arriba, título por separado
-          debajo de la imagen). El badge se envuelve en su propio `<div>` (en vez de quedar como
-          hermano directo/único del `<h2>`) para que `RecipeDetailPage.test.tsx` ("éxito,
-          contenido completo") siga pudiendo ubicar el badge vía
-          `recipeTitleHeading.previousElementSibling` seguido de `within(...).getByText(...)`,
-          que requiere que ese hermano sea un contenedor con el texto en un descendiente, no el
-          propio nodo de texto. */}
       <div className="absolute bottom-3 left-3 right-3 space-y-1">
         <div>
-          <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-semibold text-white">
+          <span className="rounded-full bg-tertiary-container/80 px-3 py-1 text-xs font-bold uppercase tracking-wide text-on-tertiary-container">
             {primaryCategory}
           </span>
         </div>
-        <h2 className="font-serif text-lg font-bold text-white">{recipe.title}</h2>
+        <h2 className="font-headline text-lg font-bold text-white">{recipe.title}</h2>
       </div>
     </div>
   );
 }
 
-// Stats + secciones de contenido del detalle (design.md "Detalle de Receta" en sección 4.2),
-// compartidas entre la variante mobile y la columna derecha de escritorio — mismo criterio de
-// composición que design.md sección 9.6 ("cero lógica nueva de negocio", sólo layout).
+
 function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
   const totalMinutes = recipe.prepMinutes + recipe.cookMinutes;
-  // Hallazgo 1 (bloqueante, cuarto review): guarda defensiva para el backend real pre-NUT-61,
-  // que puede devolver `properties` como `undefined`.
   const recipeProperties = recipe.properties ?? [];
 
   return (
     <>
-      {/* NUT-20 (ajuste visual mobile, mockup Stitch) — 4 columnas con etiqueta arriba y valor
-          abajo. Cada columna usa `<span className="flex flex-col ...">` (no `<div>`) a propósito:
-          `RecipeDetailPage.test.tsx` ubica este contenedor con
-          `screen.getByText('25 min').closest('div')`, así que el primer ancestro `<div>` real de
-          ese valor debe seguir siendo ESTE contenedor exterior (el que agrupa las 4 columnas),
-          no una columna individual — de lo contrario el test nuevo sólo vería la etiqueta
-          "Tiempo" y no las otras 3. */}
-      <div className="flex flex-wrap gap-4 text-sm text-neutral-600">
+      {/* Stats row */}
+      <div className="flex flex-wrap gap-4 text-sm text-on-surface-variant">
         <span className="flex flex-col items-start gap-0.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
             Tiempo
           </span>
-          <span className="font-semibold text-neutral-900">{totalMinutes} min</span>
+          <span className="font-semibold text-on-surface">{totalMinutes} min</span>
         </span>
         {Boolean(recipe.nutritionalValues) ? (
           <>
             <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
                 Calorías
               </span>
-              <span className="font-semibold text-neutral-900">
+              <span className="font-semibold text-on-surface">
                 {recipe.nutritionalValues!.calories} kcal
               </span>
             </span>
             <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
                 Proteína
               </span>
-              <span className="font-semibold text-neutral-900">
+              <span className="font-semibold text-on-surface">
                 {recipe.nutritionalValues!.protein} g
               </span>
             </span>
             <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
                 Carbos
               </span>
-              <span className="font-semibold text-neutral-900">
+              <span className="font-semibold text-on-surface">
                 {recipe.nutritionalValues!.carbs} g
               </span>
             </span>
           </>
         ) : (
-          <span>Valores nutricionales no especificados</span>
+          <span className="text-on-surface-variant">Valores nutricionales no especificados</span>
         )}
       </div>
 
       <section>
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">Descripción</h2>
-        <p className="mt-1 text-sm text-neutral-700">{recipe.description}</p>
+        <h2 className="font-headline text-lg font-semibold text-on-surface">Descripción</h2>
+        <p className="mt-1 text-sm leading-relaxed text-on-surface-variant">{recipe.description}</p>
       </section>
 
       <section>
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">
+        <h2 className="font-headline text-lg font-semibold text-on-surface">
           {`Ingredientes (${recipe.ingredients.length})`}
         </h2>
-        <ul className="mt-1 space-y-1 text-sm text-neutral-700">
+        <ul className="mt-2 space-y-2 text-sm text-on-surface">
           {recipe.ingredients.map((item, index) => (
-            <li key={`${item.name}-${index}`} className="flex items-center justify-between">
+            <li
+              key={`${item.name}-${index}`}
+              className="flex items-center justify-between rounded-xl border border-outline-variant/30 bg-white p-3 shadow-sm"
+            >
               <span>{item.name}</span>
-              <span className="font-semibold text-brand-green-dark">{`${item.quantity} ${item.unit}`}</span>
+              <span className="font-semibold text-brand-green">{`${item.quantity} ${item.unit}`}</span>
             </li>
           ))}
         </ul>
       </section>
 
       <section>
-        <h2 className="font-serif text-lg font-semibold text-neutral-900">Pasos de Preparación</h2>
-        <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm text-neutral-700">
+        <h2 className="font-headline text-lg font-semibold text-on-surface">Pasos de Preparación</h2>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-on-surface-variant">
           {recipe.instructions.map((step, index) => (
             <li key={index}>{step}</li>
           ))}
@@ -218,12 +196,15 @@ function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
 
       {recipeProperties.length > 0 && (
         <section>
-          <h2 className="font-serif text-lg font-semibold text-neutral-900">
+          <h2 className="font-headline text-lg font-semibold text-on-surface">
             Propiedades y Restricciones
           </h2>
-          <ul className="mt-1 flex flex-wrap gap-2 text-sm text-neutral-700">
+          <ul className="mt-2 flex flex-wrap gap-2 text-sm">
             {recipeProperties.map((property) => (
-              <li key={property} className="rounded-full bg-brand-cream-dark px-3 py-1">
+              <li
+                key={property}
+                className="rounded-full bg-surface-container px-3 py-1 text-xs font-bold uppercase tracking-wide text-on-surface-variant"
+              >
                 {property}
               </li>
             ))}
@@ -233,6 +214,7 @@ function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
     </>
   );
 }
+
 
 type DetailStatus = 'loading' | 'notFound' | 'error' | 'success';
 

@@ -6,32 +6,17 @@ import type { Recipe, RecipeCategory } from '../../../services/recipeService';
 import { RECIPE_CATEGORY_BADGE_CLASSES, RECIPE_CATEGORY_LABELS } from '../labels';
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
-// Fallback neutro para tarjetas sin categoría (backend real pre-NUT-61), mismo criterio ya
-// usado por el badge de texto ("Sin categoría").
-const UNCATEGORIZED_BADGE_CLASSES = 'bg-neutral-400 text-white';
+const UNCATEGORIZED_BADGE_CLASSES = 'bg-surface-container-highest text-on-surface-variant';
 
 export type RecipeCatalogListProps = {
   recipes: Recipe[];
   status: 'loading' | 'empty' | 'error' | 'success';
   errorMessage: string | null;
   onRetry: () => void;
-  // NUT-20 (ajuste visual pedido por la PO): botón "Actualizar" reubicado a la fila
-  // "N RECETAS DISPONIBLES" de este componente. Se mantiene separado de `onRetry` (que sigue
-  // siendo el disparador del botón "Reintentar" del estado de error) porque en `RecipesListPage`
-  // ambos apuntan a funciones distintas dentro de los tests unitarios, aunque en producción
-  // `useRecipes` los implemente con la misma función. Opcional (con fallback a `onRetry`) porque
-  // `RecipeCatalogList.test.tsx` (archivo de test, no editable en esta ronda) no la pasa en
-  // ninguno de sus renders.
   onRefresh?: () => void;
   selectedId?: string | null;
   onSelectRecipe: (id: string) => void;
   onCreateRecipe: () => void;
-  // NUT-20: ya NO se usa acá (el chip "+ Ingrediente" se movió al header de
-  // `RecipesListPage`/columna izquierda de `DesktopRecipeDetail`). Se mantiene opcional y sin
-  // destructurar únicamente porque `RecipeCatalogList.test.tsx` (archivo de test, no editable en
-  // esta ronda) todavía la sigue pasando en varios de sus renders; sin este campo el build
-  // fallaría por "excess property" en ese test. Candidato a limpieza cuando el tester actualice
-  // ese archivo.
   onCreateIngredient?: () => void;
 };
 
@@ -41,17 +26,17 @@ function LoadingSkeleton() {
       data-testid="recipes-loading-skeleton"
       aria-busy="true"
       aria-live="polite"
-      className="mx-auto max-w-3xl animate-pulse space-y-4 px-4 py-6 md:px-8"
+      className="animate-pulse space-y-4"
     >
-      <div className="h-10 w-full rounded-lg bg-brand-cream-dark" />
+      <div className="h-10 w-full rounded-2xl bg-surface-container" />
       <div className="flex gap-2">
         {Array.from({ length: 3 }).map((_, index) => (
-          <div key={index} className="h-8 w-20 shrink-0 rounded-full bg-brand-cream-dark" />
+          <div key={index} className="h-8 w-20 shrink-0 rounded-full bg-surface-container" />
         ))}
       </div>
       <div className="space-y-3">
         {Array.from({ length: 3 }).map((_, index) => (
-          <div key={index} className="h-28 rounded-2xl bg-brand-cream-dark" />
+          <div key={index} className="h-28 rounded-2xl bg-surface-container" />
         ))}
       </div>
     </div>
@@ -60,17 +45,18 @@ function LoadingSkeleton() {
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-      <p className="font-serif text-lg font-semibold text-neutral-900">
-        Todavía no tenés recetas
-      </p>
-      <p className="mt-2 text-sm text-neutral-500">
+    <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-surface-container">
+        <span className="material-symbols-outlined text-2xl text-on-surface-variant">restaurant_menu</span>
+      </div>
+      <p className="font-headline text-base font-bold text-on-surface">Todavía no tenés recetas</p>
+      <p className="mt-1 text-xs text-on-surface-variant">
         Creá tu primera receta para empezar a armar tu recetario.
       </p>
       <button
         type="button"
         onClick={onCreate}
-        className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
+        className="mt-4 rounded-full bg-brand-green/10 px-4 py-1.5 text-xs font-bold text-brand-green transition-all hover:bg-brand-green/20"
       >
         {CREATE_RECIPE_LABEL}
       </button>
@@ -80,13 +66,13 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-10 text-center md:px-8">
-      <p className="font-serif text-lg font-semibold text-neutral-900">Algo salió mal</p>
-      <p className="mt-2 text-sm text-neutral-500">{message}</p>
+    <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
+      <p className="font-headline text-base font-bold text-on-surface">Algo salió mal</p>
+      <p className="mt-1 text-xs text-on-surface-variant">{message}</p>
       <button
         type="button"
         onClick={onRetry}
-        className="mt-4 min-h-[44px] rounded-lg bg-brand-green px-6 text-sm font-semibold text-white"
+        className="mt-4 rounded-full bg-brand-green/10 px-4 py-1.5 text-xs font-bold text-brand-green"
       >
         Reintentar
       </button>
@@ -94,12 +80,6 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-// Extraído de `RecipesListPage.tsx` (design.md sección 9.2/9.3): buscador/chips/tarjetas de
-// listado, reutilizado tanto por `RecipesListPage` (mobile) como por la columna izquierda de
-// `RecipeDetailPage` en escritorio. Agnóstico de navegación/router a propósito — quien lo usa
-// decide qué hacer con `onSelectRecipe`/`onCreateRecipe`. El chip "+ Ingrediente" que vivía acá
-// se movió al header de `RecipesListPage` (ajuste visual NUT-20); este componente ya no conoce
-// esa acción. Búsqueda y filtro de categoría son estado interno, no props controladas.
 export function RecipeCatalogList({
   recipes,
   status,
@@ -113,7 +93,6 @@ export function RecipeCatalogList({
   const [selectedCategory, setSelectedCategory] = useState<RecipeCategory | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Guarda defensiva (backend real pre-NUT-61): `categories` puede venir `undefined`.
   const categories = useMemo(
     () => Array.from(new Set(recipes.flatMap((recipe) => recipe.categories ?? []))),
     [recipes],
@@ -133,14 +112,8 @@ export function RecipeCatalogList({
     });
   }, [recipes, selectedCategory, searchTerm]);
 
-  if (status === 'loading') {
-    return <LoadingSkeleton />;
-  }
-
-  if (status === 'empty') {
-    return <EmptyState onCreate={onCreateRecipe} />;
-  }
-
+  if (status === 'loading') return <LoadingSkeleton />;
+  if (status === 'empty') return <EmptyState onCreate={onCreateRecipe} />;
   if (status === 'error' && recipes.length === 0) {
     return <ErrorState message={errorMessage ?? 'No pudimos cargar tus recetas.'} onRetry={onRetry} />;
   }
@@ -148,37 +121,40 @@ export function RecipeCatalogList({
   const hasNoFilterResults = recipes.length > 0 && filteredRecipes.length === 0;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
+      {/* Search input */}
       <div className="relative">
-        <label htmlFor="recipe-search" className="sr-only">
-          Buscar recetas
-        </label>
-        <svg
-          aria-hidden="true"
-          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth="2"
-          viewBox="0 0 24 24"
-        >
-          <circle cx="11" cy="11" r="7" />
-          <path d="m20 20-3-3" />
-        </svg>
+        <label htmlFor="recipe-search" className="sr-only">Buscar recetas</label>
+        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-on-surface-variant">
+          <span className="material-symbols-outlined text-lg">search</span>
+        </div>
         <input
           id="recipe-search"
           type="text"
           value={searchTerm}
           onChange={(event) => setSearchTerm(event.target.value)}
           placeholder="Buscar por nombre o ingrediente..."
-          className="min-h-10 w-full rounded-full border border-brand-cream-dark bg-white pl-9 pr-4 text-sm text-neutral-900"
+          className="w-full rounded-2xl border border-outline-variant/50 bg-surface-container-low py-2.5 pl-10 pr-9 text-sm text-on-surface placeholder:text-on-surface-variant/60 outline-none transition-all focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
         />
+        {searchTerm && (
+          <button
+            type="button"
+            onClick={() => setSearchTerm('')}
+            className="absolute inset-y-0 right-2 flex items-center px-1 text-on-surface-variant hover:text-on-surface"
+            aria-label="Limpiar búsqueda"
+          >
+            <span className="material-symbols-outlined text-lg">close</span>
+          </button>
+        )}
       </div>
 
-      <div data-testid="recipe-category-chips" className="flex flex-wrap gap-2">
+      {/* Category pills — horizontal scroll */}
+      <div
+        data-testid="recipe-category-chips"
+        className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <Pill
           label={`Todas (${recipes.length})`}
           selected={selectedCategory === null}
@@ -194,24 +170,38 @@ export function RecipeCatalogList({
         ))}
       </div>
 
+      {/* Count row */}
       <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+        <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
           {`${recipes.length} recetas disponibles`}
         </span>
         <button
           type="button"
           onClick={onRefresh ?? onRetry}
-          className="text-xs font-semibold text-brand-green-dark"
+          className="flex items-center gap-1 text-xs font-semibold text-brand-green hover:underline"
         >
-          <span aria-hidden="true">↻ </span>
+          <span aria-hidden="true" className="material-symbols-outlined text-sm">refresh</span>
           Actualizar
         </button>
       </div>
 
       {hasNoFilterResults ? (
-        <p className="py-10 text-center text-sm text-neutral-500">
-          No encontramos recetas que coincidan con tu búsqueda.
-        </p>
+        <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
+          <span className="material-symbols-outlined text-3xl text-on-surface-variant">search_off</span>
+          <p className="mt-2 font-headline text-sm font-bold text-on-surface">
+            No se encontraron recetas
+          </p>
+          <p className="mt-1 text-xs text-on-surface-variant">
+            No encontramos recetas que coincidan con tu búsqueda.
+          </p>
+          <button
+            type="button"
+            onClick={() => { setSearchTerm(''); setSelectedCategory(null); }}
+            className="mt-3 rounded-full bg-brand-green/10 px-3 py-1.5 text-xs font-bold text-brand-green"
+          >
+            Ver todas las recetas
+          </button>
+        </div>
       ) : (
         <div className="space-y-3">
           {filteredRecipes.map((recipe) => {
@@ -238,42 +228,50 @@ export function RecipeCatalogList({
                     onSelectRecipe(recipe.id);
                   }
                 }}
-                className="flex cursor-pointer gap-3 rounded-2xl bg-white p-4 shadow-lg"
+                className={`flex cursor-pointer items-center gap-3.5 overflow-hidden rounded-2xl border border-outline-variant/30 p-3 shadow-sm transition-all active:scale-[0.99] hover:shadow-md ${
+                  isSelected ? 'bg-primary-fixed/20' : 'bg-white'
+                }`}
               >
-                {/* Placeholder de imagen (skeleton estático, NO una foto real: el backend no
-                    expone ninguna URL de imagen), mismo criterio que `RecipeImagePlaceholder`
-                    de `RecipeDetailPage.tsx`, en tamaño chico para la tarjeta del listado. */}
+                {/* Thumbnail with category badge overlay */}
                 <div
                   data-testid="recipe-card-thumbnail"
-                  className="h-16 w-16 shrink-0 rounded-xl bg-brand-cream-dark"
-                />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${categoryBadgeClasses}`}
-                    >
-                      {primaryCategory}
-                    </span>
-                    <span className="text-xs text-neutral-500">{totalMinutes} min</span>
-                  </div>
-                  <h3 className="font-serif text-lg font-semibold text-neutral-900">
+                  className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-surface-container"
+                >
+                  <span
+                    className={`absolute left-1 top-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${categoryBadgeClasses}`}
+                  >
+                    {primaryCategory}
+                  </span>
+                </div>
+
+                {/* Text content */}
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-headline text-sm font-bold leading-snug text-on-surface line-clamp-1">
                     {recipe.title}
                   </h3>
-                  {/* La tarjeta actualmente seleccionada (p. ej. columna izquierda de escritorio,
-                      `RecipeDetailPage`) omite la descripción para no duplicarla textualmente
-                      contra la sección "Descripción" que el panel derecho ya muestra al mismo
-                      tiempo para esa misma receta. */}
-                  {!isSelected && <p className="text-sm text-neutral-500">{recipe.description}</p>}
-                  {Boolean(recipe.nutritionalValues) && (
-                    <div className="flex flex-wrap gap-2">
-                      <span className="text-xs text-neutral-500">
-                        {recipe.nutritionalValues!.calories} kcal
-                      </span>
-                      <span className="rounded-full bg-brand-green/10 px-2 py-0.5 text-xs font-semibold text-brand-green-dark">
-                        {`${recipe.nutritionalValues!.protein}g prot`}
-                      </span>
-                    </div>
+                  {!isSelected && (
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-on-surface-variant line-clamp-2">
+                      {recipe.description}
+                    </p>
                   )}
+                  {/* Stats row */}
+                  <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
+                    <span className="flex items-center gap-0.5 text-on-surface-variant">
+                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>schedule</span>
+                      {totalMinutes} min
+                    </span>
+                    {recipe.nutritionalValues && (
+                      <>
+                        <span className="flex items-center gap-0.5 text-brand-green">
+                          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>local_fire_department</span>
+                          {recipe.nutritionalValues.calories} kcal
+                        </span>
+                        <span className="ml-auto rounded-full bg-brand-green/10 px-2 py-0.5 text-[10px] font-bold text-brand-green">
+                          {recipe.nutritionalValues.protein}g prot
+                        </span>
+                      </>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -281,13 +279,14 @@ export function RecipeCatalogList({
         </div>
       )}
 
+      {/* FAB — above the bottom nav bar */}
       <button
         type="button"
         onClick={onCreateRecipe}
         aria-label={CREATE_RECIPE_LABEL}
-        className="fixed bottom-6 right-6 flex h-14 w-14 items-center justify-center rounded-full bg-brand-green text-2xl font-semibold text-white shadow-lg"
+        className="fixed bottom-24 right-5 flex h-14 w-14 items-center justify-center rounded-full bg-brand-green text-2xl font-semibold text-on-primary shadow-lg transition-all hover:opacity-90 active:scale-95"
       >
-        <span aria-hidden="true">+</span>
+        <span className="material-symbols-outlined text-2xl">add</span>
       </button>
     </div>
   );

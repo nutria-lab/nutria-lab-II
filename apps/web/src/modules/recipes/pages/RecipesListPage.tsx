@@ -29,48 +29,56 @@ function RecipesHeader({
   onCreateRecipe: () => void;
 }) {
   return (
-    <div data-testid="recipes-header" className="flex items-center justify-between gap-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green/10 text-brand-green">
-          <svg
-            aria-hidden="true"
-            className="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth="1.8"
-            viewBox="0 0 24 24"
-          >
-            <path d="M12 22c-4.4 0-8-3.6-8-8 0-6 8-12 8-12s8 6 8 12c0 4.4-3.6 8-8 8Z" />
-            <path d="M12 22V10" />
-          </svg>
-        </span>
-        <div className="min-w-0 leading-tight">
-          <p className="truncate font-serif text-lg font-bold text-neutral-900">NutrIA</p>
-          <p className="truncate text-xs text-neutral-500">Recetario &amp; Catálogo</p>
+    <div
+      data-testid="recipes-header"
+      className="sticky top-0 z-40 -mx-4 border-b border-outline-variant/30 bg-brand-cream/90 px-4 py-3 backdrop-blur-md"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green/10 text-brand-green">
+            <svg
+              aria-hidden="true"
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1.8"
+              viewBox="0 0 24 24"
+            >
+              <path d="M12 22c-4.4 0-8-3.6-8-8 0-6 8-12 8-12s8 6 8 12c0 4.4-3.6 8-8 8Z" />
+              <path d="M12 22V10" />
+            </svg>
+          </span>
+          <div className="min-w-0 leading-tight">
+            <h1 className="truncate font-headline text-lg font-bold text-on-surface">NutrIA</h1>
+            <p className="truncate text-[11px] font-medium text-on-surface-variant">Recetario &amp; Catálogo</p>
+          </div>
         </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        <button
-          type="button"
-          onClick={onCreateIngredient}
-          className="min-h-9 rounded-full bg-brand-cream-dark px-3 text-xs font-semibold text-neutral-700"
-        >
-          + Ingrediente
-        </button>
-        <button
-          type="button"
-          onClick={onCreateRecipe}
-          aria-label="Nueva Receta"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green text-lg font-semibold text-white"
-        >
-          <span aria-hidden="true">+</span>
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onCreateIngredient}
+            aria-label="+ Ingrediente"
+            className="flex min-h-9 items-center gap-1 rounded-full border border-outline-variant/40 bg-surface-container px-3 py-1.5 text-xs font-bold text-on-surface transition-all hover:bg-surface-container-high active:scale-95"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '14px' }}>add_circle</span>
+            + Ingrediente
+          </button>
+          <button
+            type="button"
+            onClick={onCreateRecipe}
+            aria-label="Nueva Receta"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90 active:scale-95"
+          >
+            <span className="material-symbols-outlined text-xl">add</span>
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
 
 export function RecipesListPage() {
   const navigate = useNavigate();
