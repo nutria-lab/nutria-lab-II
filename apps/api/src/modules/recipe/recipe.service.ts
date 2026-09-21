@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { RecipeRepository } from './recipe.repository';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
+import { ListRecipesQueryDto } from './dto/list-recipes-query.dto';
+import { normalizeProperties } from '@/utils/normalize-properties.util';
 
 @Injectable()
 export class RecipeService {
@@ -11,8 +13,18 @@ export class RecipeService {
     return this.repository.create(data);
   }
 
-  async findAll() {
-    return this.repository.findAll();
+  async findAll(query: ListRecipesQueryDto) {
+    return this.repository.findAll({
+      ...(query.q ? { q: query.q.trim() } : {}),
+      ...(query.properties
+        ? { properties: normalizeProperties(query.properties.split(',')) }
+        : {}),
+      ...(query.maxPrepMinutes !== undefined
+        ? { maxPrepMinutes: query.maxPrepMinutes }
+        : {}),
+      page: query.page ?? 1,
+      pageSize: query.pageSize ?? 12,
+    });
   }
 
   async findById(id: string) {
