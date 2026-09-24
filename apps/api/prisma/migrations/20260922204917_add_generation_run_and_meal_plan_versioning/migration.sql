@@ -29,7 +29,18 @@ CREATE TABLE "generation_runs" (
 );
 
 CREATE INDEX "generation_runs_userId_createdAt_idx" ON "generation_runs"("userId", "createdAt");
-CREATE UNIQUE INDEX "generation_runs_userId_kind_idempotencyKeyHash_key" ON "generation_runs"("userId", "kind", "idempotencyKeyHash");
+
+-- NUT-75 Bug 2 (bloqueante, revisión externa de PR): un único índice único TOTAL sobre
+-- ("userId","kind","idempotencyKeyHash") bloqueaba para siempre cualquier reintento con el
+-- mismo contenido de solicitud una vez que el run terminaba en FAILED/REJECTED/EXPIRED
+-- (`.ai/ai-generation-safety.md` exige "Recoverable failure state with a clear retry path").
+-- Se reemplaza por: (1) un índice simple no único, para que las búsquedas de
+-- `findFirst`/`createOrRecoverGenerationRun` sigan siendo eficientes, y (2) un índice único
+-- PARCIAL que sólo deduplica runs en estados no terminal-fallidos — un run
+-- FAILED/REJECTED/EXPIRED deja de "ocupar" el hash, así que un reintento idéntico simplemente
+-- crea un GenerationRun nuevo.
+CREATE INDEX "generation_runs_userId_kind_idempotencyKeyHash_idx" ON "generation_runs"("userId", "kind", "idempotencyKeyHash");
+CREATE UNIQUE INDEX "generation_runs_userId_kind_idempotencyKeyHash_key" ON "generation_runs"("userId", "kind", "idempotencyKeyHash") WHERE "status" NOT IN ('FAILED', 'REJECTED', 'EXPIRED');
 
 ALTER TABLE "generation_runs" ADD CONSTRAINT "generation_runs_userId_fkey"
     FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

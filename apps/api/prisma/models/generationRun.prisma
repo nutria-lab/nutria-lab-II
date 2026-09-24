@@ -42,6 +42,6 @@ model GenerationRun {
   mealPlans MealPlan[]
 
   @@index([userId, createdAt])
-  @@unique([userId, kind, idempotencyKeyHash])
+  @@index([userId, kind, idempotencyKeyHash])
   @@map("generation_runs")
 }

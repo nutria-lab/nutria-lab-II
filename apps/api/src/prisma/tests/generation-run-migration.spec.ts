@@ -16,6 +16,7 @@ describe('GenerationRun Schema & Migration Tests (NUT-75 AC1/AC6 Verification)',
   );
   const recipeModelFile = path.resolve(prismaDir, 'models/recipe.prisma');
   const mealPlanModelFile = path.resolve(prismaDir, 'models/mealPlan.prisma');
+  const generationRunModelFile = path.resolve(prismaDir, 'models/generationRun.prisma');
 
   describe('Migration SQL inspection', () => {
     let migrationSql: string;
@@ -94,6 +95,65 @@ describe('GenerationRun Schema & Migration Tests (NUT-75 AC1/AC6 Verification)',
       expect(content).toContain('model MealPlan');
       expect(content).toMatch(
         /generationRun\s+GenerationRun\?\s+@relation\(fields:\s*\[generationRunId\],\s*references:\s*\[id\],\s*onDelete:\s*SetNull\)/,
+      );
+    });
+  });
+
+  /**
+   * NUT-75 — Bug 2 (BLOQUEANTE, revisión externa de PR): `.ai/ai-generation-safety.md` exige
+   * "Recoverable failure state with a clear retry path". Hoy el
+   * `@@unique([userId, kind, idempotencyKeyHash])` de `GenerationRun` (`generationRun.prisma`)
+   * hace que, una vez que un run llega a `FAILED`/`REJECTED`, CUALQUIER reintento futuro con el
+   * mismo contenido de solicitud choque para siempre contra ese run terminal (vía el catch de
+   * `P2002` en `createOrRecoverGenerationRun`), y `assertRecoveredRunIsUsable`
+   * (`plans.service.ts`) lo rechaza con `ConflictException` sin posibilidad real de reintentar.
+   *
+   * Corrección de diseño ya decidida (no se reinventa acá, sólo se prueba en rojo contra el
+   * contenido actual/viejo de los archivos, que NO se tocan en esta etapa): reemplazar el
+   * `@@unique` por un `@@index` simple en `generationRun.prisma`, y mover la unicidad real a un
+   * índice único PARCIAL en `migration.sql`:
+   * `WHERE status NOT IN ('FAILED', 'REJECTED', 'EXPIRED')` sobre
+   * `("userId", "kind", "idempotencyKeyHash")` — mismo patrón que ya usa este ticket para
+   * `meal_plans_user_week_current_key`. Un run `SUCCEEDED`/`CONFIRMED`/`PENDING`/
+   * `READY_FOR_REVIEW` sigue deduplicando; un run `FAILED`/`REJECTED`/`EXPIRED` deja de
+   * "ocupar" el hash y un reintento idéntico simplemente inserta un `GenerationRun` nuevo.
+   */
+  describe('Bug 2 (BLOQUEANTE) - unicidad de idempotencia debe ser PARCIAL (excluir FAILED/REJECTED/EXPIRED), no total', () => {
+    let migrationSql: string;
+
+    beforeAll(() => {
+      expect(fs.existsSync(migrationFile)).toBe(true);
+      migrationSql = fs.readFileSync(migrationFile, 'utf-8');
+    });
+
+    it('migration.sql contiene un índice único PARCIAL sobre generation_runs("userId","kind","idempotencyKeyHash") que excluye FAILED, REJECTED y EXPIRED', () => {
+      expect(migrationSql).toMatch(
+        /CREATE UNIQUE INDEX "generation_runs_userId_kind_idempotencyKeyHash_key"\s+ON\s+"generation_runs"\("userId",\s*"kind",\s*"idempotencyKeyHash"\)\s+WHERE\s+"status"\s+NOT IN\s*\(\s*'FAILED'\s*,\s*'REJECTED'\s*,\s*'EXPIRED'\s*\)/i,
+      );
+    });
+
+    it('migration.sql ya NO contiene un índice único simple (sin WHERE) sobre esas mismas 3 columnas', () => {
+      const uniqueIndexStatementMatch = migrationSql.match(
+        /CREATE UNIQUE INDEX "generation_runs_userId_kind_idempotencyKeyHash_key"[^;]*;/,
+      );
+
+      expect(uniqueIndexStatementMatch).not.toBeNull();
+      // El statement completo del índice único sobre estas columnas debe traer una cláusula
+      // WHERE (parcial) — si no la trae, es el índice único TOTAL viejo, exactamente lo que
+      // bloquea reintentos para siempre (Bug 2).
+      expect(uniqueIndexStatementMatch![0]).toMatch(/WHERE/i);
+    });
+
+    it('generationRun.prisma NO declara @@unique([userId, kind, idempotencyKeyHash]) (debe ser un @@index no único en su lugar)', () => {
+      expect(fs.existsSync(generationRunModelFile)).toBe(true);
+      const content = fs.readFileSync(generationRunModelFile, 'utf-8');
+
+      expect(content).toContain('model GenerationRun');
+      expect(content).not.toMatch(
+        /@@unique\(\[\s*userId\s*,\s*kind\s*,\s*idempotencyKeyHash\s*\]\)/,
+      );
+      expect(content).toMatch(
+        /@@index\(\[\s*userId\s*,\s*kind\s*,\s*idempotencyKeyHash\s*\]\)/,
       );
     });
   });

@@ -67,16 +67,27 @@ export class PlansRepository {
 
   /**
    * Crea las filas de `MealPlanDay`/`PlannedMeal`/`Recipe` para un plan ya creado, dentro de
-   * la transacción recibida. Cuando `generationRunId` viene definido, cada `Recipe` creada
-   * queda estampada con `origin: 'AI'` y `generationRunId` (design.md Flujo C paso 1a); si no
-   * viene definido (camino manual, `POST /meal-plans`), las recetas quedan con el
-   * `@default(MANUAL)` de Prisma sin tocar el campo.
+   * la transacción recibida.
+   *
+   * NUT-75 Bug 1 (bloqueante, revisión externa de PR): `origin` y `generationRunId` son dos
+   * decisiones independientes, nunca derivadas la una de la otra:
+   *  - `generationRunId` (cuando viene definido) sólo controla si se estampa la FK de
+   *    trazabilidad hacia el `GenerationRun` en curso (design.md Flujo C paso 1a).
+   *  - `recipeOrigin` (parámetro explícito, nunca inferido de si `generationRunId` está
+   *    presente) controla el campo `origin`. Si no se pasa, se omite el campo por completo y
+   *    el `@default(MANUAL)` de Prisma aplica sin cambios de comportamiento.
+   *
+   * Antes de este fix, `origin: 'AI'` se estampaba cada vez que `generationRunId` era truthy,
+   * lo cual era incorrecto para `updatePlanTransaction` (`PUT /meal-plans`, edición manual),
+   * que también recibe un `generationRunId` (el de `MEAL_PLAN_REGENERATION`) sin que eso
+   * signifique que las recetas fueron generadas por IA.
    */
   private async createDaysMealsAndRecipes(
     tx: any,
     planId: string,
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
+    recipeOrigin?: 'MANUAL' | 'AI',
   ) {
     for (const day of generatedDays) {
       const mealPlanDay = await tx.mealPlanDay.create({
@@ -97,8 +108,11 @@ export class PlansRepository {
           };
 
           if (generationRunId) {
-            recipeData.origin = 'AI';
             recipeData.generationRunId = generationRunId;
+          }
+
+          if (recipeOrigin) {
+            recipeData.origin = recipeOrigin;
           }
 
           const recipe = await tx.recipe.create({ data: recipeData });
@@ -166,11 +180,22 @@ export class PlansRepository {
     return result.count;
   }
 
+  /**
+   * NUT-75 Bug 1: `createPlanTransaction` sólo se llama desde `validateAndPersistPlan`. Cuando
+   * ese método es invocado desde `generateAndPersistPlan` (camino real de Gemini) siempre trae
+   * un `generationRunId` definido, y en ese caso corresponde `recipeOrigin: 'AI'`. Cuando se
+   * invoca directo desde `POST /meal-plans` (sin `generationRunId`), no corresponde ningún
+   * `recipeOrigin` explícito, para que el `@default(MANUAL)` de Prisma siga aplicando sin
+   * cambios de comportamiento ahí. El default de este parámetro replica exactamente esa regla
+   * sin necesitar que el caller la recalcule; un caller puede igualmente pasar `recipeOrigin`
+   * explícito si alguna vez hiciera falta desacoplarlo más.
+   */
   async createPlanTransaction(
     userId: string,
     weekStart: Date,
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
+    recipeOrigin: 'MANUAL' | 'AI' | undefined = generationRunId ? 'AI' : undefined,
   ) {
     return this.prisma.$transaction(async (tx: any) => {
       const planData: any = {
@@ -185,7 +210,7 @@ export class PlansRepository {
 
       const plan = await tx.mealPlan.create({ data: planData });
 
-      await this.createDaysMealsAndRecipes(tx, plan.id, generatedDays, generationRunId);
+      await this.createDaysMealsAndRecipes(tx, plan.id, generatedDays, generationRunId, recipeOrigin);
 
       if (generationRunId) {
         // Gap 6 (medio, design.md Flujo C paso 1b: "con outputSnapshot/validationSnapshot ya
@@ -204,16 +229,16 @@ export class PlansRepository {
   }
 
   /**
-   * Resumen mínimo (no exhaustivo) de lo persistido, usado como `outputSnapshot` de la
-   * transición final a `SUCCEEDED` (Gap 6). Deliberadamente no copia el contenido completo de
-   * `days` (eso ya vive en `MealPlanDay`/`PlannedMeal`/`Recipe`), sólo conteos que sirvan de
-   * evidencia rápida sin duplicar datos de dominio en la tabla de trazabilidad.
+   * NUT-75 Bug 4 (no bloqueante, revisión externa de PR): usado como `outputSnapshot` de la
+   * transición final a `SUCCEEDED`. Antes de este fix sólo se guardaba `{dayCount, mealCount}`,
+   * lo cual no permitía auditar QUÉ se generó (títulos, valores nutricionales, ingredientes,
+   * instrucciones), sólo cuántos días/comidas hubo. Se preserva el contenido real generado
+   * devolviendo los propios `days` ya normalizados que se persisten — no es PII (a diferencia
+   * de `profileSnapshot`/`requestSnapshot`, que sí tienen reglas de lista blanca estrictas por
+   * design.md sección 6; esas reglas no aplican acá).
    */
-  private buildOutputSnapshot(days: MealPlanDayDto[]): { dayCount: number; mealCount: number } {
-    return {
-      dayCount: days.length,
-      mealCount: days.reduce((sum, day) => sum + (day.meals?.length ?? 0), 0),
-    };
+  private buildOutputSnapshot(days: MealPlanDayDto[]): { days: MealPlanDayDto[] } {
+    return { days };
   }
 
   /**
@@ -273,7 +298,13 @@ export class PlansRepository {
       }
 
       // 4. Crear días/comidas/recetas nuevas colgando de la nueva versión.
-      await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId);
+      // NUT-75 Bug 1: `updatePlanTransaction` es el camino de edición MANUAL (`PUT
+      // /meal-plans`, ver `.ai/meal-plans.md`) — nunca llama a Gemini, aunque siempre recibe un
+      // `generationRunId` (el de `MEAL_PLAN_REGENERATION`). Por eso siempre estampa
+      // `recipeOrigin: 'MANUAL'`, nunca `'AI'`, sin importar que `generationRunId` esté
+      // definido: el origen de la receta y la FK de trazabilidad son decisiones
+      // independientes (ver `createDaysMealsAndRecipes`).
+      await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
 
       // 5. Transición del GenerationRun a SUCCEEDED (Gap 6: con outputSnapshot/validationSnapshot).
       await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
@@ -287,8 +318,11 @@ export class PlansRepository {
 
   /**
    * Crea un `GenerationRun` nuevo; si ya existe uno con el mismo `(userId, kind,
-   * idempotencyKeyHash)` (violación del `@@unique`, código Prisma `P2002`), recupera y
-   * devuelve el existente en vez de lanzar (Flujo A paso 5, AC3).
+   * idempotencyKeyHash)` en un estado que sigue participando de la unicidad (violación del
+   * índice único PARCIAL de `migration.sql`, código Prisma `P2002` — ver NUT-75 Bug 2:
+   * `schema.prisma` sólo declara un `@@index` no único; la unicidad real vive en SQL y excluye
+   * `FAILED`/`REJECTED`/`EXPIRED`), recupera y devuelve el existente en vez de lanzar (Flujo A
+   * paso 5, AC3).
    */
   async createOrRecoverGenerationRun(
     userId: string,

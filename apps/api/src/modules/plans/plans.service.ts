@@ -30,15 +30,20 @@ export class PlansService {
    * nada (caso de un run en FAILED/REJECTED). Esta guarda distingue ambos casos: sólo un run
    * terminal-exitoso (`SUCCEEDED`/`CONFIRMED`) autoriza seguir el camino normal de lectura.
    *
-   * TODO(NUT-75): esto NO desbloquea reintentos — un `idempotencyKeyHash` que ya produjo un run
-   * FAILED/REJECTED queda "atascado" (cualquier reintento con el mismo contenido exacto de
-   * solicitud recupera el mismo run fallido y lanza este ConflictException en vez de permitir
-   * un nuevo intento). Desbloquear reintentos requiere una decisión de diseño explícita sobre
-   * la estrategia de hash/nonce (por ejemplo, incluir un componente temporal o un nonce de
-   * reintento en el hash) que design.md deja fuera de alcance de esta iteración — ver
-   * `.plans/nut-75-persistir-contexto-y-versiones-de-cada-generacion-ai/design.md`, sección 3
-   * Flujo A y sección 8. Este método sólo garantiza que el error sea honesto, no que el
-   * problema de fondo esté resuelto.
+   * NUT-75 Bug 2 (bloqueante, revisión externa de PR, ya corregido): con el índice único
+   * PARCIAL de `generation_runs` (`WHERE status NOT IN ('FAILED','REJECTED','EXPIRED')`,
+   * `migration.sql`), un run `FAILED`/`REJECTED`/`EXPIRED` ya NO ocupa el
+   * `idempotencyKeyHash` para siempre: `createOrRecoverGenerationRun` ni siquiera devuelve
+   * `wasCreated:false` con un run en esos estados (el `create` simplemente no choca contra el
+   * índice único, porque esos estados quedan fuera de él), por lo que un reintento con el
+   * mismo hash exacto crea un `GenerationRun` nuevo y sigue el flujo normal (vuelve a llamar
+   * al proveedor). Este método sigue siendo correcto como defensa en profundidad para el
+   * único caso que sigue participando de la unicidad sin ser un éxito terminal:
+   * `PENDING`/`READY_FOR_REVIEW`, es decir, un intento realmente todavía activo/no resuelto con
+   * el mismo fingerprint (`EXPIRED` ya queda excluido del índice único parcial igual que
+   * `FAILED`/`REJECTED`, así que tampoco puede provocar este `ConflictException` una vez que
+   * un run llega a ese estado). Ya no corresponde documentar este método como un bloqueo
+   * general de reintentos.
    */
   private assertRecoveredRunIsUsable(run: { status: string; errorCode?: string | null }): void {
     if (run.status === 'SUCCEEDED' || run.status === 'CONFIRMED') {
@@ -143,7 +148,26 @@ export class PlansService {
     if (!user.nutritionProfile) throw new BadRequestException('User needs a nutrition profile');
 
     const exists = await this.repository.checkPlanExists(userId, weekStart);
-    if (exists) throw new BadRequestException('A plan for this week already exists');
+    if (exists) {
+      // NUT-75 Bug 3 (no bloqueante, revisión externa de PR): si este método fue invocado con
+      // un `generationRunId` ya creado (desde `generateAndPersistPlan`, tras haber llamado
+      // exitosamente al proveedor de IA) y este guard dispara — por ejemplo, una creación
+      // manual concurrente vía `POST /meal-plans` para la misma semana entre el momento en que
+      // se creó el run y el momento en que se intenta persistir — el `GenerationRun` no debe
+      // quedar colgado en `PENDING` para siempre. Mismo patrón que el catch de
+      // `validateRestrictions` más abajo: try/catch silencioso alrededor de la transición, para
+      // no oscurecer el error original (`BadRequestException`) si la propia limpieza falla.
+      if (generationRunId) {
+        try {
+          await this.repository.transitionGenerationRun(generationRunId, userId, ['PENDING'], 'FAILED', {
+            errorCode: 'PLAN_ALREADY_EXISTS'
+          });
+        } catch {
+          // Ignorado deliberadamente — ver comentario equivalente más abajo en este método.
+        }
+      }
+      throw new BadRequestException('A plan for this week already exists');
+    }
 
     try {
       this.validateRestrictions(dto.days, user.nutritionProfile);

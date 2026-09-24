@@ -390,4 +390,134 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       expect(callArgs.data.validationSnapshot).not.toBeNull();
     });
   });
+
+  /**
+   * NUT-75 — Bug 1 (BLOQUEANTE, revisión externa de PR): `PUT /meal-plans`
+   * (`PlansService.updatePlan` -> `PlansRepository.updatePlanTransaction`) es el endpoint de
+   * edición MANUAL documentado en `.ai/meal-plans.md` ("Allow a user to edit a meal directly by
+   * overwriting the specific meal's fields") — nunca llama a Gemini, persiste `dto.days` tal
+   * cual lo manda el cliente. Sin embargo, `PlansService.updatePlan` SIEMPRE crea/recupera un
+   * `GenerationRun` de kind `MEAL_PLAN_REGENERATION` y le pasa su `id` a
+   * `updatePlanTransaction` como `generationRunId` — y `createDaysMealsAndRecipes`
+   * (`plans.repository.ts:99-102`) estampa incondicionalmente `recipeData.origin = 'AI'` cada
+   * vez que recibe un `generationRunId`, sin distinguir si ese run vino de una llamada real a
+   * Gemini (`createPlanTransaction`, camino de `generateAndPersistPlan`) o no
+   * (`updatePlanTransaction`, camino de edición manual). Resultado: toda receta creada/editada
+   * a mano vía `PUT /meal-plans` queda mal etiquetada como `origin: 'AI'`.
+   *
+   * Decisión de test tomada acá (el prompt de esta etapa pide decidir y documentar cuál forma
+   * es "más correcta"): se exige que el `origin` pasado a `tx.recipe.create` en el camino
+   * MANUAL nunca sea `'AI'` — se acepta tanto que el implementer omita el campo `origin` por
+   * completo (dejando que el `@default(MANUAL)` de Prisma aplique, la opción más simple y la
+   * recomendada por esta autora del test) como que lo estampe explícitamente en `'MANUAL'`;
+   * lo único que estas pruebas prohíben es `'AI'`. El contraste con `createPlanTransaction`
+   * (que SÍ debe seguir estampando `'AI'`) se deja explícito en el segundo test.
+   */
+  describe('Bug 1 (BLOQUEANTE) - origin de Recipe según el camino de escritura (manual vs. generación IA real)', () => {
+    it('updatePlanTransaction (PUT /meal-plans, edición MANUAL) NUNCA estampa origin: "AI" en las recetas creadas, aunque reciba un generationRunId válido', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-1' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      // updatePlanTransaction recibe un generationRunId válido (el de MEAL_PLAN_REGENERATION,
+      // creado por PlansService.updatePlan) aunque este camino nunca llama a Gemini.
+      await repository.updatePlanTransaction(userId, weekStart, newDays, 'run-manual-edit-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(recipeData.origin).not.toBe('AI');
+      }
+    });
+
+    it('createPlanTransaction (camino de generación real vía Gemini) SÍ estampa origin: "AI" cuando recibe un generationRunId (contraste explícito con el camino manual)', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-1' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-ai-generation-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(recipeData.origin).toBe('AI');
+      }
+    });
+  });
+
+  /**
+   * NUT-75 — Bug 4 (NO bloqueante, revisión externa de PR): `buildOutputSnapshot`
+   * (`plans.repository.ts:212-217`) sólo guarda `{ dayCount, mealCount }` como `outputSnapshot`
+   * de la transición final a `SUCCEEDED`. El objetivo del ticket es poder auditar QUÉ produjo
+   * la generación (títulos, ingredientes, instrucciones), no sólo cuántos días/comidas hubo.
+   * Estos tests verifican que el contenido real generado (por ejemplo el título de una receta
+   * del fixture) pueda reconstruirse desde el `outputSnapshot` persistido, sin imponerle al
+   * implementer una forma exacta más allá de eso.
+   */
+  describe('Bug 4 (NO bloqueante) - outputSnapshot debe permitir reconstruir el contenido real generado, no sólo conteos', () => {
+    it('createPlanTransaction: el outputSnapshot de la transición final a SUCCEEDED incluye el título real de al menos una receta del fixture', async () => {
+      const updateManyMock = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: updateManyMock },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(updateManyMock).toHaveBeenCalledTimes(1);
+      const callArgs = updateManyMock.mock.calls[0][0];
+      // newDays[0].meals[0].recipe.title === 'Ensalada de Quinoa' (fixture de este archivo).
+      expect(JSON.stringify(callArgs.data.outputSnapshot)).toContain('Ensalada de Quinoa');
+    });
+
+    it('updatePlanTransaction (supersede): el outputSnapshot también incluye el contenido real generado, no sólo conteos', async () => {
+      const updateManyMock = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: updateManyMock },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.updatePlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(updateManyMock).toHaveBeenCalledTimes(1);
+      const callArgs = updateManyMock.mock.calls[0][0];
+      expect(JSON.stringify(callArgs.data.outputSnapshot)).toContain('Ensalada de Quinoa');
+    });
+  });
 });
