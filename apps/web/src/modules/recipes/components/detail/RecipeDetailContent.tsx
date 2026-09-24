@@ -67,7 +67,7 @@ export function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
             </span>
           </>
         ) : (
-          <span className="text-on-surface-variant">Valores nutricionales no especificados</span>
+          <span className="text-on-surface-variant text-xs italic">Sin datos</span>
         )}
       </div>
 
@@ -163,8 +163,8 @@ export function DesktopRecipeHero({ recipe }: { recipe: Recipe }) {
 export function DesktopNutritionalValues({ recipe }: { recipe: Recipe }) {
   if (!recipe.nutritionalValues) {
     return (
-      <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/30 text-xs text-on-surface-variant text-center">
-        Valores nutricionales no especificados
+      <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/30 text-xs text-on-surface-variant text-center italic">
+        Sin datos
       </div>
     );
   }
