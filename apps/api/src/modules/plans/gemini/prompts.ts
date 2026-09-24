@@ -3,6 +3,7 @@ import { Schema, SchemaType } from '@google/generative-ai';
 export const PROMPT_VERSIONS = {
   v1: {
     version: '1.0.0',
+    schemaVersion: '1.0.0',
 
     getPrompt(profile: any, startDate: string): string {
       return `

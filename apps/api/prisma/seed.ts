@@ -130,21 +130,25 @@ async function main() {
     const endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + 6);
 
-    // Upsert de Plan
-    const plan = await prisma.mealPlan.upsert({
-      where: {
-        userId_startDate: {
-          userId: user.id,
-          startDate: startDate
-        }
-      },
-      update: { endDate },
-      create: {
-        userId: user.id,
-        startDate,
-        endDate
-      }
+    // Buscar/crear la version actual del plan (NUT-75: MealPlan ya no tiene un @@unique
+    // simple sobre userId+startDate, asi que no se puede usar upsert con ese compound;
+    // se busca la version actual manualmente y se crea o actualiza segun corresponda).
+    const existingPlan = await prisma.mealPlan.findFirst({
+      where: { userId: user.id, startDate, isCurrent: true }
     });
+
+    const plan = existingPlan
+      ? await prisma.mealPlan.update({
+          where: { id: existingPlan.id },
+          data: { endDate }
+        })
+      : await prisma.mealPlan.create({
+          data: {
+            userId: user.id,
+            startDate,
+            endDate
+          }
+        });
 
     // Dias y Comidas (Limpiamos y recreamos para evitar duplicados complejos de manejar en arrays)
     await prisma.mealPlanDay.deleteMany({ where: { mealPlanId: plan.id } });
