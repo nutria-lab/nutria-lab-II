@@ -5,7 +5,7 @@ import { NavigationIcon } from './NavigationItem';
 
 export function Sidebar({ onLogout }: { onLogout: () => Promise<void> }) {
   return (
-    <aside className="hidden w-60 shrink-0 flex-col bg-brand-cream py-6 md:flex">
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-outline-variant/40 bg-brand-cream py-6 md:flex">
       <div className="mb-6 px-4">
         <BrandMark variant="app" />
       </div>

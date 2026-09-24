@@ -2,8 +2,10 @@ import { useMemo, useState } from 'react';
 
 import { Banner } from '../../../common/components/Banner';
 import { Pill } from '../../../common/components/Pill';
+import { SearchInput } from '../../../common/components/SearchInput';
 import type { Recipe, RecipeCategory } from '../../../services/recipeService';
 import { RECIPE_CATEGORY_BADGE_CLASSES, RECIPE_CATEGORY_LABELS } from '../labels';
+
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
 const UNCATEGORIZED_BADGE_CLASSES = 'bg-surface-container-highest text-on-surface-variant';
@@ -18,6 +20,10 @@ export type RecipeCatalogListProps = {
   onSelectRecipe: (id: string) => void;
   onCreateRecipe: () => void;
   onCreateIngredient?: () => void;
+  hideSearch?: boolean;
+  hideHeader?: boolean;
+  searchTerm?: string;
+  onSearchTermChange?: (term: string) => void;
 };
 
 function LoadingSkeleton() {
@@ -89,9 +95,16 @@ export function RecipeCatalogList({
   selectedId = null,
   onSelectRecipe,
   onCreateRecipe,
+  hideSearch = false,
+  hideHeader = false,
+  searchTerm: propSearchTerm,
+  onSearchTermChange,
 }: RecipeCatalogListProps) {
   const [selectedCategory, setSelectedCategory] = useState<RecipeCategory | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [internalSearchTerm, setInternalSearchTerm] = useState('');
+
+  const searchTerm = propSearchTerm !== undefined ? propSearchTerm : internalSearchTerm;
+  const setSearchTerm = onSearchTermChange ?? setInternalSearchTerm;
 
   const categories = useMemo(
     () => Array.from(new Set(recipes.flatMap((recipe) => recipe.categories ?? []))),
@@ -124,31 +137,17 @@ export function RecipeCatalogList({
     <div className="space-y-4">
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
-      {/* Search input */}
-      <div className="relative">
-        <label htmlFor="recipe-search" className="sr-only">Buscar recetas</label>
-        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-on-surface-variant">
-          <span className="material-symbols-outlined text-lg">search</span>
-        </div>
-        <input
+      {/* Search input (when not hidden by parent desktop header) */}
+      {!hideSearch && (
+        <SearchInput
           id="recipe-search"
-          type="text"
           value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
+          onChange={setSearchTerm}
           placeholder="Buscar por nombre o ingrediente..."
-          className="w-full rounded-2xl border border-outline-variant/50 bg-surface-container-low py-2.5 pl-10 pr-9 text-sm text-on-surface placeholder:text-on-surface-variant/60 outline-none transition-all focus:border-brand-green focus:ring-2 focus:ring-brand-green/20"
+          variant="default"
         />
-        {searchTerm && (
-          <button
-            type="button"
-            onClick={() => setSearchTerm('')}
-            className="absolute inset-y-0 right-2 flex items-center px-1 text-on-surface-variant hover:text-on-surface"
-            aria-label="Limpiar búsqueda"
-          >
-            <span className="material-symbols-outlined text-lg">close</span>
-          </button>
-        )}
-      </div>
+      )}
+
 
       {/* Category pills — horizontal scroll */}
       <div
@@ -170,20 +169,22 @@ export function RecipeCatalogList({
         ))}
       </div>
 
-      {/* Count row */}
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-          {`${recipes.length} recetas disponibles`}
-        </span>
-        <button
-          type="button"
-          onClick={onRefresh ?? onRetry}
-          className="flex items-center gap-1 text-xs font-semibold text-brand-green hover:underline"
-        >
-          <span aria-hidden="true" className="material-symbols-outlined text-sm">refresh</span>
-          Actualizar
-        </button>
-      </div>
+      {/* Count row (optional, when not provided by desktop header) */}
+      {!hideHeader && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
+            {`${recipes.length} recetas disponibles`}
+          </span>
+          <button
+            type="button"
+            onClick={onRefresh ?? onRetry}
+            className="flex items-center gap-1 text-xs font-semibold text-brand-green hover:underline"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-sm">refresh</span>
+            Actualizar
+          </button>
+        </div>
+      )}
 
       {hasNoFilterResults ? (
         <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
@@ -228,8 +229,10 @@ export function RecipeCatalogList({
                     onSelectRecipe(recipe.id);
                   }
                 }}
-                className={`flex cursor-pointer items-center gap-3.5 overflow-hidden rounded-2xl border border-outline-variant/30 p-3 shadow-sm transition-all active:scale-[0.99] hover:shadow-md ${
-                  isSelected ? 'bg-primary-fixed/20' : 'bg-white'
+                className={`flex cursor-pointer items-center gap-3.5 overflow-hidden rounded-xl border p-3.5 shadow-sm transition-all active:scale-[0.99] hover:shadow-md ${
+                  isSelected
+                    ? 'border-brand-green bg-brand-green/10 ring-1 ring-brand-green'
+                    : 'border-outline-variant/30 bg-white hover:bg-surface-container-low'
                 }`}
               >
                 {/* Thumbnail with category badge overlay */}
@@ -245,31 +248,32 @@ export function RecipeCatalogList({
                 </div>
 
                 {/* Text content */}
-                <div className="min-w-0 flex-1">
-                  <h3 className="font-headline text-sm font-bold leading-snug text-on-surface line-clamp-1">
-                    {recipe.title}
-                  </h3>
-                  {!isSelected && (
-                    <p className="mt-0.5 text-[11px] leading-relaxed text-on-surface-variant line-clamp-2">
-                      {recipe.description}
-                    </p>
-                  )}
+                <div className="min-w-0 flex-1 flex flex-col justify-between py-0.5">
+                  <div>
+                    <h4 className="font-headline text-sm font-bold leading-snug text-on-surface line-clamp-1">
+                      {recipe.title}
+                    </h4>
+                    {!isSelected && (
+                      <p className="mt-0.5 text-[11px] leading-relaxed text-on-surface-variant line-clamp-2">
+                        {recipe.description}
+                      </p>
+                    )}
+                  </div>
                   {/* Stats row */}
-                  <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
-                    <span className="flex items-center gap-0.5 text-on-surface-variant">
-                      <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>schedule</span>
+                  <div className="mt-2 flex items-center justify-between text-[11px] font-semibold">
+                    <span className="flex items-center gap-0.5 text-brand-green">
+                      <span className="material-symbols-outlined text-xs" aria-hidden="true">schedule</span>
                       {totalMinutes} min
                     </span>
                     {recipe.nutritionalValues && (
-                      <>
-                        <span className="flex items-center gap-0.5 text-brand-green">
-                          <span className="material-symbols-outlined" style={{ fontSize: '13px' }}>local_fire_department</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-on-surface font-bold">
                           {recipe.nutritionalValues.calories} kcal
                         </span>
-                        <span className="ml-auto rounded-full bg-brand-green/10 px-2 py-0.5 text-[10px] font-bold text-brand-green">
+                        <span className="rounded border border-outline-variant/30 bg-surface-container px-2 py-0.5 text-[10px] font-bold text-on-surface">
                           {recipe.nutritionalValues.protein}g prot
                         </span>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -279,12 +283,12 @@ export function RecipeCatalogList({
         </div>
       )}
 
-      {/* FAB — above the bottom nav bar */}
+      {/* FAB — mobile only */}
       <button
         type="button"
         onClick={onCreateRecipe}
         aria-label={CREATE_RECIPE_LABEL}
-        className="fixed bottom-24 right-5 flex h-14 w-14 items-center justify-center rounded-full bg-brand-green text-2xl font-semibold text-on-primary shadow-lg transition-all hover:opacity-90 active:scale-95"
+        className="fixed bottom-24 right-5 flex h-14 w-14 items-center justify-center rounded-full bg-brand-green text-2xl font-semibold text-on-primary shadow-lg transition-all hover:opacity-90 active:scale-95 md:hidden"
       >
         <span className="material-symbols-outlined text-2xl">add</span>
       </button>

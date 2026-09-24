@@ -44,8 +44,8 @@ export function MealCard({ meal }: MealCardProps) {
 
   const totalMinutes =
     (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0) || null;
-  const calories = recipe.nutritionalValues?.calories;
-  const protein = recipe.nutritionalValues?.protein;
+  const calories = meal.nutritionalValues?.Calories;
+  const protein = meal.nutritionalValues?.Protein;
   const ingredients = recipe.ingredients ?? [];
   const instructions = recipe.instructions ?? [];
 

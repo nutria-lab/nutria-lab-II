@@ -59,11 +59,11 @@ function LoginRoute() {
 }
 
 function ProtectedApp({ children }: { children: ReactNode }) {
-  const { status, logout } = useAuth();
+  const { status, user, logout } = useAuth();
   const location = useLocation();
   if (status === 'initializing') return <main role="status" aria-label="Comprobando sesión">Comprobando sesión…</main>;
   if (status === 'anonymous') return <Navigate replace to="/login" state={{ from: location }} />;
-  return <AppLayout onLogout={logout}>{children}</AppLayout>;
+  return <AppLayout onLogout={logout} user={user}>{children}</AppLayout>;
 }
 
 export function App() {
@@ -80,7 +80,7 @@ export function App() {
               <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
               <Route path="/meal-plan" element={<MealPlanPage />} />
               <Route path="/recipes" element={<RecipesListPage />} />
-              <Route path="/recipes/:id" element={<RecipeDetailPage />} />
+              <Route path="/recipes/:id" element={<RecipeDetailPage inLayout />} />
               <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
               <Route path="/goals" element={<PreferencesPage />} />
             </Routes>
