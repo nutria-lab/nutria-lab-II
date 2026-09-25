@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards } from '@nestjs/common';
 import { RecipeService } from './recipe.service';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { JwtAuthGuard } from '@/modules/auth/guards/jwt-auth.guard';
+import { ListRecipesQueryDto } from './dto/list-recipes-query.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('recipes')
@@ -15,8 +16,8 @@ export class RecipeController {
   }
 
   @Get()
-  async findAll() {
-    return await this.recipeService.findAll();
+  async findAll(@Query() query: ListRecipesQueryDto) {
+    return await this.recipeService.findAll(query);
   }
 
   @Get(':id')
