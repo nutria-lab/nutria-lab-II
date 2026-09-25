@@ -7,6 +7,7 @@ model User {
   updatedAt        DateTime          @updatedAt
   nutritionProfile NutritionProfile?
   mealPlans        MealPlan[]
+  generationRuns   GenerationRun[]
 
   @@map("users")
 }
