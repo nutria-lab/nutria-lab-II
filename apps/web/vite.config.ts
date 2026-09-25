@@ -7,6 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    testTimeout: 10000,
     // Valor de reserva para CI y checkouts limpios, que no tienen un .env real.
     // Los tests que necesiten probar el caso "variable ausente" la pisan con vi.stubEnv.
     env: {

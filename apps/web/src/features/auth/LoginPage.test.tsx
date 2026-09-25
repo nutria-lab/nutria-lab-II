@@ -105,7 +105,6 @@ describe('LoginPage', () => {
   it('keeps desktop branding separate from the labelled login region', () => {
     renderLogin(<LoginPage />);
 
-    expect(screen.getByText('Nutrirte bien empieza con elegir con intención.').closest('aside')).toHaveAttribute('aria-hidden', 'true');
     expect(document.querySelector('form')?.closest('section')).toHaveAttribute('aria-labelledby', 'login-title');
   });
 

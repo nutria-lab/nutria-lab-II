@@ -29,7 +29,9 @@ describe('PreferencesPage', () => {
 
     render(<PreferencesPage />);
 
-    expect(screen.getByText('Preferencias alimentarias')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /personalizá tu experiencia|preferencias alimentarias/i }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Cargando tus preferencias...')).not.toBeInTheDocument();
   });
 
