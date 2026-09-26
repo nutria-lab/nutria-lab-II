@@ -16,13 +16,8 @@ export type RecipeDetailPageProps = {
 export function RecipeDetailPage({ inLayout = false }: RecipeDetailPageProps = {}) {
   const controller = useRecipeDetailController();
 
-  if (controller.status === 'loading') {
-    return <RecipeDetailSkeleton />;
-  }
-
-  if (controller.status === 'notFound') {
-    return <RecipeDetailNotFound />;
-  }
+  {(controller.status === 'loading') && <RecipeDetailSkeleton/> }
+  {(controller.status === 'notFound') && <RecipeDetailNotFound />}
 
   if (!controller.recipe) {
     return (

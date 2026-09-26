@@ -8,7 +8,7 @@ import {
   type RegistrationFieldErrors,
   type RegistrationValues,
   validateRegistrationFields,
-} from './registrationValidation';
+} from './validator/registrationValidation';
 
 type RegistrationField = keyof RegistrationValues;
 
