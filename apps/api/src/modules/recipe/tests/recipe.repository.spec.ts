@@ -55,4 +55,28 @@ describe('RecipeRepository.findAll', () => {
     expect(itemsCall.slice(2)).toEqual([8, 8]);
     expect(countTemplate.join('')).toContain('SELECT COUNT(*) AS "total"');
   });
+
+  /**
+   * NUT-83 (design.md sección 8/plan.md sección 7, fila AC10) — `findAll` arma su SELECT con
+   * una lista EXPLÍCITA de columnas (no `SELECT *`), y esa lista hoy no incluye `"image"`. Como
+   * `image` se persiste una sola vez en creación (Flujo A de design.md) y nunca se recalcula en
+   * lectura, cualquier camino de lectura existente debe devolverlo tal cual quedó guardado — acá
+   * se verifica el camino de listado (`GET /recipes`), que es el único de los tres
+   * (`findAll`/`findById`/`findByTitle`) que no usa el modelo completo de Prisma por defecto y
+   * por lo tanto es el único que puede omitir una columna nueva por construcción.
+   *
+   * Este test debe fallar en rojo hasta que el implementer agregue `"image"` a la lista de
+   * columnas del SELECT de items en `recipe.repository.ts`.
+   */
+  it('includes the "image" column in the raw SELECT for items (NUT-83 AC10)', async () => {
+    await repository.findAll({
+      page: 1,
+      pageSize: 10,
+    });
+
+    const [itemsCall] = queryRaw.mock.calls;
+    const itemsTemplate = itemsCall[0] as TemplateStringsArray;
+
+    expect(itemsTemplate.join('')).toMatch(/"image"/);
+  });
 });

@@ -115,6 +115,17 @@ export class PlansRepository {
             recipeData.origin = recipeOrigin;
           }
 
+          // NUT-83 (design.md D1 corregido/D2/D4): `meal.recipe.image` ya llega resuelto como
+          // dato plano (RecipeImage | null) desde la capa de servicio, ANTES de abrir esta
+          // transacción — acá sólo se copia tal cual, nunca se hace I/O de red. Se agrega la
+          // clave sólo cuando viene definida (incluyendo `null` explícito) para no pisar el
+          // comportamiento de ningún caller que todavía no conozca `image` (ej. tests
+          // preexistentes de NUT-75 que no pasan esta propiedad en absoluto).
+          const recipeImage = (meal.recipe as { image?: unknown }).image;
+          if (recipeImage !== undefined) {
+            recipeData.image = recipeImage;
+          }
+
           const recipe = await tx.recipe.create({ data: recipeData });
           recipeId = recipe.id;
         }
@@ -237,8 +248,30 @@ export class PlansRepository {
    * de `profileSnapshot`/`requestSnapshot`, que sí tienen reglas de lista blanca estrictas por
    * design.md sección 6; esas reglas no aplican acá).
    */
+  /**
+   * NUT-83 revisión de reviewers - Gap 1 (bloqueante): ningún dato del proveedor externo de
+   * imágenes debe tocar los snapshots de `GenerationRun` (design.md sección 1,
+   * "Consecuencias") — el único lugar donde vive ese resultado es el campo `image` de
+   * `Recipe`. `days` puede traer `meal.recipe.image` ya resuelto (RecipeImage | null) porque la
+   * capa de servicio pobló el mismo array que después se usa para persistir las filas de
+   * `Recipe` (que sí deben conservar `image`). Acá se construye una copia, sin mutar el
+   * array/objetos originales, en la que cada `meal.recipe` (si existe) NO tiene la clave
+   * `image` en absoluto — ni siquiera `null` — usando destructuring para quedarse con el resto
+   * de las propiedades.
+   */
   private buildOutputSnapshot(days: MealPlanDayDto[]): { days: MealPlanDayDto[] } {
-    return { days };
+    const sanitizedDays = days.map(day => ({
+      ...day,
+      meals: day.meals.map(meal => {
+        if (!meal.recipe) {
+          return meal;
+        }
+        const { image, ...recipeWithoutImage } = meal.recipe as any;
+        return { ...meal, recipe: recipeWithoutImage };
+      }),
+    }));
+
+    return { days: sanitizedDays as MealPlanDayDto[] };
   }
 
   /**

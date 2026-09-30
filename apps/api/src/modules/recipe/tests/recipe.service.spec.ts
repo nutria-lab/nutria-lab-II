@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { RecipeService } from '../recipe.service';
 import { RecipeRepository } from '../recipe.repository';
+import { PexelsService } from '@/modules/pexels/pexels.service';
 import { NotFoundException } from '@nestjs/common';
 
 interface RecipeListCriteria {
@@ -21,9 +22,25 @@ const mockRecipeRepository = {
   delete: jest.fn(),
 };
 
+// NUT-83 (design.md D1 corregido/D2, plan.md sección 10.2): mock plano de PexelsService.
+// A diferencia del patrón usado en `plans.service.spec.ts` (inyección por propiedad de
+// instancia, `(service as any).pexels = mockPexels`, elegido ahí para no depender de que el
+// constructor de `PlansService` ya tuviera el parámetro nuevo), acá se mockea por
+// CONSTRUCTOR, registrando `PexelsService` como provider de `Test.createTestingModule`
+// (`{ provide: PexelsService, useValue: mockPexelsService }`) — mismo mecanismo ya usado en
+// este archivo para `RecipeRepository`. Nest simplemente no inyecta el provider si el
+// constructor de `RecipeService` bajo test todavía no lo declara (estado actual, pre-
+// implementación), así que este registro es inofensivo hoy y pasa a resolverse de verdad en
+// cuanto el implementer agregue `pexels: PexelsService` al constructor de `RecipeService`
+// (plan.md sección 10.2).
+const mockPexelsService = {
+  resolveImage: jest.fn(),
+};
+
 describe('RecipeService', () => {
   let service: RecipeService;
   let repository: typeof mockRecipeRepository;
+  let pexels: typeof mockPexelsService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -33,11 +50,16 @@ describe('RecipeService', () => {
           provide: RecipeRepository,
           useValue: mockRecipeRepository,
         },
+        {
+          provide: PexelsService,
+          useValue: mockPexelsService,
+        },
       ],
     }).compile();
 
     service = module.get<RecipeService>(RecipeService);
     repository = module.get(RecipeRepository);
+    pexels = module.get(PexelsService);
 
     jest.clearAllMocks();
   });
@@ -109,6 +131,120 @@ describe('RecipeService', () => {
       const result = await service.create(dto as any);
       expect(result.id).toBe('1');
       expect(repository.create).toHaveBeenCalledWith(dto);
+    });
+
+    /**
+     * NUT-83 (design.md D1 corregido/D2, plan.md sección 10.2) — `POST /recipes` (creación
+     * manual individual) es, junto con la generación de plan por IA y la edición/regeneración
+     * de plan, uno de los tres caminos de creación de receta a los que D1 corregido aplica: la
+     * resolución de imagen se intenta para TODA receta nueva, sin importar `origin`. D2 exige
+     * que la resolución ocurra fuera de cualquier transacción — acá no hay ninguna transacción
+     * de por medio (`RecipeRepository.create` es un único `prisma.recipe.create`, plan.md
+     * sección 10.2), así que D2 se satisface trivialmente con sólo resolver `image` ANTES de
+     * construir el objeto que se pasa a `repository.create`.
+     *
+     * Estos tres tests deben fallar en rojo hasta que el implementer cambie
+     * `RecipeService.create` para invocar `this.pexels.resolveImage(data.title)` antes de
+     * `this.repository.create(...)`, y pase el resultado bajo la clave `image`.
+     */
+    it('AC13/AC14 (NUT-83): invoca pexels.resolveImage(data.title) ANTES de repository.create', async () => {
+      const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
+      const resolvedImage = {
+        provider: 'PEXELS',
+        providerPhotoId: '12345',
+        imageUrl: 'https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg',
+        sourceUrl: 'https://www.pexels.com/photo/12345',
+        photographer: 'Jane Doe',
+        photographerUrl: 'https://www.pexels.com/@janedoe',
+        alt: 'A bowl of quinoa salad',
+        query: 'ensalada de quinoa food recipe',
+        retrievedAt: '2026-09-30T12:00:00.000Z',
+      };
+      const callOrder: string[] = [];
+
+      pexels.resolveImage.mockImplementation(async (title: string) => {
+        callOrder.push(`resolveImage:${title}`);
+        return resolvedImage;
+      });
+      repository.create.mockImplementation(async (data: any) => {
+        callOrder.push('repository.create');
+        return { id: '1', ...data };
+      });
+
+      await service.create(dto as any);
+
+      expect(callOrder).toEqual(['resolveImage:Ensalada de Quinoa', 'repository.create']);
+      expect(pexels.resolveImage).toHaveBeenCalledWith(dto.title);
+    });
+
+    it('AC3 (NUT-83): el objeto pasado a repository.create incluye el RecipeImage resuelto bajo la clave "image"', async () => {
+      const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
+      const resolvedImage = {
+        provider: 'PEXELS',
+        providerPhotoId: '12345',
+        imageUrl: 'https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg',
+        sourceUrl: 'https://www.pexels.com/photo/12345',
+        photographer: 'Jane Doe',
+        photographerUrl: 'https://www.pexels.com/@janedoe',
+        alt: 'A bowl of quinoa salad',
+        query: 'ensalada de quinoa food recipe',
+        retrievedAt: '2026-09-30T12:00:00.000Z',
+      };
+
+      pexels.resolveImage.mockResolvedValue(resolvedImage);
+      repository.create.mockResolvedValue({ id: '1', ...dto, image: resolvedImage });
+
+      await service.create(dto as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ...dto, image: resolvedImage }),
+      );
+    });
+
+    it('AC4/AC5 (NUT-83): cuando pexels.resolveImage devuelve null (sin resultados o proveedor no disponible), repository.create se llama igual con image: null y create completa exitosamente', async () => {
+      const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
+
+      pexels.resolveImage.mockResolvedValue(null);
+      repository.create.mockResolvedValue({ id: '1', ...dto, image: null });
+
+      const result = await service.create(dto as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ...dto, image: null }),
+      );
+      expect(result.id).toBe('1');
+    });
+
+    /**
+     * NUT-83 revisión de reviewers - Gap 2 (BLOQUEANTE, confirmado independientemente por los
+     * 4 revisores): el test AC4/AC5 de arriba sólo cubre el camino documentado de
+     * `resolveImage` devolviendo `null` (design.md sección 4: key ausente, sin resultados,
+     * 404, timeout, 429, 5xx, JSON inválido — todos esos casos YA están diseñados para
+     * resolver en `null`, nunca lanzar). Este test cubre el camino NO documentado: un bug
+     * inesperado (`resolveImage` rechazando en vez de resolver en `null`, algo que
+     * `PexelsService` no debería hacer según su propio contrato, pero que `RecipeService.create`
+     * no debe asumir ciegamente que nunca ocurre). Hoy `RecipeService.create` no tiene ningún
+     * try/catch alrededor de `this.pexels.resolveImage(...)`, así que ese rechazo se propaga
+     * sin control y `repository.create` nunca se invoca — exactamente lo que design.md D4/
+     * Flujo B prohíben ("la receta sigue siendo válida aunque... el proveedor no esté
+     * disponible"; nunca debe romper la creación/confirmación de la receta).
+     *
+     * Debe fallar en rojo hasta que el implementer envuelva la llamada a
+     * `this.pexels.resolveImage(...)` en un try/catch que degrade a `image: null` ante
+     * cualquier rechazo inesperado, en vez de dejarlo propagar.
+     */
+    it('Gap 2 (NUT-83, BLOQUEANTE): cuando pexels.resolveImage RECHAZA con una excepción inesperada (bug, no un null documentado), create NO propaga la excepción — completa exitosamente llamando a repository.create con image: null', async () => {
+      const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
+
+      pexels.resolveImage.mockRejectedValue(new TypeError('bug inesperado'));
+      repository.create.mockResolvedValue({ id: '1', ...dto, image: null });
+
+      const result = await service.create(dto as any);
+
+      expect(repository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ ...dto, image: null }),
+      );
+      expect(result.id).toBe('1');
     });
   });
 
