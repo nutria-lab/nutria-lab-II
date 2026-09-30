@@ -321,6 +321,79 @@ describe('PexelsService.resolveImage', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  /**
+   * BUG bloqueante real reportado en una revisión externa de PR sobre este mismo archivo
+   * (`pexels.service.ts`): `clearTimeout(timeoutId)` corre en el bloque `finally` que envuelve
+   * únicamente el `await fetch(...)` (líneas ~103-118 de la implementación actual) — es decir,
+   * apenas llegan los HEADERS de la respuesta. `response.json()` (la lectura del BODY, que puede
+   * tardar) corre DESPUÉS de ese `finally`, ya sin ninguna protección de timeout: el
+   * `AbortController` nunca se vuelve a armar para la lectura del body, así que si el proveedor
+   * manda los headers rápido y después se cuelga mandando el body, `resolveImage()` puede
+   * quedarse esperando para siempre.
+   *
+   * Este test simula exactamente ese escenario: `fetch()` resuelve rápido con
+   * `{ ok: true, status: 200 }` (headers ya llegaron), pero el `.json()` de esa respuesta
+   * devuelve una promesa que nunca se resuelve ni rechaza por sí sola — sólo lo hace si el mismo
+   * `AbortSignal` que la implementación le pasa a `fetch()` llega a abortarse (mismo criterio ya
+   * usado en el test de AC6 de arriba para el timeout de `fetch()` en sí). Como el bug cancela
+   * ese abort apenas `fetch()` resuelve, avanzar los fake timers más allá de `PEXELS_TIMEOUT_MS`
+   * NO debería disparar el abort contra la implementación actual, así que `.json()` se queda
+   * colgado para siempre y `resolveImage(...)` nunca resuelve a `null` — el `await` de abajo
+   * cuelga hasta el timeout del propio test (acotado explícitamente a 8000ms reales para que
+   * falle en rojo de forma determinística en vez de colgar la suite indefinidamente).
+   *
+   * Se espera que este test falle en ROJO contra la implementación actual (timeout del test
+   * runner esperando `resultPromise`, o quedando pendiente/never-resolved), y que quede en VERDE
+   * una vez que la implementación arme el timeout de forma que también cubra la lectura del
+   * body (`response.json()`), no sólo el `fetch()` inicial.
+   */
+  it('(BUG real de PR review) resolveImage no debe colgarse para siempre si fetch() resuelve rápido (llegan headers) pero response.json() se cuelga leyendo el body más allá de PEXELS_TIMEOUT_MS', async () => {
+    jest.useFakeTimers();
+    const configService = createConfigServiceMock(MOCK_API_KEY);
+
+    const fetchMock = jest.fn((_url: unknown, options?: { signal?: AbortSignal }) => {
+      const signal = options?.signal;
+      // Los headers llegan rápido: fetch() en sí resuelve de inmediato con ok/status, sin pasar
+      // por el AbortSignal en absoluto (a diferencia del test de AC6, donde el propio fetch()
+      // era el que se colgaba).
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            const onAbort = () => {
+              const abortError = new Error('The operation was aborted');
+              abortError.name = 'AbortError';
+              reject(abortError);
+            };
+            if (signal) {
+              if (signal.aborted) {
+                onAbort();
+              } else {
+                signal.addEventListener('abort', onAbort);
+              }
+            }
+            // Nunca se resuelve/rechaza por sí sola en ningún otro caso: la lectura del body se
+            // cuelga para siempre a menos que el AbortSignal original de fetch() se aborte
+            // mientras esta promesa sigue pendiente.
+          }),
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn');
+
+    const service = new PexelsService(configService);
+    const resultPromise = service.resolveImage('Pasta Carbonara');
+
+    await jest.advanceTimersByTimeAsync(PEXELS_TIMEOUT_MS + 1000);
+
+    const result = await resultPromise;
+
+    expect(result).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    assertApiKeyNeverLeaked([warnSpy], MOCK_API_KEY);
+  }, 8000);
 });
 
 /**

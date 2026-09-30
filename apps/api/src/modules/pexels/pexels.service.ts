@@ -100,12 +100,69 @@ export class PexelsService {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), PEXELS_TIMEOUT_MS);
 
-    let response: Response;
+    // BUG real de PR review (fix): el `AbortSignal`/timeout debe seguir vigente durante TODO el
+    // tramo de red — tanto el `fetch()` inicial (headers) como la lectura del body vía
+    // `response.json()` — no sólo mientras se espera el `fetch()`. Por eso `clearTimeout(timeoutId)`
+    // ahora vive en un único `finally` que envuelve ambos pasos, y el `catch` que traduce
+    // `AbortError` a un warning de timeout aplica por igual si el abort ocurre durante el
+    // `fetch()` o mientras se espera `response.json()`.
     try {
-      response = await fetch(url.toString(), {
+      const response = await fetch(url.toString(), {
         headers: { Authorization: apiKey },
         signal: abortController.signal,
       });
+
+      // 404: tratado igual que "sin resultados" — no es un evento de warning (design.md sección 4).
+      if (response.status === 404) {
+        return null;
+      }
+
+      // Cualquier otro status distinto de 200 (429, 5xx, etc.): fallo real del proveedor o del
+      // rate limit — sí es un evento de warning, con el status recibido (nunca headers/key).
+      if (response.status !== 200) {
+        this.logger.warn(`Pexels responded with unexpected status ${response.status} for query="${query}"`);
+        return null;
+      }
+
+      let data: unknown;
+      try {
+        data = await response.json();
+      } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          // El timeout disparó mientras se leía el body, no durante el `fetch()` en sí: se
+          // relanza para que el `catch` externo lo trate exactamente igual que un timeout en
+          // `fetch()` (mismo mensaje de warning), en vez de caer en la rama de "JSON inválido".
+          throw error;
+        }
+        this.logger.warn(`Pexels returned an invalid (non-JSON) response body for query="${query}"`);
+        return null;
+      }
+
+      const photos = (data as { photos?: unknown } | null | undefined)?.photos;
+      const candidate = selectPexelsCandidate(photos);
+
+      if (!candidate) {
+        // Array vacío: "sin resultados" documentado, no es un error — sin warning.
+        if (Array.isArray(photos) && photos.length === 0) {
+          return null;
+        }
+        // `photos` no es array, o ningún elemento cumple el predicado de validez: anomalía de
+        // forma del proveedor — sí es un evento de warning (design.md sección 4).
+        this.logger.warn(`Pexels returned no valid image candidate for query="${query}"`);
+        return null;
+      }
+
+      return {
+        provider: 'PEXELS',
+        providerPhotoId: String(candidate.id),
+        imageUrl: candidate.src.large,
+        sourceUrl: candidate.url,
+        photographer: candidate.photographer,
+        photographerUrl: candidate.photographer_url,
+        alt: typeof candidate.alt === 'string' ? candidate.alt : '',
+        query,
+        retrievedAt: new Date().toISOString(),
+      };
     } catch (error: any) {
       if (error?.name === 'AbortError') {
         this.logger.warn(`Pexels request timed out after ${PEXELS_TIMEOUT_MS}ms for query="${query}"`);
@@ -116,52 +173,6 @@ export class PexelsService {
     } finally {
       clearTimeout(timeoutId);
     }
-
-    // 404: tratado igual que "sin resultados" — no es un evento de warning (design.md sección 4).
-    if (response.status === 404) {
-      return null;
-    }
-
-    // Cualquier otro status distinto de 200 (429, 5xx, etc.): fallo real del proveedor o del
-    // rate limit — sí es un evento de warning, con el status recibido (nunca headers/key).
-    if (response.status !== 200) {
-      this.logger.warn(`Pexels responded with unexpected status ${response.status} for query="${query}"`);
-      return null;
-    }
-
-    let data: unknown;
-    try {
-      data = await response.json();
-    } catch {
-      this.logger.warn(`Pexels returned an invalid (non-JSON) response body for query="${query}"`);
-      return null;
-    }
-
-    const photos = (data as { photos?: unknown } | null | undefined)?.photos;
-    const candidate = selectPexelsCandidate(photos);
-
-    if (!candidate) {
-      // Array vacío: "sin resultados" documentado, no es un error — sin warning.
-      if (Array.isArray(photos) && photos.length === 0) {
-        return null;
-      }
-      // `photos` no es array, o ningún elemento cumple el predicado de validez: anomalía de
-      // forma del proveedor — sí es un evento de warning (design.md sección 4).
-      this.logger.warn(`Pexels returned no valid image candidate for query="${query}"`);
-      return null;
-    }
-
-    return {
-      provider: 'PEXELS',
-      providerPhotoId: String(candidate.id),
-      imageUrl: candidate.src.large,
-      sourceUrl: candidate.url,
-      photographer: candidate.photographer,
-      photographerUrl: candidate.photographer_url,
-      alt: typeof candidate.alt === 'string' ? candidate.alt : '',
-      query,
-      retrievedAt: new Date().toISOString(),
-    };
   }
 
   /**

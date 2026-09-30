@@ -9,14 +9,11 @@ import * as path from 'path';
  * `fs.readFileSync`/`fs.readdirSync` sobre `migration.sql` y los `.prisma` reales, sin ejecutar
  * ningún comando de Prisma ni tocar ninguna base de datos (ni local ni remota).
  *
- * La carpeta de migración de esta etapa TODAVÍA NO EXISTE a propósito (design.md sección 8 /
- * plan.md sección 2: el implementer debe generarla con `prisma migrate dev --create-only` sobre
- * su propio Neon branch de desarrollo — Commit 1 de `.ai/database-and-migrations.md`, no se
- * ejecuta contra ninguna base real en esta sesión). Por eso este archivo busca la carpeta de
- * forma DINÁMICA por patrón de nombre en vez de hardcodear un timestamp exacto que esta sesión
- * inventaría sin ningún valor real (plan.md sección 2 documenta explícitamente su propio
- * timestamp de ejemplo, `20260930170425_add_recipe_image`, como "sólo como referencia de
- * formato, no como valor obligatorio").
+ * Corrección de revisión de PR: la migración se regeneró con `prisma migrate dev --create-only`
+ * (sobre la base local de desarrollo de la usuaria, con su consentimiento explícito) en vez de
+ * quedar escrita a mano, siguiendo el Commit 1 de `.ai/database-and-migrations.md`. Este archivo
+ * sigue buscando la carpeta de forma DINÁMICA por patrón de nombre en vez de hardcodear el
+ * timestamp exacto (`20260930220304_add_recipe_image`), para no romper si se regenera de nuevo.
  */
 describe('Recipe.image — Migración y schema (NUT-83 AC11/AC16)', () => {
   const prismaDir = path.resolve(__dirname, '../../../prisma');
@@ -69,18 +66,22 @@ describe('Recipe.image — Migración y schema (NUT-83 AC11/AC16)', () => {
   });
 
   describe('AC11 - columna aditiva, nullable, sin backfill (contraste explícito con "origin", que sí tiene DEFAULT)', () => {
+    // NUT-83 (regenerada con `prisma migrate dev --create-only` en vez de a mano, corrección de
+    // revisión de PR): el SQL generado por la herramienta usa espacios múltiples entre
+    // `ADD COLUMN` y el nombre de columna (formato propio de Prisma), no un único espacio como
+    // asumía la versión escrita a mano de este archivo — \s+ en vez de un espacio literal.
     it('agrega la columna "image" de tipo JSON/JSONB a "recipes"', () => {
-      expect(migrationSql).toMatch(/ALTER TABLE "recipes" ADD COLUMN "image" JSONB?\s*;/);
+      expect(migrationSql).toMatch(/ALTER TABLE "recipes" ADD COLUMN\s+"image" JSONB?\s*;/);
     });
 
     it('NO declara NOT NULL para la columna "image" (nullable, backfill trivial: NULL para filas existentes)', () => {
-      const addColumnStatement = migrationSql.match(/ALTER TABLE "recipes" ADD COLUMN "image"[^;]*;/i);
+      const addColumnStatement = migrationSql.match(/ALTER TABLE "recipes" ADD COLUMN\s+"image"[^;]*;/i);
       expect(addColumnStatement).not.toBeNull();
       expect(addColumnStatement![0].toUpperCase()).not.toContain('NOT NULL');
     });
 
     it('NO declara ningún DEFAULT para la columna "image"', () => {
-      const addColumnStatement = migrationSql.match(/ALTER TABLE "recipes" ADD COLUMN "image"[^;]*;/i);
+      const addColumnStatement = migrationSql.match(/ALTER TABLE "recipes" ADD COLUMN\s+"image"[^;]*;/i);
       expect(addColumnStatement).not.toBeNull();
       expect(addColumnStatement![0].toUpperCase()).not.toContain('DEFAULT');
     });

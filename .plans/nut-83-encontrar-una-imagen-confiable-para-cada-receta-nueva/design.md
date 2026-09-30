@@ -287,3 +287,18 @@ type RecipeImage = {
 - Descargar o servir archivos propios de imagen.
 
 **Ya NO está fuera de alcance (corrección posterior):** la primera versión de este documento excluía la creación manual de recetas (`POST /recipes`) y los flujos de edición/regeneración de plan. La usuaria dueña del ticket corrigió esa lectura — ver nota de revisión en D1. Esos caminos ahora están dentro de alcance, con el mismo comportamiento que el camino de generación por IA.
+
+## 10. Reconciliación con la checklist de release/evidencia del proyecto
+
+Corrección posterior a una revisión externa de PR: esta sección responde explícitamente a la checklist de "antes de merge/release" del proyecto (verificar issue vinculado, criterios de aceptación, tests/CI, seguridad de migración, exposición de secretos, impacto de accesibilidad, ruta de rollout/rollback), que no se había reconciliado de forma explícita hasta ahora.
+
+- **Issue de Linear vinculado:** NUT-83. No se pudo citar/enlazar por API en esta sesión (el MCP de Linear no está autorizado); queda como verificación manual de quien suba el PR.
+- **Criterios de aceptación:** las 16 AC de la sección 6 de este documento, cada una mapeada 1:1 a un test (ver `plan.md`).
+- **Tests/CI:** 318 tests en verde (`cd apps/api && npx jest`), suite completa del proyecto, sin regresiones.
+- **Seguridad de la migración:** aditiva (`image Json?` nullable, sin `DEFAULT`/`NOT NULL`, sin backfill necesario — sección 8), **regenerada con `prisma migrate dev --create-only`** (corrección de revisión de PR: la primera versión de esta migración se había escrito a mano, violando el protocolo de generación/revisión documentado del proyecto; se regeneró con la herramienta real sobre la base de desarrollo local de la usuaria, con su consentimiento explícito para el reset que eso requirió), aplicada y verificada sólo contra esa base local — pendiente de aprobación de TL para cualquier ambiente compartido.
+- **Exposición de secretos:** sección 7 (nunca la key, nunca headers salientes, nunca el body crudo del proveedor); verificado con tests que inspeccionan cada log emitido en todos los caminos de fallo.
+- **Impacto de accesibilidad:** no aplica — este cambio es exclusivamente de backend (API + esquema), sin ningún componente de UI/frontend en su alcance.
+- **Ruta de rollout:** aplicar la migración (aditiva, sin downtime) tras aprobación de TL; el código que la consume ya está detrás de la misma migración, no hace falta una secuencia de despliegue en fases.
+- **Ruta de rollback:** `ALTER TABLE "recipes" DROP COLUMN "image";` — sin pérdida de datos de ningún otro campo (columna nueva y aislada, ver sección 8).
+
+**Nota sobre `AGENTS.md`:** una revisión de PR señaló que el `AGENTS.md` de la raíz del repo no se había leído explícitamente en el flujo de esta sesión (los agentes leyeron `CLAUDE.md` en su lugar). Verificado con `diff`: ambos archivos son **byte a byte idénticos** — `CLAUDE.md` es la copia para agentes Claude, `AGENTS.md` la copia equivalente para agentes Codex (el propio archivo lo dice: "Codex does not provide per-agent writable-path allowlists"). No hay ninguna guía que se haya omitido en sustancia.
