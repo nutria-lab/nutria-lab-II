@@ -25,7 +25,7 @@ export function WeekSelector({ days, selectedDate, onSelectDate }: WeekSelectorP
 
   return (
     <div
-      className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="grid grid-cols-7 gap-1 sm:gap-2 w-full pb-2"
       role="tablist"
       aria-label="Días de la semana"
     >
@@ -41,7 +41,7 @@ export function WeekSelector({ days, selectedDate, onSelectDate }: WeekSelectorP
             tabIndex={isSelected ? 0 : -1}
             onClick={() => onSelectDate(day.date)}
             onKeyDown={(event) => handleKeyDown(event, index)}
-            className={`flex min-w-[64px] h-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl py-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green ${
+            className={`flex w-full h-20 flex-col items-center justify-center gap-1 rounded-xl py-2 text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green ${
               isSelected
                 ? 'bg-primary-container font-bold text-on-primary-fixed shadow-sm'
                 : 'bg-surface-container font-medium text-on-surface-variant hover:bg-surface-container-high'

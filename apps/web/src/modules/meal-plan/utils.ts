@@ -19,6 +19,21 @@ const MONTH_NAMES = [
   'diciembre',
 ];
 
+const MONTH_ABBREVIATIONS = [
+  'ENE',
+  'FEB',
+  'MAR',
+  'ABR',
+  'MAY',
+  'JUN',
+  'JUL',
+  'AGO',
+  'SEP',
+  'OCT',
+  'NOV',
+  'DIC',
+];
+
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   BREAKFAST: 'Desayuno',
   LUNCH: 'Almuerzo',
@@ -72,6 +87,30 @@ export function formatFullDate(dateStr: string): string {
   const weekday = WEEKDAY_NAMES[date.getDay()];
   const capitalizedWeekday = weekday.charAt(0).toUpperCase() + weekday.slice(1);
   return `${capitalizedWeekday}, ${date.getDate()} de ${MONTH_NAMES[date.getMonth()]}`;
+}
+
+export function formatDayName(dateStr: string): string {
+  const date = parseLocalDate(dateStr);
+  if (!isValidDate(date)) {
+    return '';
+  }
+  const weekday = WEEKDAY_NAMES[date.getDay()];
+  if (!weekday) {
+    return '';
+  }
+  return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+}
+
+export function formatShortDate(dateStr: string): string {
+  const date = parseLocalDate(dateStr);
+  if (!isValidDate(date)) {
+    return '';
+  }
+  const monthAbbr = MONTH_ABBREVIATIONS[date.getMonth()];
+  if (!monthAbbr) {
+    return '';
+  }
+  return `${date.getDate()} ${monthAbbr}`;
 }
 
 export function formatWeekRange(days: MealPlanDay[]): string {
