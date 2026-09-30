@@ -8,6 +8,11 @@ enum RecipeCategory {
   OTHER
 }
 
+enum RecipeOrigin {
+  MANUAL
+  AI
+}
+
 model Recipe {
   id                String           @id @default(uuid())
   title             String
@@ -19,11 +24,15 @@ model Recipe {
   categories        RecipeCategory[] @default([])
   nutritionalValues Json?
   properties        String[]         @default([])
+  origin            RecipeOrigin     @default(MANUAL)
+  generationRunId   String?
+  generationRun     GenerationRun?   @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   plannedMeals PlannedMeal[]
 
+  @@index([generationRunId])
   @@map("recipes")
 }

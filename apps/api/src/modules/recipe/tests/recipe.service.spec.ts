@@ -3,6 +3,16 @@ import { RecipeService } from '../recipe.service';
 import { RecipeRepository } from '../recipe.repository';
 import { NotFoundException } from '@nestjs/common';
 
+interface RecipeListCriteria {
+  q?: string;
+  properties?: string;
+  maxPrepMinutes?: number;
+  page?: number;
+  pageSize?: number;
+}
+
+type FindAllWithCriteria = (criteria: RecipeListCriteria) => Promise<unknown>;
+
 const mockRecipeRepository = {
   create: jest.fn(),
   findAll: jest.fn(),
@@ -30,6 +40,50 @@ describe('RecipeService', () => {
     repository = module.get(RecipeRepository);
 
     jest.clearAllMocks();
+  });
+
+  describe('findAll', () => {
+    it('normalizes the combined search criteria before querying once and preserves returned recipe properties', async () => {
+      const criteria: RecipeListCriteria = {
+        q: '  Avena con Ñuez  ',
+        properties: ' Sin Gluten,Alto en Fibra,sin gluten ',
+        maxPrepMinutes: 30,
+        page: 2,
+        pageSize: 8,
+      };
+      const page = {
+        items: [{ id: 'recipe-1', properties: ['Sin Gluten', 'Alto en Fibra'] }],
+        page: 2,
+        pageSize: 8,
+        total: 9,
+      };
+      repository.findAll.mockResolvedValue(page);
+
+      const result = await (service.findAll as unknown as FindAllWithCriteria)(criteria);
+
+      expect(repository.findAll).toHaveBeenCalledTimes(1);
+      expect(repository.findAll).toHaveBeenCalledWith({
+        q: 'Avena con Ñuez',
+        properties: ['Sin Gluten', 'Alto en Fibra'],
+        maxPrepMinutes: 30,
+        page: 2,
+        pageSize: 8,
+      });
+      expect(result).toEqual(page);
+      expect((result as { items: Array<{ properties: string[] }> }).items[0].properties).toEqual([
+        'Sin Gluten',
+        'Alto en Fibra',
+      ]);
+    });
+
+    it('uses the required defaults when no filters are supplied', async () => {
+      const page = { items: [], page: 1, pageSize: 12, total: 0 };
+      repository.findAll.mockResolvedValue(page);
+
+      await (service.findAll as unknown as FindAllWithCriteria)({});
+
+      expect(repository.findAll).toHaveBeenCalledWith({ page: 1, pageSize: 12 });
+    });
   });
 
   describe('findById', () => {
