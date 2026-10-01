@@ -4,17 +4,18 @@ import { Banner } from '../../../common/components/Banner';
 import { Pill } from '../../../common/components/Pill';
 import { SearchInput } from '../../../common/components/SearchInput';
 import type { Recipe, RecipeCategory } from '../../../services/recipeService';
+import type { UseRecipeSearchResult } from '../hooks/useRecipeSearch';
 import { RECIPE_CATEGORY_BADGE_CLASSES, RECIPE_CATEGORY_LABELS } from '../labels';
-
+import { RecipeTimeFilterSheet } from './RecipeTimeFilterSheet';
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
 const UNCATEGORIZED_BADGE_CLASSES = 'bg-surface-container-highest text-on-surface-variant';
 
 export type RecipeCatalogListProps = {
-  recipes: Recipe[];
-  status: 'loading' | 'empty' | 'error' | 'success';
-  errorMessage: string | null;
-  onRetry: () => void;
+  recipes?: Recipe[];
+  status?: 'loading' | 'empty' | 'error' | 'success';
+  errorMessage?: string | null;
+  onRetry?: () => void;
   onRefresh?: () => void;
   selectedId?: string | null;
   onSelectRecipe: (id: string) => void;
@@ -24,6 +25,8 @@ export type RecipeCatalogListProps = {
   hideHeader?: boolean;
   searchTerm?: string;
   onSearchTermChange?: (term: string) => void;
+
+  search?: UseRecipeSearchResult;
 };
 
 function LoadingSkeleton() {
@@ -87,11 +90,11 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function RecipeCatalogList({
-  recipes,
-  status,
-  errorMessage,
-  onRetry,
-  onRefresh,
+  recipes: propRecipes = [],
+  status: propStatus = 'loading',
+  errorMessage: propErrorMessage = null,
+  onRetry: propOnRetry = () => {},
+  onRefresh: propOnRefresh,
   selectedId = null,
   onSelectRecipe,
   onCreateRecipe,
@@ -99,19 +102,66 @@ export function RecipeCatalogList({
   hideHeader = false,
   searchTerm: propSearchTerm,
   onSearchTermChange,
+  search,
 }: RecipeCatalogListProps) {
+  const [isTimeSheetOpen, setIsTimeSheetOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<RecipeCategory | null>(null);
   const [internalSearchTerm, setInternalSearchTerm] = useState('');
 
-  const searchTerm = propSearchTerm !== undefined ? propSearchTerm : internalSearchTerm;
-  const setSearchTerm = onSearchTermChange ?? setInternalSearchTerm;
+  const isSearchMode = Boolean(search);
 
+  const recipes = search ? search.recipes : propRecipes;
+  const status = search ? search.status : propStatus;
+  const errorMessage = search ? search.errorMessage : propErrorMessage;
+  const onRetry = search ? search.retry : propOnRetry;
+  const onRefresh = search ? search.refetch : (propOnRefresh ?? propOnRetry);
+
+  const searchTerm = search
+    ? search.draftText
+    : propSearchTerm !== undefined
+      ? propSearchTerm
+      : internalSearchTerm;
+
+  const setSearchTerm = search
+    ? search.setDraftText
+    : (onSearchTermChange ?? setInternalSearchTerm);
+
+  // Available categories for legacy/desktop mode
   const categories = useMemo(
     () => Array.from(new Set(recipes.flatMap((recipe) => recipe.categories ?? []))),
     [recipes],
   );
 
+  // Available property chips for mobile search mode
+  const filterProperties = useMemo(() => {
+    const defaultProps = [
+      'Alto en Proteína',
+      'Bajo en Grasa',
+      'Sin Gluten',
+      'Alto en Fibra',
+      'Vegano',
+      'Vegetariano',
+      'Keto',
+    ];
+    const set = new Set<string>(defaultProps);
+    if (search) {
+      search.recipes.forEach((r) => {
+        (r.properties ?? []).forEach((p) => {
+          if (p && p.trim()) set.add(p.trim());
+        });
+      });
+      search.properties.forEach((p) => {
+        if (p && p.trim()) set.add(p.trim());
+      });
+    }
+    return Array.from(set);
+  }, [search]);
+
+  // Client-side filtering when in legacy mode (no search hook)
   const filteredRecipes = useMemo(() => {
+    if (isSearchMode) {
+      return recipes;
+    }
     const normalizedSearch = searchTerm.trim().toLowerCase();
     return recipes.filter((recipe) => {
       const recipeCategories = recipe.categories ?? [];
@@ -123,15 +173,25 @@ export function RecipeCatalogList({
       const matchesSearch = !normalizedSearch || matchesTitle || matchesIngredient;
       return matchesCategory && matchesSearch;
     });
-  }, [recipes, selectedCategory, searchTerm]);
+  }, [isSearchMode, recipes, selectedCategory, searchTerm]);
+
+  const hasActiveFilters = Boolean(
+    searchTerm.trim() ||
+      (search && (search.properties.length > 0 || search.maxPrepMinutes !== undefined)) ||
+      (!search && selectedCategory !== null),
+  );
 
   if (status === 'loading') return <LoadingSkeleton />;
-  if (status === 'empty') return <EmptyState onCreate={onCreateRecipe} />;
+  if (status === 'empty' && !hasActiveFilters) return <EmptyState onCreate={onCreateRecipe} />;
   if (status === 'error' && recipes.length === 0) {
     return <ErrorState message={errorMessage ?? 'No pudimos cargar tus recetas.'} onRetry={onRetry} />;
   }
 
-  const hasNoFilterResults = recipes.length > 0 && filteredRecipes.length === 0;
+  const hasNoFilterResults =
+    (isSearchMode && status === 'empty') ||
+    (!isSearchMode && recipes.length > 0 && filteredRecipes.length === 0);
+
+  const totalCount = search ? search.total : recipes.length;
 
   return (
     <div className="space-y-4">
@@ -148,39 +208,121 @@ export function RecipeCatalogList({
         />
       )}
 
+      {/* Dynamic property pills + prep time button (Mobile search mode) */}
+      {isSearchMode && search ? (
+        <>
+          <div
+            data-testid="recipe-property-chips"
+            className="flex items-center gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          >
+            <button
+              type="button"
+              role="button"
+              aria-pressed={search.properties.length === 0 ? 'true' : 'false'}
+              onClick={() => {
+                if (search.properties.length > 0) {
+                  search.properties.forEach((p) => search.toggleProperty(p));
+                }
+              }}
+              className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold transition-all ${
+                search.properties.length === 0
+                  ? 'bg-brand-green text-on-primary shadow-sm'
+                  : 'border border-outline-variant/40 bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+              }`}
+            >
+              {`Todas (${search.total})`}
+            </button>
 
-      {/* Category pills — horizontal scroll */}
-      <div
-        data-testid="recipe-category-chips"
-        className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        <Pill
-          label={`Todas (${recipes.length})`}
-          selected={selectedCategory === null}
-          onClick={() => setSelectedCategory(null)}
-        />
-        {categories.map((category) => (
-          <Pill
-            key={category}
-            label={RECIPE_CATEGORY_LABELS[category]}
-            selected={selectedCategory === category}
-            onClick={() => setSelectedCategory(category)}
+            {filterProperties.map((prop) => {
+              const isSelected = search.properties.includes(prop);
+              return (
+                <button
+                  key={prop}
+                  type="button"
+                  role="button"
+                  aria-pressed={isSelected ? 'true' : 'false'}
+                  onClick={() => search.toggleProperty(prop)}
+                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                    isSelected
+                      ? 'bg-brand-green text-on-primary shadow-sm'
+                      : 'border border-outline-variant/40 bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+                  }`}
+                >
+                  {prop}
+                </button>
+              );
+            })}
+
+            {/* Prep Time Filter Button */}
+            <button
+              type="button"
+              onClick={() => setIsTimeSheetOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={isTimeSheetOpen}
+              aria-label={
+                search.maxPrepMinutes
+                  ? `Tiempo de preparación máximo: ${search.maxPrepMinutes} minutos`
+                  : 'Filtrar por tiempo de preparación'
+              }
+              className={`flex shrink-0 items-center gap-1 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                search.maxPrepMinutes
+                  ? 'border-brand-green bg-brand-green text-on-primary shadow-sm'
+                  : 'border border-outline-variant/40 bg-surface-container text-on-surface-variant hover:bg-surface-container-high'
+              }`}
+            >
+              <span className="material-symbols-outlined text-sm" aria-hidden="true">
+                schedule
+              </span>
+              <span>{search.maxPrepMinutes ? `≤ ${search.maxPrepMinutes} min` : 'Tiempo'}</span>
+            </button>
+          </div>
+
+          <RecipeTimeFilterSheet
+            open={isTimeSheetOpen}
+            onClose={() => setIsTimeSheetOpen(false)}
+            selectedMinutes={search.maxPrepMinutes}
+            onSelectMinutes={search.setMaxPrepMinutes}
           />
-        ))}
-      </div>
+        </>
+      ) : (
+        /* Legacy category pills — horizontal scroll */
+        <div
+          data-testid="recipe-category-chips"
+          className="flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          <Pill
+            label={`Todas (${recipes.length})`}
+            selected={selectedCategory === null}
+            onClick={() => setSelectedCategory(null)}
+          />
+          {categories.map((category) => (
+            <Pill
+              key={category}
+              label={RECIPE_CATEGORY_LABELS[category]}
+              selected={selectedCategory === category}
+              onClick={() => setSelectedCategory(category)}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Count row (optional, when not provided by desktop header) */}
       {!hideHeader && (
         <div className="flex items-center justify-between">
-          <span className="text-xs font-bold uppercase tracking-wider text-on-surface-variant">
-            {`${recipes.length} recetas disponibles`}
+          <span
+            aria-live="polite"
+            className="text-xs font-bold uppercase tracking-wider text-on-surface-variant"
+          >
+            {`${totalCount} ${totalCount === 1 ? 'receta disponible' : 'recetas disponibles'}`}
           </span>
           <button
             type="button"
-            onClick={onRefresh ?? onRetry}
+            onClick={onRefresh}
             className="flex items-center gap-1 text-xs font-semibold text-brand-green hover:underline"
           >
-            <span aria-hidden="true" className="material-symbols-outlined text-sm">refresh</span>
+            <span aria-hidden="true" className="material-symbols-outlined text-sm">
+              refresh
+            </span>
             Actualizar
           </button>
         </div>
@@ -197,10 +339,18 @@ export function RecipeCatalogList({
           </p>
           <button
             type="button"
-            onClick={() => { setSearchTerm(''); setSelectedCategory(null); }}
-            className="mt-3 rounded-full bg-brand-green/10 px-3 py-1.5 text-xs font-bold text-brand-green"
+            onClick={() => {
+              if (search) {
+                search.clearFilters();
+              } else {
+                setSearchTerm('');
+                setSelectedCategory(null);
+              }
+            }}
+            aria-label="Limpiar filtros"
+            className="mt-3 rounded-full bg-brand-green/10 px-3 py-1.5 text-xs font-bold text-brand-green hover:bg-brand-green/20"
           >
-            Ver todas las recetas
+            {isSearchMode ? 'Limpiar filtros' : 'Ver todas las recetas'}
           </button>
         </div>
       ) : (
@@ -210,7 +360,7 @@ export function RecipeCatalogList({
             const primaryCategoryRaw = (recipe.categories ?? [])[0];
             const primaryCategory = primaryCategoryRaw
               ? RECIPE_CATEGORY_LABELS[primaryCategoryRaw]
-              : 'Sin categoría';
+              : (recipe.properties ?? [])[0] ?? 'Sin categoría';
             const categoryBadgeClasses = primaryCategoryRaw
               ? RECIPE_CATEGORY_BADGE_CLASSES[primaryCategoryRaw]
               : UNCATEGORIZED_BADGE_CLASSES;
@@ -262,7 +412,9 @@ export function RecipeCatalogList({
                   {/* Stats row */}
                   <div className="mt-2 flex items-center justify-between text-[11px] font-semibold">
                     <span className="flex items-center gap-0.5 text-brand-green">
-                      <span className="material-symbols-outlined text-xs" aria-hidden="true">schedule</span>
+                      <span className="material-symbols-outlined text-xs" aria-hidden="true">
+                        schedule
+                      </span>
                       {totalMinutes} min
                     </span>
                     {recipe.nutritionalValues && (
@@ -280,6 +432,28 @@ export function RecipeCatalogList({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Incremental pagination ("Cargar más") */}
+      {search && search.hasMore && (
+        <div className="pt-2 pb-4 text-center">
+          <button
+            type="button"
+            onClick={search.loadMore}
+            disabled={search.isFetchingMore}
+            aria-label="Cargar más recetas"
+            className="w-full rounded-xl border border-outline-variant/50 bg-white py-3 text-xs font-bold text-on-surface shadow-sm transition-all hover:bg-surface-container-low active:scale-[0.99] disabled:opacity-60"
+          >
+            {search.isFetchingMore ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-brand-green border-t-transparent" />
+                <span>Cargando más recetas...</span>
+              </span>
+            ) : (
+              'Cargar más recetas'
+            )}
+          </button>
         </div>
       )}
 
