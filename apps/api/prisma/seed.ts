@@ -118,40 +118,32 @@ async function main() {
     });
 
     // 2.3 Plan Alimentario (Semanal)
-    const startDate = new Date();
-    startDate.setHours(0, 0, 0, 0);
+    // Normalizar a medianoche UTC de la semana actual (Lunes)
+    const now = new Date();
+    const utcDay = now.getUTCDay();
+    // En JS UTC: Domingo = 0. Si es domingo (0), son 6 días atrás; si no, (utcDay - 1) días atrás.
+    const diff = utcDay === 0 ? 6 : utcDay - 1;
 
-    // En JS: Domingo = 0. Si es domingo (0), son 6 días atrás; si no, (day - 1) días atrás.
-    const day = startDate.getDay();
-    const diff = day === 0 ? 6 : day - 1;
+    const startDate = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() - diff,
+      0, 0, 0, 0
+    ));
 
-    startDate.setDate(startDate.getDate() - diff);
+    const endDate = new Date(startDate.getTime() + 6 * 24 * 60 * 60 * 1000);
 
-    const endDate = new Date(startDate);
-    endDate.setDate(startDate.getDate() + 6);
+    // Limpiamos planes previos de este usuario de prueba para evitar registros desfasados o duplicados
+    await prisma.mealPlan.deleteMany({ where: { userId: user.id } });
 
-    // Buscar/crear la version actual del plan (NUT-75: MealPlan ya no tiene un @@unique
-    // simple sobre userId+startDate, asi que no se puede usar upsert con ese compound;
-    // se busca la version actual manualmente y se crea o actualiza segun corresponda).
-    const existingPlan = await prisma.mealPlan.findFirst({
-      where: { userId: user.id, startDate, isCurrent: true }
+    // Creacion de Plan para la semana en curso
+    const plan = await prisma.mealPlan.create({
+      data: {
+        userId: user.id,
+        startDate,
+        endDate
+      }
     });
-
-    const plan = existingPlan
-      ? await prisma.mealPlan.update({
-          where: { id: existingPlan.id },
-          data: { endDate }
-        })
-      : await prisma.mealPlan.create({
-          data: {
-            userId: user.id,
-            startDate,
-            endDate
-          }
-        });
-
-    // Dias y Comidas (Limpiamos y recreamos para evitar duplicados complejos de manejar en arrays)
-    await prisma.mealPlanDay.deleteMany({ where: { mealPlanId: plan.id } });
 
     const daysOfWeek = [
       DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
@@ -169,8 +161,7 @@ async function main() {
     ];
 
     for (let i = 0; i < daysOfWeek.length; i++) {
-      const currentDate = new Date(startDate);
-      currentDate.setDate(startDate.getDate() + i);
+      const currentDate = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
 
       await prisma.mealPlanDay.create({
         data: {

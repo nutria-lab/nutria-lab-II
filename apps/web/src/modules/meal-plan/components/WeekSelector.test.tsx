@@ -21,6 +21,16 @@ function buildDay(day: string, date: string) {
 
 const days = [buildDay('MONDAY', '2026-08-24'), buildDay('TUESDAY', '2026-08-25'), buildDay('WEDNESDAY', '2026-08-26')];
 
+const fullWeekDays = [
+  buildDay('MONDAY', '2026-08-24'),
+  buildDay('TUESDAY', '2026-08-25'),
+  buildDay('WEDNESDAY', '2026-08-26'),
+  buildDay('THURSDAY', '2026-08-27'),
+  buildDay('FRIDAY', '2026-08-28'),
+  buildDay('SATURDAY', '2026-08-29'),
+  buildDay('SUNDAY', '2026-08-30'),
+];
+
 describe('WeekSelector', () => {
   it('keeps only the selected day in the natural tab order (roving tabindex)', () => {
     render(<WeekSelector days={days as never} selectedDate="2026-08-25" onSelectDate={vi.fn()} />);
@@ -60,5 +70,44 @@ describe('WeekSelector', () => {
     await user.keyboard('{ArrowLeft}');
 
     expect(handleSelect).toHaveBeenCalledWith('2026-08-26');
+  });
+
+  it('renders all 7 days with a fluid grid-cols-7 layout without rigid min-w-[64px] buttons', () => {
+    render(<WeekSelector days={fullWeekDays as never} selectedDate="2026-08-24" onSelectDate={vi.fn()} />);
+
+    const tablist = screen.getByRole('tablist');
+    expect(tablist).toHaveClass('grid-cols-7');
+    expect(tablist).toHaveClass('w-full');
+
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(7);
+    tabs.forEach((tab) => {
+      expect(tab.className).not.toContain('min-w-[64px]');
+      expect(tab.className).not.toContain('shrink-0');
+    });
+  });
+
+  it('renders Sunday (Dom) tab and selects Sunday on click', async () => {
+    const handleSelect = vi.fn();
+    const user = userEvent.setup();
+    render(<WeekSelector days={fullWeekDays as never} selectedDate="2026-08-24" onSelectDate={handleSelect} />);
+
+    const sundayTab = screen.getByRole('tab', { name: /dom|30/i });
+    expect(sundayTab).toBeInTheDocument();
+
+    await user.click(sundayTab);
+
+    expect(handleSelect).toHaveBeenCalledWith('2026-08-30');
+  });
+
+  it('navigates to Sunday via keyboard navigation from Saturday', async () => {
+    const handleSelect = vi.fn();
+    const user = userEvent.setup();
+    render(<WeekSelector days={fullWeekDays as never} selectedDate="2026-08-29" onSelectDate={handleSelect} />);
+
+    screen.getByRole('tab', { name: /29/ }).focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(handleSelect).toHaveBeenCalledWith('2026-08-30');
   });
 });
