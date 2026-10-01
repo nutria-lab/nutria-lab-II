@@ -79,4 +79,47 @@ describe('MealCard', () => {
 
     expect(screen.getByText('Receta no disponible')).toBeInTheDocument();
   });
+
+  it('correctly formats ingredients without unit or quantity (ensuring no "undefined" appears)', async () => {
+    const mealWithBareIngredients = buildMeal({
+      recipe: {
+        id: 'recipe-1',
+        title: 'Receta con condimentos',
+        description: 'Simple',
+        prepMinutes: 5,
+        cookMinutes: 0,
+        ingredients: [
+          { name: 'Sal' },
+          { name: 'Huevos', quantity: 2 },
+          { name: 'Aceite', unit: 'cda' },
+        ],
+        instructions: ['Mezclar'],
+      },
+    });
+    const user = userEvent.setup();
+    render(<MealCard meal={mealWithBareIngredients as never} />);
+
+    await user.click(screen.getByRole('button', { name: /Receta con condimentos/ }));
+
+    expect(screen.getByText('Sal')).toBeInTheDocument();
+    expect(screen.getByText('2 Huevos')).toBeInTheDocument();
+    expect(screen.getByText('cda Aceite')).toBeInTheDocument();
+    expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument();
+  });
+
+  it('renders compact card layout with category badge, swap button, and title when compact=true', () => {
+    render(<MealCard meal={buildMeal() as never} compact />);
+
+    expect(screen.getByText('Avena con frutos rojos')).toBeInTheDocument();
+    expect(screen.getByText(/desayuno/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cambiar|swap/i })).toBeInTheDocument();
+  });
+
+  it('shows fallback in compact mode when recipe is null', () => {
+    const mealWithoutRecipe = buildMeal({ recipeId: null, recipe: null });
+
+    render(<MealCard meal={mealWithoutRecipe as never} compact />);
+
+    expect(screen.getByText('Receta no disponible')).toBeInTheDocument();
+  });
 });

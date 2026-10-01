@@ -18,7 +18,7 @@ type DietPillsProps = {
 
 export function DietPills({ value, disabled, onChange }: DietPillsProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="grid grid-cols-2 gap-3">
       {DIET_OPTIONS.map((option) => (
         <Pill
           key={option.value}
