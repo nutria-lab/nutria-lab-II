@@ -91,24 +91,45 @@ export function useRecipeSearch({
 }: UseRecipeSearchOptions = {}): UseRecipeSearchResult {
   const persisted = useRef(enabled && enableSessionPersistence ? loadPersisted() : null).current;
 
+  // Si viene un initialQuery explícito (ej: URL ?q=quinoa), tiene prioridad sobre el estado persistido
+  const hasExplicitInitialQuery = Boolean(initialQuery && initialQuery.trim());
+  const initialCommitted = hasExplicitInitialQuery
+    ? initialQuery?.trim()
+    : persisted?.searchState.committedQuery;
+  const initialDraft = hasExplicitInitialQuery
+    ? (initialQuery ?? '')
+    : (persisted?.searchState.draftText ?? '');
+
   // Estado 1: searchState (fuente de verdad de los filtros)
   const [searchState, setSearchState] = useState<RecipeSearchState>(() => ({
-    draftText: persisted?.searchState.draftText ?? initialQuery ?? '',
-    committedQuery: persisted?.searchState.committedQuery ?? (initialQuery?.trim() || undefined),
-    properties: persisted?.searchState.properties ?? [],
-    maxPrepMinutes: persisted?.searchState.maxPrepMinutes,
-    page: persisted?.searchState.page ?? 1,
+    draftText: initialDraft,
+    committedQuery: initialCommitted,
+    properties: hasExplicitInitialQuery ? [] : (persisted?.searchState.properties ?? []),
+    maxPrepMinutes: hasExplicitInitialQuery ? undefined : persisted?.searchState.maxPrepMinutes,
+    page: hasExplicitInitialQuery ? 1 : (persisted?.searchState.page ?? 1),
   }));
 
   // Estado 2: queryResult (respuesta del backend y estados de carga)
-  const [queryResult, setQueryResult] = useState<QueryResultState>(() => ({
-    recipes: persisted?.recipes ?? [],
-    total: persisted?.total ?? 0,
-    status: persisted ? (persisted.recipes.length === 0 ? 'empty' : 'success') : 'loading',
-    isFetchingMore: false,
-    errorMessage: null,
-    errorKind: null,
-  }));
+  const [queryResult, setQueryResult] = useState<QueryResultState>(() => {
+    if (hasExplicitInitialQuery) {
+      return {
+        recipes: [],
+        total: 0,
+        status: 'loading',
+        isFetchingMore: false,
+        errorMessage: null,
+        errorKind: null,
+      };
+    }
+    return {
+      recipes: persisted?.recipes ?? [],
+      total: persisted?.total ?? 0,
+      status: persisted ? (persisted.recipes.length === 0 ? 'empty' : 'success') : 'loading',
+      isFetchingMore: false,
+      errorMessage: null,
+      errorKind: null,
+    };
+  });
 
   const reqIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
@@ -161,6 +182,9 @@ export function useRecipeSearch({
         .then((data) => {
           if (reqIdRef.current !== currentId) return;
 
+          // Solo avanzar page en searchState cuando la petición tuvo éxito:
+          setSearchState((prev) => ({ ...prev, page: targetPage }));
+
           setQueryResult((prev) => ({
             ...prev,
             recipes: isFirstPage
@@ -197,7 +221,7 @@ export function useRecipeSearch({
     if (!enabled) return;
     if (isInitialMount.current) {
       isInitialMount.current = false;
-      if (persisted && persisted.recipes.length > 0) return;
+      if (!hasExplicitInitialQuery && persisted && persisted.recipes.length > 0) return;
     }
     fetchRecipes(page);
     return () => abortRef.current?.abort();
@@ -253,11 +277,17 @@ export function useRecipeSearch({
 
   const loadMore = useCallback(() => {
     if (!queryResult.isFetchingMore && hasMore) {
-      setSearchState((prev) => ({ ...prev, page: prev.page + 1 }));
+      fetchRecipes(searchState.page + 1);
     }
-  }, [queryResult.isFetchingMore, hasMore]);
+  }, [queryResult.isFetchingMore, hasMore, fetchRecipes, searchState.page]);
 
-  const retry = useCallback(() => fetchRecipes(page), [fetchRecipes, page]);
+  const retry = useCallback(() => {
+    const target =
+      queryResult.recipes.length > 0 && queryResult.recipes.length < queryResult.total
+        ? searchState.page + 1
+        : searchState.page;
+    fetchRecipes(target);
+  }, [fetchRecipes, queryResult.recipes.length, queryResult.total, searchState.page]);
 
   return {
     draftText: searchState.draftText,

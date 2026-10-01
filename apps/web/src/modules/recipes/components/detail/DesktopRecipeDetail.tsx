@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams, type useNavigate } from 'react-router-dom';
 import { Modal } from '../../../../common/components/Modal';
 import { TopBar } from '../../../../common/components/TopBar';
@@ -103,22 +103,74 @@ export function DesktopRecipeDetail({
         refetch: searchHook?.refetch ?? (() => {}),
       };
 
-  // Coherencia de selección: si la receta seleccionada deja de pertenecer al resultado de búsqueda
+  // Coherencia de selección: si la receta seleccionada deja de pertenecer al resultado de búsqueda por filtros activos
   const isRecipeInResults = recipe ? catalog.recipes.some((r) => r.id === recipe.id) : false;
+
+  const hasActiveFilters = Boolean(
+    searchTerm.trim() ||
+      (searchHook &&
+        (searchHook.properties.length > 0 ||
+          (searchHook.maxPrepMinutes != null && searchHook.maxPrepMinutes > 0))),
+  );
+
+  const recipeMatchesFilters = useMemo(() => {
+    if (!recipe) return false;
+    if (!hasActiveFilters) return true;
+
+    const normalizedQuery = searchTerm.trim().toLowerCase();
+    if (normalizedQuery) {
+      const matchTitle = recipe.title.toLowerCase().includes(normalizedQuery);
+      const matchDesc = recipe.description?.toLowerCase().includes(normalizedQuery);
+      const matchIngredient = (recipe.ingredients ?? []).some((ing) =>
+        ing.name.toLowerCase().includes(normalizedQuery),
+      );
+      const matchProperty = (recipe.properties ?? []).some((prop) =>
+        prop.toLowerCase().includes(normalizedQuery),
+      );
+      if (!matchTitle && !matchDesc && !matchIngredient && !matchProperty) {
+        return false;
+      }
+    }
+
+    if (searchHook && searchHook.properties.length > 0) {
+      const recipeProps = (recipe.properties ?? []).map((p) => p.toLowerCase());
+      const recipeCategories = (recipe.categories ?? []).map((c) => c.toLowerCase());
+      const hasAllProps = searchHook.properties.every((p) => {
+        const lower = p.toLowerCase();
+        return recipeProps.includes(lower) || recipeCategories.includes(lower);
+      });
+      if (!hasAllProps) return false;
+    }
+
+    if (searchHook?.maxPrepMinutes != null && searchHook.maxPrepMinutes > 0) {
+      if (recipe.prepMinutes > searchHook.maxPrepMinutes) return false;
+    }
+
+    return true;
+  }, [recipe, hasActiveFilters, searchTerm, searchHook]);
 
   useEffect(() => {
     if (panelMode !== 'detail') return;
     if (catalog.status !== 'success') return;
     if (catalog.recipes.length === 0) return;
 
-    if (recipe && !isRecipeInResults) {
-      // Si la receta actual ya no pertenece a los filtros pero hay otras recetas, seleccionar la primera
+    if (hasActiveFilters && recipe && !isRecipeInResults && !recipeMatchesFilters) {
+      // Si la receta actual ya no pertenece a los filtros activos pero hay otras recetas, seleccionar la primera
       navigate(`/recipes/${catalog.recipes[0].id}`, { replace: true });
     }
-  }, [catalog.status, catalog.recipes, recipe, isRecipeInResults, navigate, panelMode]);
+  }, [
+    catalog.status,
+    catalog.recipes,
+    recipe,
+    isRecipeInResults,
+    recipeMatchesFilters,
+    hasActiveFilters,
+    navigate,
+    panelMode,
+  ]);
 
   const effectiveRecipe =
-    catalog.status === 'success' && !isRecipeInResults && catalog.recipes.length === 0
+    hasActiveFilters && catalog.status === 'success' && !isRecipeInResults && !recipeMatchesFilters
       ? null
       : recipe;
 

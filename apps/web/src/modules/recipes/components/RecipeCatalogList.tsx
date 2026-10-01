@@ -181,9 +181,9 @@ export function RecipeCatalogList({
       (!search && selectedCategory !== null),
   );
 
-  if (status === 'loading') return <LoadingSkeleton />;
+  if (!isSearchMode && status === 'loading') return <LoadingSkeleton />;
   if (status === 'empty' && !hasActiveFilters) return <EmptyState onCreate={onCreateRecipe} />;
-  if (status === 'error' && recipes.length === 0) {
+  if (!isSearchMode && status === 'error' && recipes.length === 0) {
     return <ErrorState message={errorMessage ?? 'No pudimos cargar tus recetas.'} onRetry={onRetry} />;
   }
 
@@ -328,7 +328,50 @@ export function RecipeCatalogList({
         </div>
       )}
 
-      {hasNoFilterResults ? (
+      {status === 'loading' && recipes.length === 0 ? (
+        <div
+          data-testid="recipes-loading-skeleton"
+          aria-busy="true"
+          aria-live="polite"
+          className="animate-pulse space-y-3"
+        >
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="h-28 rounded-2xl bg-surface-container" />
+          ))}
+        </div>
+      ) : status === 'error' && recipes.length === 0 ? (
+        <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
+          <p className="font-headline text-base font-bold text-on-surface">Algo salió mal</p>
+          <p className="mt-1 text-xs text-on-surface-variant">
+            {errorMessage ?? 'No pudimos cargar tus recetas.'}
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded-full bg-brand-green/10 px-4 py-1.5 text-xs font-bold text-brand-green hover:bg-brand-green/20"
+            >
+              Reintentar
+            </button>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (search) {
+                    search.clearFilters();
+                  } else {
+                    setSearchTerm('');
+                    setSelectedCategory(null);
+                  }
+                }}
+                className="rounded-full border border-outline-variant/40 bg-surface-container px-4 py-1.5 text-xs font-bold text-on-surface hover:bg-surface-container-high"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+        </div>
+      ) : hasNoFilterResults ? (
         <div className="rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 text-center">
           <span className="material-symbols-outlined text-3xl text-on-surface-variant">search_off</span>
           <p className="mt-2 font-headline text-sm font-bold text-on-surface">
