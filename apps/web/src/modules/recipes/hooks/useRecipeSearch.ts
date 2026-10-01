@@ -8,7 +8,7 @@ import {
 
 export const RECIPE_SEARCH_SESSION_KEY = 'nutria_recipe_search_state';
 export const DEBOUNCE_DELAY_MS = 300;
-export const DEFAULT_PAGE_SIZE = 12;
+export const DEFAULT_PAGE_SIZE = 4;
 
 export type RecipeSearchState = {
   draftText: string;

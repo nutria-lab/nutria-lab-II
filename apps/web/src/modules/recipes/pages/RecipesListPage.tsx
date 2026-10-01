@@ -15,7 +15,7 @@ import { useRecipeSearch, type UseRecipeSearchResult } from '../hooks/useRecipeS
 // cargadas — redirige de inmediato a `/recipes/{primera receta}` (layout de dos columnas de
 // `RecipeDetailPage`), reemplazando la entrada de historial. En mobile, o con el listado
 // vacío, sigue mostrando el listado tal cual (ahora vía `RecipeCatalogList`).
-const DESKTOP_MEDIA_QUERY = '(min-width: 768px)';
+const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 
 // NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
 // mockups de Stitch de la pantalla de recetas): reemplaza el header anterior (`<h1>Recetas</h1>`
