@@ -47,7 +47,7 @@ export class RecipeRepository {
         SELECT
           "id", "title", "description", "prepMinutes", "cookMinutes",
           "ingredients", "instructions", "categories", "nutritionalValues",
-          "properties", "createdAt", "updatedAt"
+          "properties", "image", "createdAt", "updatedAt"
         FROM "recipes"
         ${where}
         ORDER BY "createdAt" DESC, "id" DESC

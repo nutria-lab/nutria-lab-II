@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException, ConflictException, Logger } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
 import { GeminiService, GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
 import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
@@ -8,13 +8,41 @@ import { validate } from 'class-validator';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
+import { PexelsService } from '@/modules/pexels/pexels.service';
 
 @Injectable()
 export class PlansService {
+  private readonly logger = new Logger(PlansService.name);
+
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService
+    private readonly gemini: GeminiService,
+    private readonly pexels: PexelsService
   ) {}
+
+  /**
+   * NUT-83 revisión de reviewers - Gap 2 (bloqueante): `attachImages` (el orquestador de
+   * batch) es código propio nuevo que sí puede rechazar por un bug inesperado, a diferencia de
+   * `resolveImage` individual (diseñado para nunca lanzar). Ante cualquier rechazo, se degrada
+   * (nunca se relanza): se continúa con `days` tal cual, sin resolución de imagen, para que la
+   * generación/confirmación del plan nunca falle por un problema de Pexels (design.md Flujo B).
+   */
+  private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
+    try {
+      return await this.pexels.attachImages(days);
+    } catch (error: any) {
+      // Todo lo que puede fallar del lado de Pexels en sí (timeout, 429, 5xx, JSON inválido,
+      // etc.) ya se absorbe dentro de resolveImage/attachImages y nunca llega hasta acá — si
+      // esto se dispara, es un bug real de nuestro propio código, no un mal día de Pexels.
+      // Se loguea como error (con stack) para que no se confunda con los warnings rutinarios
+      // de pexels.service.ts, aunque la estrategia siga siendo degradar, nunca relanzar.
+      this.logger.error(
+        `attachImages failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
+        error?.stack
+      );
+      return days;
+    }
+  }
 
   private parseDateString(dateStr: string): Date {
     // Treat as UTC to avoid timezone shift
@@ -180,8 +208,17 @@ export class PlansService {
       throw error;
     }
 
+    // NUT-83 (design.md D1 corregido/D2/D3): resolver TODAS las imágenes del batch, con
+    // concurrencia acotada, ANTES de invocar createPlanTransaction — SIEMPRE, sin condicionar a
+    // generationRunId. Aplica igual al camino IA (generateAndPersistPlan, que llega acá con
+    // generationRunId definido) y al camino manual (POST /meal-plans -> createPlan ->
+    // validateAndPersistPlan sin generationRunId). Nunca lanza (cada resolución individual ya
+    // devuelve RecipeImage | null); un fallo inesperado del propio orquestador se degrada en
+    // resolveImagesOrDegrade (Gap 2 de la revisión de reviewers), nunca bloquea la persistencia.
+    const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
+
     try {
-      await this.repository.createPlanTransaction(userId, weekStart, dto.days, generationRunId);
+      await this.repository.createPlanTransaction(userId, weekStart, daysForPersistence, generationRunId);
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el
       // GenerationRun no debe quedar colgado en PENDING para siempre — se transiciona a FAILED
@@ -281,8 +318,15 @@ export class PlansService {
       throw error;
     }
 
+    // NUT-83 (design.md D1 corregido/D2): mismo criterio que validateAndPersistPlan — resolver
+    // TODAS las imágenes de dto.days ANTES de invocar updatePlanTransaction. Este camino
+    // (PUT /meal-plans, edición/regeneración manual) está dentro de alcance de D1 corregido:
+    // toda receta nueva intenta resolución de imagen, sin importar `origin`. Un fallo
+    // inesperado del orquestador se degrada (Gap 2), nunca bloquea la persistencia.
+    const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
+
     try {
-      await this.repository.updatePlanTransaction(userId, weekStart, dto.days, run.id);
+      await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
     } catch (error) {
       // Gap 3 (alto): mismo criterio que en validateAndPersistPlan — transicionar a FAILED
       // antes de re-lanzar, sin dejar que un fallo de limpieza oscurezca el error original.
