@@ -5,13 +5,14 @@
   "scripts": {
     "dev": "nest start --watch",
     "build": "pnpm prisma:generate && nest build",
-    "lint": "pnpm prisma:generate && tsc --noEmit",
+    "lint": "pnpm prisma:generate && node ../../node_modules/typescript/bin/tsc --noEmit",
     "test": "jest",
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "prisma:seed": "npx tsx prisma/seed.ts"
+    "prisma:seed": "npx tsx prisma/seed.ts",
+    "unsplash:recover-tracking": "npx tsx prisma/recover-unsplash-tracking.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

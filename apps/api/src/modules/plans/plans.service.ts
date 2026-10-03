@@ -8,7 +8,9 @@ import { validate } from 'class-validator';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
-import { PexelsService } from '@/modules/pexels/pexels.service';
+import { UnsplashService, resolveWithBoundedConcurrency, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
+import type { PersistedRecipeImage } from '@/modules/unsplash/recipe-image.types';
+import type { RecipeForTracking } from './plans.repository';
 
 @Injectable()
 export class PlansService {
@@ -17,31 +19,52 @@ export class PlansService {
   constructor(
     private readonly repository: PlansRepository,
     private readonly gemini: GeminiService,
-    private readonly pexels: PexelsService
+    private readonly unsplash: UnsplashService
   ) {}
 
   /**
-   * NUT-83 revisión de reviewers - Gap 2 (bloqueante): `attachImages` (el orquestador de
-   * batch) es código propio nuevo que sí puede rechazar por un bug inesperado, a diferencia de
-   * `resolveImage` individual (diseñado para nunca lanzar). Ante cualquier rechazo, se degrada
-   * (nunca se relanza): se continúa con `days` tal cual, sin resolución de imagen, para que la
-   * generación/confirmación del plan nunca falle por un problema de Pexels (design.md Flujo B).
+   * searchAndSelectImages (the batch orchestrator, design.md 12.5.2 paso 1) is our own code and
+   * can reject on an unexpected bug, unlike resolveImage itself (designed to never throw). Any
+   * rejection degrades (never rethrows): continue with `days` as-is, unresolved, so plan
+   * generation/confirmation never fails because of a provider problem (design.md Flujo B).
+   * Deliberately NOT attachImages: that method tracks download_location before the recipe is
+   * persisted, which violates 12.5.2 (tracking only after createPlanTransaction/
+   * updatePlanTransaction commits, via trackNewRecipeImages below).
    */
   private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
     try {
-      return await this.pexels.attachImages(days);
+      return await this.unsplash.searchAndSelectImages(days);
     } catch (error: any) {
-      // Todo lo que puede fallar del lado de Pexels en sí (timeout, 429, 5xx, JSON inválido,
-      // etc.) ya se absorbe dentro de resolveImage/attachImages y nunca llega hasta acá — si
-      // esto se dispara, es un bug real de nuestro propio código, no un mal día de Pexels.
-      // Se loguea como error (con stack) para que no se confunda con los warnings rutinarios
-      // de pexels.service.ts, aunque la estrategia siga siendo degradar, nunca relanzar.
       this.logger.error(
         `attachImages failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
         error?.stack
       );
       return days;
     }
+  }
+
+  /**
+   * Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.2): invoked AFTER createPlanTransaction/
+   * updatePlanTransaction already committed, outside any try/catch tied to the GenerationRun's
+   * FAILED transition - a tracking failure must never make the transaction itself look failed,
+   * it only leaves that one recipe's `image.tracking.status` as FAILED for the recovery
+   * mechanism to pick up later. Same bounded concurrency as the search step (D3, shared quota).
+   * `repository.updateRecipeImageTracking` is called optionally (`?.`) so this stays safe even
+   * against a repository stub that doesn't implement it yet.
+   */
+  private async trackNewRecipeImages(recipesForTracking: RecipeForTracking[]): Promise<void> {
+    if (recipesForTracking.length === 0) {
+      return;
+    }
+    await resolveWithBoundedConcurrency(recipesForTracking, async (item) => {
+      // plans.repository.ts deliberately types this as a local structural type, never importing
+      // PersistedRecipeImage from the image adapter module (it would trip the AC14/D2 guard,
+      // plans-transaction-no-network.spec.ts) - safe to re-assert the real shape here, since this
+      // service layer is exactly where the two representations are meant to meet.
+      const tracked = await this.unsplash.trackDownload(item.image as unknown as PersistedRecipeImage);
+      await this.repository.updateRecipeImageTracking?.(item.recipeId, tracked as any);
+      return tracked;
+    });
   }
 
   private parseDateString(dateStr: string): Date {
@@ -217,8 +240,10 @@ export class PlansService {
     // resolveImagesOrDegrade (Gap 2 de la revisión de reviewers), nunca bloquea la persistencia.
     const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
 
+    let recipesForTracking: RecipeForTracking[] = [];
     try {
-      await this.repository.createPlanTransaction(userId, weekStart, daysForPersistence, generationRunId);
+      const persisted = await this.repository.createPlanTransaction(userId, weekStart, daysForPersistence, generationRunId);
+      recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el
       // GenerationRun no debe quedar colgado en PENDING para siempre — se transiciona a FAILED
@@ -237,6 +262,12 @@ export class PlansService {
       }
       throw error;
     }
+
+    // NUT-83 ciclo B (design.md 12.5.2 paso 3): tracking corre DESPUÉS de que la transacción ya
+    // commiteó, fuera del try/catch de arriba — un fallo de tracking nunca debe transicionar el
+    // GenerationRun a FAILED, sólo deja esa receta en tracking.status FAILED para 12.6.
+    await this.trackNewRecipeImages(recipesForTracking);
+
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
@@ -325,8 +356,10 @@ export class PlansService {
     // inesperado del orquestador se degrada (Gap 2), nunca bloquea la persistencia.
     const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
 
+    let recipesForTracking: RecipeForTracking[] = [];
     try {
-      await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
+      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
+      recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto): mismo criterio que en validateAndPersistPlan — transicionar a FAILED
       // antes de re-lanzar, sin dejar que un fallo de limpieza oscurezca el error original.
@@ -340,6 +373,9 @@ export class PlansService {
       throw error;
     }
 
+    // NUT-83 ciclo B: mismo criterio que validateAndPersistPlan — tracking fuera del try/catch.
+    await this.trackNewRecipeImages(recipesForTracking);
+
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
@@ -348,7 +384,29 @@ export class PlansService {
     const plan = await this.repository.findPlanByWeek(userId, weekStart);
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
-    return plan;
+
+    // NUT-83 ciclo B (design.md 12.5.1): single choke point for every plan read with an embedded
+    // recipe - strips the private `tracking` namespace before it ever reaches a controller.
+    // Builds a copy (never mutates `plan`/`days`, same criterion already used by
+    // buildOutputSnapshot in plans.repository.ts).
+    return {
+      ...plan,
+      days: (plan.days ?? []).map((day: any) => ({
+        ...day,
+        meals: (day.meals ?? []).map((meal: any) => {
+          if (!meal.recipe) {
+            return meal;
+          }
+          return {
+            ...meal,
+            recipe: {
+              ...meal.recipe,
+              image: toPublicRecipeImage(meal.recipe.image as PersistedRecipeImage | null),
+            },
+          };
+        }),
+      })),
+    };
   }
 
   private validateRestrictions(days: MealPlanDayDto[], profile: NutritionProfile) {

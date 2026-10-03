@@ -3,6 +3,23 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MealPlanDayDto } from './dto';
 import { isValidTransition, GenerationStatus } from './generation-run-state-machine';
 
+// Local, structural duplicate of the image adapter module's PersistedRecipeImage type -
+// deliberately NOT imported from that module: this repository must never reference the image
+// provider adapter, even by a type-only import, or the AC14/D2 guard
+// (plans-transaction-no-network.spec.ts, a plain-text scan over this whole file for that
+// provider's name) would trip on the import path itself. This file only ever treats the value as
+// plain data (read a few keys, write it back whole), so a structural type is all it needs.
+type RecipeImageWithTracking = {
+  tracking: { status: 'PENDING' | 'SUCCEEDED' | 'FAILED'; lastAttemptAt: string | null; trackingUrl: string };
+  [key: string]: unknown;
+};
+
+// Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.2): one entry per NEW recipe row created with a
+// resolved image during this transaction, so the service layer can invoke tracking AFTER the
+// transaction already committed - the only point in the loop where (recipeId, image) are both
+// known together.
+export type RecipeForTracking = { recipeId: string; image: RecipeImageWithTracking };
+
 @Injectable()
 export class PlansRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -88,7 +105,9 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin?: 'MANUAL' | 'AI',
-  ) {
+  ): Promise<RecipeForTracking[]> {
+    const recipesForTracking: RecipeForTracking[] = [];
+
     for (const day of generatedDays) {
       const mealPlanDay = await tx.mealPlanDay.create({
         data: { mealPlanId: planId, day: day.day, date: new Date(day.date) }
@@ -128,6 +147,21 @@ export class PlansRepository {
 
           const recipe = await tx.recipe.create({ data: recipeData });
           recipeId = recipe.id;
+
+          // Ciclo B: only a NEW recipe with a resolved image still PENDING tracking is queued
+          // (design.md 12.5.2, "receta reutilizada... ni la búsqueda ni el tracking se
+          // disparan") - this branch only runs for recipes just created above, never for a
+          // reused existing recipe. The `tracking` key check also guards against an image that
+          // already arrived fully resolved (no tracking left to do): plain data accumulation, no
+          // I/O, so none of this violates D2.
+          if (
+            recipeImage !== undefined &&
+            recipeImage !== null &&
+            typeof recipeImage === 'object' &&
+            'tracking' in (recipeImage as object)
+          ) {
+            recipesForTracking.push({ recipeId, image: recipeImage as RecipeImageWithTracking });
+          }
         }
 
         await tx.plannedMeal.create({
@@ -141,6 +175,8 @@ export class PlansRepository {
         });
       }
     }
+
+    return recipesForTracking;
   }
 
   /**
@@ -207,7 +243,7 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin: 'MANUAL' | 'AI' | undefined = generationRunId ? 'AI' : undefined,
-  ) {
+  ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       const planData: any = {
         userId,
@@ -221,7 +257,13 @@ export class PlansRepository {
 
       const plan = await tx.mealPlan.create({ data: planData });
 
-      await this.createDaysMealsAndRecipes(tx, plan.id, generatedDays, generationRunId, recipeOrigin);
+      const recipesForTracking = await this.createDaysMealsAndRecipes(
+        tx,
+        plan.id,
+        generatedDays,
+        generationRunId,
+        recipeOrigin,
+      );
 
       if (generationRunId) {
         // Gap 6 (medio, design.md Flujo C paso 1b: "con outputSnapshot/validationSnapshot ya
@@ -235,7 +277,7 @@ export class PlansRepository {
         });
       }
 
-      return plan.id;
+      return { planId: plan.id, recipesForTracking };
     });
   }
 
@@ -284,7 +326,7 @@ export class PlansRepository {
     weekStart: Date,
     newDays: MealPlanDayDto[],
     generationRunId: string,
-  ) {
+  ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       // 1. Ubicar la versión actual.
       const current = await tx.mealPlan.findFirst({
@@ -337,7 +379,7 @@ export class PlansRepository {
       // `recipeOrigin: 'MANUAL'`, nunca `'AI'`, sin importar que `generationRunId` esté
       // definido: el origen de la receta y la FK de trazabilidad son decisiones
       // independientes (ver `createDaysMealsAndRecipes`).
-      await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
+      const recipesForTracking = await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
 
       // 5. Transición del GenerationRun a SUCCEEDED (Gap 6: con outputSnapshot/validationSnapshot).
       await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
@@ -345,7 +387,7 @@ export class PlansRepository {
         validationSnapshot: { restrictionsChecked: true },
       });
 
-      return newPlan.id;
+      return { planId: newPlan.id, recipesForTracking };
     });
   }
 
@@ -415,6 +457,21 @@ export class PlansRepository {
     });
 
     return result.count;
+  }
+
+  /**
+   * Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.3): loose write, deliberately OUTSIDE any
+   * `$transaction` (same `this.prisma`, not `tx`) - one recipe's tracking result never blocks or
+   * conditions the others in the same batch. Takes the FULL image (public fields + updated
+   * `tracking`), never a tracking-only fragment: a Prisma `Json` column update replaces the
+   * whole value, so writing just `{ tracking }` would silently drop the 9 public fields already
+   * persisted.
+   */
+  async updateRecipeImageTracking(recipeId: string, fullImage: RecipeImageWithTracking): Promise<void> {
+    await this.prisma.recipe.update({
+      where: { id: recipeId },
+      data: { image: fullImage as any },
+    });
   }
 
   /**

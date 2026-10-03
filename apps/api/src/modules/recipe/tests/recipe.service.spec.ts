@@ -1,7 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { RecipeService } from '../recipe.service';
 import { RecipeRepository } from '../recipe.repository';
-import { PexelsService } from '@/modules/pexels/pexels.service';
+import { UnsplashService } from '@/modules/unsplash/unsplash.service';
 import { NotFoundException } from '@nestjs/common';
 
 interface RecipeListCriteria {
@@ -22,25 +22,25 @@ const mockRecipeRepository = {
   delete: jest.fn(),
 };
 
-// NUT-83 (design.md D1 corregido/D2, plan.md sección 10.2): mock plano de PexelsService.
-// A diferencia del patrón usado en `plans.service.spec.ts` (inyección por propiedad de
-// instancia, `(service as any).pexels = mockPexels`, elegido ahí para no depender de que el
-// constructor de `PlansService` ya tuviera el parámetro nuevo), acá se mockea por
-// CONSTRUCTOR, registrando `PexelsService` como provider de `Test.createTestingModule`
-// (`{ provide: PexelsService, useValue: mockPexelsService }`) — mismo mecanismo ya usado en
-// este archivo para `RecipeRepository`. Nest simplemente no inyecta el provider si el
-// constructor de `RecipeService` bajo test todavía no lo declara (estado actual, pre-
-// implementación), así que este registro es inofensivo hoy y pasa a resolverse de verdad en
-// cuanto el implementer agregue `pexels: PexelsService` al constructor de `RecipeService`
-// (plan.md sección 10.2).
-const mockPexelsService = {
+// Mocked by constructor (same mechanism already used below for RecipeRepository): Nest skips
+// injecting a provider the class under test doesn't declare yet, so this registration is a
+// no-op pre-implementation and resolves for real once RecipeService takes `unsplash` (NUT-83,
+// design.md D1/D2).
+const mockUnsplashService = {
   resolveImage: jest.fn(),
+  // Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.1): post-persistence tracking. Default
+  // implementation just marks it SUCCEEDED so pre-existing tests that don't care about tracking
+  // keep working without their own mock.
+  trackDownload: jest.fn(async (image: any) => ({
+    ...image,
+    tracking: { ...(image?.tracking ?? {}), status: 'SUCCEEDED', lastAttemptAt: new Date().toISOString() },
+  })),
 };
 
 describe('RecipeService', () => {
   let service: RecipeService;
   let repository: typeof mockRecipeRepository;
-  let pexels: typeof mockPexelsService;
+  let unsplash: typeof mockUnsplashService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -51,15 +51,15 @@ describe('RecipeService', () => {
           useValue: mockRecipeRepository,
         },
         {
-          provide: PexelsService,
-          useValue: mockPexelsService,
+          provide: UnsplashService,
+          useValue: mockUnsplashService,
         },
       ],
     }).compile();
 
     service = module.get<RecipeService>(RecipeService);
     repository = module.get(RecipeRepository);
-    pexels = module.get(PexelsService);
+    unsplash = module.get(UnsplashService);
 
     jest.clearAllMocks();
   });
@@ -74,7 +74,7 @@ describe('RecipeService', () => {
         pageSize: 8,
       };
       const page = {
-        items: [{ id: 'recipe-1', properties: ['Sin Gluten', 'Alto en Fibra'] }],
+        items: [{ id: 'recipe-1', properties: ['Sin Gluten', 'Alto en Fibra'], image: null }],
         page: 2,
         pageSize: 8,
         total: 9,
@@ -110,7 +110,7 @@ describe('RecipeService', () => {
 
   describe('findById', () => {
     it('should return recipe if found', async () => {
-      const recipe = { id: '1', title: 'Receta Test' };
+      const recipe = { id: '1', title: 'Receta Test', image: null };
       repository.findById.mockResolvedValue(recipe);
       
       const result = await service.findById('1');
@@ -133,36 +133,25 @@ describe('RecipeService', () => {
       expect(repository.create).toHaveBeenCalledWith(dto);
     });
 
-    /**
-     * NUT-83 (design.md D1 corregido/D2, plan.md sección 10.2) — `POST /recipes` (creación
-     * manual individual) es, junto con la generación de plan por IA y la edición/regeneración
-     * de plan, uno de los tres caminos de creación de receta a los que D1 corregido aplica: la
-     * resolución de imagen se intenta para TODA receta nueva, sin importar `origin`. D2 exige
-     * que la resolución ocurra fuera de cualquier transacción — acá no hay ninguna transacción
-     * de por medio (`RecipeRepository.create` es un único `prisma.recipe.create`, plan.md
-     * sección 10.2), así que D2 se satisface trivialmente con sólo resolver `image` ANTES de
-     * construir el objeto que se pasa a `repository.create`.
-     *
-     * Estos tres tests deben fallar en rojo hasta que el implementer cambie
-     * `RecipeService.create` para invocar `this.pexels.resolveImage(data.title)` antes de
-     * `this.repository.create(...)`, y pase el resultado bajo la clave `image`.
-     */
-    it('AC13/AC14 (NUT-83): invoca pexels.resolveImage(data.title) ANTES de repository.create', async () => {
+    // POST /recipes has no transaction of its own (RecipeRepository.create is a single
+    // prisma.recipe.create, plan.md 10.2), so D2 is satisfied simply by resolving `image`
+    // before building the object passed to repository.create.
+    it('AC13/AC14 (NUT-83): invoca unsplash.resolveImage(data.title) ANTES de repository.create', async () => {
       const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
       const resolvedImage = {
-        provider: 'PEXELS',
+        provider: 'UNSPLASH',
         providerPhotoId: '12345',
-        imageUrl: 'https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg',
-        sourceUrl: 'https://www.pexels.com/photo/12345',
+        imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
+        sourceUrl: 'https://unsplash.com/photos/12345',
         photographer: 'Jane Doe',
-        photographerUrl: 'https://www.pexels.com/@janedoe',
+        photographerUrl: 'https://unsplash.com/@janedoe',
         alt: 'A bowl of quinoa salad',
         query: 'ensalada de quinoa food recipe',
         retrievedAt: '2026-09-30T12:00:00.000Z',
       };
       const callOrder: string[] = [];
 
-      pexels.resolveImage.mockImplementation(async (title: string) => {
+      unsplash.resolveImage.mockImplementation(async (title: string) => {
         callOrder.push(`resolveImage:${title}`);
         return resolvedImage;
       });
@@ -174,24 +163,24 @@ describe('RecipeService', () => {
       await service.create(dto as any);
 
       expect(callOrder).toEqual(['resolveImage:Ensalada de Quinoa', 'repository.create']);
-      expect(pexels.resolveImage).toHaveBeenCalledWith(dto.title);
+      expect(unsplash.resolveImage).toHaveBeenCalledWith(dto.title);
     });
 
     it('AC3 (NUT-83): el objeto pasado a repository.create incluye el RecipeImage resuelto bajo la clave "image"', async () => {
       const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
       const resolvedImage = {
-        provider: 'PEXELS',
+        provider: 'UNSPLASH',
         providerPhotoId: '12345',
-        imageUrl: 'https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg',
-        sourceUrl: 'https://www.pexels.com/photo/12345',
+        imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
+        sourceUrl: 'https://unsplash.com/photos/12345',
         photographer: 'Jane Doe',
-        photographerUrl: 'https://www.pexels.com/@janedoe',
+        photographerUrl: 'https://unsplash.com/@janedoe',
         alt: 'A bowl of quinoa salad',
         query: 'ensalada de quinoa food recipe',
         retrievedAt: '2026-09-30T12:00:00.000Z',
       };
 
-      pexels.resolveImage.mockResolvedValue(resolvedImage);
+      unsplash.resolveImage.mockResolvedValue(resolvedImage);
       repository.create.mockResolvedValue({ id: '1', ...dto, image: resolvedImage });
 
       await service.create(dto as any);
@@ -201,10 +190,10 @@ describe('RecipeService', () => {
       );
     });
 
-    it('AC4/AC5 (NUT-83): cuando pexels.resolveImage devuelve null (sin resultados o proveedor no disponible), repository.create se llama igual con image: null y create completa exitosamente', async () => {
+    it('AC4/AC5 (NUT-83): cuando unsplash.resolveImage devuelve null (sin resultados o proveedor no disponible), repository.create se llama igual con image: null y create completa exitosamente', async () => {
       const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
 
-      pexels.resolveImage.mockResolvedValue(null);
+      unsplash.resolveImage.mockResolvedValue(null);
       repository.create.mockResolvedValue({ id: '1', ...dto, image: null });
 
       const result = await service.create(dto as any);
@@ -215,28 +204,13 @@ describe('RecipeService', () => {
       expect(result.id).toBe('1');
     });
 
-    /**
-     * NUT-83 revisión de reviewers - Gap 2 (BLOQUEANTE, confirmado independientemente por los
-     * 4 revisores): el test AC4/AC5 de arriba sólo cubre el camino documentado de
-     * `resolveImage` devolviendo `null` (design.md sección 4: key ausente, sin resultados,
-     * 404, timeout, 429, 5xx, JSON inválido — todos esos casos YA están diseñados para
-     * resolver en `null`, nunca lanzar). Este test cubre el camino NO documentado: un bug
-     * inesperado (`resolveImage` rechazando en vez de resolver en `null`, algo que
-     * `PexelsService` no debería hacer según su propio contrato, pero que `RecipeService.create`
-     * no debe asumir ciegamente que nunca ocurre). Hoy `RecipeService.create` no tiene ningún
-     * try/catch alrededor de `this.pexels.resolveImage(...)`, así que ese rechazo se propaga
-     * sin control y `repository.create` nunca se invoca — exactamente lo que design.md D4/
-     * Flujo B prohíben ("la receta sigue siendo válida aunque... el proveedor no esté
-     * disponible"; nunca debe romper la creación/confirmación de la receta).
-     *
-     * Debe fallar en rojo hasta que el implementer envuelva la llamada a
-     * `this.pexels.resolveImage(...)` en un try/catch que degrade a `image: null` ante
-     * cualquier rechazo inesperado, en vez de dejarlo propagar.
-     */
-    it('Gap 2 (NUT-83, BLOQUEANTE): cuando pexels.resolveImage RECHAZA con una excepción inesperada (bug, no un null documentado), create NO propaga la excepción — completa exitosamente llamando a repository.create con image: null', async () => {
+    // Gap 2 (BLOQUEANTE): unlike the documented null-return paths above (design.md section 4),
+    // an unexpected rejection from resolveImage must not propagate and break create() — D4/
+    // Flujo B require the recipe to persist regardless of a provider failure.
+    it('Gap 2 (NUT-83, BLOQUEANTE): cuando unsplash.resolveImage RECHAZA con una excepción inesperada (bug, no un null documentado), create NO propaga la excepción — completa exitosamente llamando a repository.create con image: null', async () => {
       const dto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
 
-      pexels.resolveImage.mockRejectedValue(new TypeError('bug inesperado'));
+      unsplash.resolveImage.mockRejectedValue(new TypeError('bug inesperado'));
       repository.create.mockResolvedValue({ id: '1', ...dto, image: null });
 
       const result = await service.create(dto as any);
@@ -245,6 +219,125 @@ describe('RecipeService', () => {
         expect.objectContaining({ ...dto, image: null }),
       );
       expect(result.id).toBe('1');
+    });
+
+    // Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.1): persist first (tracking PENDING), only
+    // then invoke tracking - never the other way around. `unsplash.resolveImage` now resolves
+    // the full persisted shape (public fields + tracking), not just the 9-field public image.
+    const pendingImage = {
+      provider: 'UNSPLASH',
+      providerPhotoId: '12345',
+      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
+      sourceUrl: 'https://unsplash.com/photos/12345?utm_source=nutria&utm_medium=referral',
+      photographer: 'Jane Doe',
+      photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
+      alt: 'A bowl of quinoa salad',
+      query: 'ensalada de quinoa food recipe',
+      retrievedAt: '2026-09-30T12:00:00.000Z',
+      tracking: { status: 'PENDING', lastAttemptAt: null, trackingUrl: 'https://api.unsplash.com/photos/12345/download' },
+    };
+    const recipeDto = { title: 'Ensalada de Quinoa', prepMinutes: 10, cookMinutes: 20, description: 'Test', ingredients: [], instructions: [], categories: [], properties: [], nutritionalValues: { calories: 1, protein: 1, carbs: 1, fat: 1 } };
+
+    it('ciclo B: persiste primero (con image.tracking.status PENDING) y recién después invoca unsplash.trackDownload', async () => {
+      const callOrder: string[] = [];
+
+      unsplash.resolveImage.mockResolvedValue(pendingImage);
+      repository.create.mockImplementation(async (data: any) => {
+        callOrder.push(`repository.create:tracking=${data.image?.tracking?.status}`);
+        return { id: 'recipe-1', ...data };
+      });
+      (unsplash as any).trackDownload = jest.fn().mockImplementation(async (image: any) => {
+        callOrder.push('trackDownload');
+        return { ...image, tracking: { ...image.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-01T00:00:00.000Z' } };
+      });
+
+      await service.create(recipeDto as any);
+
+      expect(callOrder).toEqual(['repository.create:tracking=PENDING', 'trackDownload']);
+    });
+
+    it('ciclo B: el objeto devuelto al caller (controller) nunca incluye la clave "tracking" dentro de image', async () => {
+      unsplash.resolveImage.mockResolvedValue(pendingImage);
+      repository.create.mockResolvedValue({ id: 'recipe-1', ...recipeDto, image: pendingImage });
+      (unsplash as any).trackDownload = jest.fn().mockResolvedValue({
+        ...pendingImage,
+        tracking: { ...pendingImage.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-01T00:00:00.000Z' },
+      });
+
+      const result = await service.create(recipeDto as any);
+
+      expect((result as any).image.tracking).toBeUndefined();
+      expect(Object.keys((result as any).image).sort()).toEqual(
+        ['alt', 'imageUrl', 'photographer', 'photographerUrl', 'provider', 'providerPhotoId', 'query', 'retrievedAt', 'sourceUrl'].sort(),
+      );
+    });
+
+    it('ciclo B: cuando unsplash.resolveImage devuelve null, nunca invoca trackDownload y el image devuelto sigue siendo null', async () => {
+      unsplash.resolveImage.mockResolvedValue(null);
+      repository.create.mockResolvedValue({ id: 'recipe-1', ...recipeDto, image: null });
+      (unsplash as any).trackDownload = jest.fn();
+
+      const result = await service.create(recipeDto as any);
+
+      expect((unsplash as any).trackDownload).not.toHaveBeenCalled();
+      expect((result as any).image).toBeNull();
+    });
+  });
+
+  // Ciclo B (design.md 12.5.1) - DTO filtering must happen in the service layer even though the
+  // repository (findAll via $queryRaw, findById via findUnique) returns the raw persisted image.
+  describe('NUT-83 ciclo B - filtrado de DTO público en findAll/findById', () => {
+    const rawImage = {
+      provider: 'UNSPLASH',
+      providerPhotoId: '12345',
+      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
+      sourceUrl: 'https://unsplash.com/photos/12345?utm_source=nutria&utm_medium=referral',
+      photographer: 'Jane Doe',
+      photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
+      alt: 'A bowl of quinoa salad',
+      query: 'ensalada de quinoa food recipe',
+      retrievedAt: '2026-09-30T12:00:00.000Z',
+      tracking: {
+        status: 'SUCCEEDED',
+        lastAttemptAt: '2026-09-30T12:05:00.000Z',
+        trackingUrl: 'https://api.unsplash.com/photos/12345/download',
+      },
+    };
+
+    it('findAll: cada item.image llega sin "tracking", aunque el repositorio devuelva el image crudo con tracking', async () => {
+      const page = {
+        items: [{ id: 'recipe-1', title: 'Ensalada de Quinoa', image: rawImage }],
+        page: 1,
+        pageSize: 12,
+        total: 1,
+      };
+      repository.findAll.mockResolvedValue(page);
+
+      const result: any = await (service.findAll as unknown as FindAllWithCriteria)({});
+
+      expect(result.items[0].image.tracking).toBeUndefined();
+      expect(Object.keys(result.items[0].image).sort()).toEqual(
+        ['alt', 'imageUrl', 'photographer', 'photographerUrl', 'provider', 'providerPhotoId', 'query', 'retrievedAt', 'sourceUrl'].sort(),
+      );
+    });
+
+    it('findById: el image devuelto llega sin "tracking", aunque el repositorio devuelva el image crudo con tracking', async () => {
+      repository.findById.mockResolvedValue({ id: 'recipe-1', title: 'Ensalada de Quinoa', image: rawImage });
+
+      const result: any = await service.findById('recipe-1');
+
+      expect(result.image.tracking).toBeUndefined();
+      expect(Object.keys(result.image).sort()).toEqual(
+        ['alt', 'imageUrl', 'photographer', 'photographerUrl', 'provider', 'providerPhotoId', 'query', 'retrievedAt', 'sourceUrl'].sort(),
+      );
+    });
+
+    it('findById: cuando image es null, sigue devolviendo image: null sin lanzar', async () => {
+      repository.findById.mockResolvedValue({ id: 'recipe-1', title: 'Ensalada de Quinoa', image: null });
+
+      const result: any = await service.findById('recipe-1');
+
+      expect(result.image).toBeNull();
     });
   });
 

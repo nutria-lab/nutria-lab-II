@@ -4,11 +4,11 @@ import { AuthModule } from '@/modules/auth/auth.module';
 import { RecipeController } from '@/modules/recipe/recipe.controller';
 import { RecipeService } from '@/modules/recipe/recipe.service';
 import { RecipeRepository } from './recipe.repository';
-import { PexelsModule } from '@/modules/pexels/pexels.module';
+import { UnsplashModule } from '@/modules/unsplash/unsplash.module';
 
 
 @Module({
-  imports: [PrismaModule, AuthModule, PexelsModule],
+  imports: [PrismaModule, AuthModule, UnsplashModule],
   controllers: [RecipeController],
   providers: [RecipeService, RecipeRepository],
   exports: [RecipeService, RecipeRepository]

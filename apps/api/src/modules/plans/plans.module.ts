@@ -6,10 +6,10 @@ import { GeminiService } from './gemini/gemini.service';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
-import { PexelsModule } from '@/modules/pexels/pexels.module';
+import { UnsplashModule } from '@/modules/unsplash/unsplash.module';
 
 @Module({
-  imports: [PrismaModule, ConfigModule, AuthModule, PexelsModule],
+  imports: [PrismaModule, ConfigModule, AuthModule, UnsplashModule],
   controllers: [PlansController],
   providers: [PlansService, GeminiService, PlansRepository],
   exports: [PlansService, PlansRepository]

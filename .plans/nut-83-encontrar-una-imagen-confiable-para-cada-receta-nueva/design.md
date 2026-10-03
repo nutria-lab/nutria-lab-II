@@ -302,3 +302,373 @@ Corrección posterior a una revisión externa de PR: esta sección responde expl
 - **Ruta de rollback:** `ALTER TABLE "recipes" DROP COLUMN "image";` — sin pérdida de datos de ningún otro campo (columna nueva y aislada, ver sección 8).
 
 **Nota sobre `AGENTS.md`:** una revisión de PR señaló que el `AGENTS.md` de la raíz del repo no se había leído explícitamente en el flujo de esta sesión (los agentes leyeron `CLAUDE.md` en su lugar). Verificado con `diff`: ambos archivos son **byte a byte idénticos** — `CLAUDE.md` es la copia para agentes Claude, `AGENTS.md` la copia equivalente para agentes Codex (el propio archivo lo dice: "Codex does not provide per-agent writable-path allowlists"). No hay ninguna guía que se haya omitido en sustancia.
+
+## 11. Revisión posterior — cambio de proveedor: Pexels → Unsplash, y disciplina de comentarios
+
+Corrección decidida por la usuaria dueña del ticket después de la primera implementación completa (que ya había pasado 2 rondas de revisión de PR con Pexels como proveedor). Dos cambios, ambos retroactivos a todo lo ya construido en las secciones anteriores:
+
+### 11.1 Disciplina de comentarios (aplica a todo el código de este ticket, no sólo al cambio de proveedor)
+
+Hallazgo de la usuaria, verificado como real (ejemplo concreto: un bloque JSDoc de 26 líneas documentando un solo test de 14 líneas, y un patrón similar en varios otros archivos de esta sesión): **el código quedó sobre-comentado, con más líneas de comentario que de código en varios bloques.** Regla a partir de esta revisión, para todo el código tocado por el cambio de proveedor (y deseable para el resto, aunque no se reescribe retroactivamente lo que no se toca): un comentario explica **por qué** una decisión no es obvia desde el código mismo (una regla de negocio, una lección aprendida de un bug real, una limitación externa) — nunca repite en prosa lo que el código ya dice con sus propios nombres. Ningún bloque de comentario debería superar, como heurística aproximada, el tamaño del código que describe. Las referencias a secciones de `design.md`/números de AC se mantienen cuando agregan trazabilidad real, pero sin reexplicar en el comentario lo que la firma de la función y el propio código ya comunican.
+
+### 11.2 Unsplash reemplaza a Pexels — contrato completo nuevo
+
+**Decisión: reemplazo total, no un segundo proveedor configurable.** El módulo `pexels/` (incluyendo el nombre de la carpeta, la clase, los archivos, los tests) deja de existir; nace `unsplash/` en su lugar, mismo rol arquitectónico (mismo punto de integración en `plans.service.ts`/`recipe.service.ts`, misma regla D2 de nunca llamar en una transacción, misma concurrencia acotada D3, mismo contrato público `RecipeImage` con `provider: 'UNSPLASH'` en vez de `'PEXELS'`). **`Recipe.image Json?` no cambia** — sigue siendo el mismo campo, la migración de la sección 8 de este documento sigue siendo válida tal cual (nadie modifica el schema de `Recipe` por este cambio).
+
+**Contrato real de Unsplash (verificado contra la documentación oficial, no asumido):**
+- Endpoint: `GET https://api.unsplash.com/search/photos`.
+- Header: `Authorization: Client-ID <UNSPLASH_ACCESS_KEY>` — nunca el Secret Key (no hace falta para búsqueda pública; no se usa en ningún lado del backend).
+- Parámetros: `query` (la misma query normalizada de la sección 2, sin cambios en el algoritmo de normalización), `page=1`, `per_page=5` (igual que antes), `order_by=relevant`, `content_filter=high`.
+- Selección de candidato: se conserva el mismo criterio de la sección 3 (primer resultado válido según el orden que ya devuelve el proveedor, sin reordenar) — sólo cambian los nombres de campo del candidato: `id`, `urls.regular` (reemplaza a `src.large`), `links.html` (reemplaza a `url`), `user.name` (reemplaza a `photographer`), `user.links.html` (reemplaza a `photographer_url`). `alt_description` reemplaza a `alt`; si viene vacío o ausente, se genera un texto de reemplazo determinístico: `` `Imagen ilustrativa de ${título}` `` (el título original de la receta, no la query normalizada).
+- Mapeo al contrato público `RecipeImage` (sin cambios de forma, sólo de origen de los valores): `provider: 'UNSPLASH'`, `providerPhotoId: String(id)`, `imageUrl: urls.regular`, `sourceUrl: links.html`, `photographer: user.name`, `photographerUrl: user.links.html`, `alt`, `query`, `retrievedAt`.
+
+**Requisito nuevo, sin equivalente en Pexels: registrar el "uso" de la foto (`download_location`).** Unsplash exige, como condición de uso de su API, notificar cuando una foto se usa realmente (no sólo se busca) — vía un `GET` al `download_location` que la propia respuesta de búsqueda incluye por candidato (`links.download_location`). Reglas de este diseño:
+- Se dispara **una sola vez**, en el momento en que un candidato queda elegido para una receta (dentro del mismo flujo de resolución, fuera de la transacción de Prisma — D2 no cambia) — nunca en una lectura/GET posterior de la receta (mismo principio ya establecido: `image` no se recalcula ni se re-dispara nada en lecturas).
+- Es una llamada de **fire-and-forget respecto al resultado de la receta**: si falla (timeout, 401/403, 429, 5xx), la receta se crea/persiste igual con la imagen ya elegida — un fallo de tracking nunca bloquea ni revierte la asociación de la imagen en sí.
+- "Debe quedar identificado para recuperación" (texto del ticket) **sin agregar ninguna columna nueva** (decisión explícita del ticket: "sin introducir otra columna sólo por cambiar de proveedor"): se resuelve con un log de nivel `error` (no `warn`, a diferencia de los fallos "normales" de búsqueda) que incluye el `providerPhotoId` y la URL de `download_location` que falló — suficiente para que una herramienta de alertas/logs externa identifique y, si hace falta, reintente manualmente. `download_location` en sí y el resultado del tracking **nunca** llegan al contrato público `RecipeImage` ni a ningún snapshot de `GenerationRun` — son enteramente internos a la llamada.
+- No se reintenta automáticamente (mismo criterio ya establecido para la búsqueda en sí: un intento acotado, sin loop de reintentos) — reintentar tracking es responsabilidad de quien atienda el log de error, no del request original.
+
+**Resiliencia:** mismo patrón y misma tabla que la sección 4 de este documento (timeout de punta a punta cubriendo la lectura completa del cuerpo — corrección ya aplicada tras el bug real de la revisión de PR anterior, sigue vigente sin cambios en el mecanismo), adaptada a los códigos reales de Unsplash: 401/403 (key inválida o sin permisos — mismo tratamiento que un fallo de proveedor, `image: null`, warning con el status, nunca la key), 429, timeout, 5xx, resultados vacíos, respuesta inválida. La ausencia de `UNSPLASH_API_KEY`... (nombre real de la variable: `UNSPLASH_ACCESS_KEY`) sigue sin lanzar nunca, igual que D4 ya establecía para el proveedor anterior — el nombre del proveedor cambia, la regla no.
+
+**Seguridad de la key:** mismas reglas de la sección 7, sin cambios de principio — nunca en logs, nunca en la respuesta pública, nunca en snapshots. El header cambia de forma (`Client-ID <key>` en vez del header crudo que usaba Pexels) pero la regla de "nunca loguear el header de autorización completo" sigue aplicando igual.
+
+**Pruebas adicionales específicas de este cambio:** mapeo completo de la respuesta de Unsplash al contrato `RecipeImage`; parámetros exactos de la búsqueda (`order_by`, `content_filter` incluidos, no sólo `query`/`per_page`); el tracking se dispara exactamente una vez por asociación (no en relecturas); una confirmación repetida (mismo `Idempotency`/recreación) no duplica el evento de tracking; ausencia de la key y del valor de `download_location` en cualquier log o respuesta pública, en todos los escenarios de fallo.
+
+## 12. Revisión mayor — tracking post-persistencia, validación de URLs, cuota y recuperación
+
+Esta sección responde a una revisión real de PR/TL sobre la implementación que ya existe (no es diseño previo a construir). Antes de escribir esta sección se verificó contra el código real del módulo Unsplash y sus consumidores — no se asumió nada de lo que sigue. Los hallazgos de esa verificación se citan explícitamente en 12.1 porque cambian el tono de varias decisiones: esto no es "falta pulir", son bugs reales que hoy hacen que la feature no funcione con datos reales, y un hueco de seguridad real (header `Authorization` enviado sin validar el host de destino).
+
+### 12.1 Qué cambia de las secciones 1-11, qué se mantiene, y qué se verificó como bug real
+
+**Se mantiene sin cambios:**
+- D1 (toda receta nueva, sin importar `origin`) — sigue vigente, el código ya lo implementa así en ambos caminos de creación.
+- D2 (nunca red dentro de una transacción Prisma) — sigue vigente como regla dura, pero su alcance se **reinterpreta** en 12.5: "nunca dentro de un `$transaction`" no es lo mismo que "nunca después de persistir, dentro del mismo método de servicio". El tracking pasa a vivir en esa segunda franja.
+- D3 (concurrencia acotada a 3) — se mantiene el valor y el mecanismo (`resolveWithBoundedConcurrency`, constante de código), y se extiende su uso al nuevo paso de tracking post-persistencia (12.5) y a la recuperación (12.6), con el mismo razonamiento: la cuota de la API es por key, no por tipo de llamada.
+- D4 (ausencia de key nunca lanza excepción) — sigue vigente sin cambios.
+- Algoritmo de normalización de query (sección 2) — sin cambios.
+- Forma general del algoritmo de selección "primer candidato válido por posición, duplicados por `id` colapsados" (sección 3) — se mantiene el mecanismo; cambia el tipo de `id` y se agregan dos requisitos nuevos al predicado de validez (12.2) y una etapa nueva de validación de URL/dominio (12.3).
+- El contrato público `RecipeImage` de 9 campos (sección 8 / 11.2) — **no cambia su forma**. Lo que cambia es que ahora coexiste, sólo a nivel de persistencia, con metadata privada adicional (12.5) que nunca debe llegar a este contrato.
+- `Recipe.image Json?` como columna — no se toca el schema ni se agrega ninguna migración nueva. La metadata de tracking vive dentro del mismo JSON ya aprobado.
+
+**Cambia (bugs confirmados contra el código real, no hipótesis):**
+1. **Tipo de `id`.** El código hoy declara `UnsplashCandidate.id: number` y `isValidCandidate` exige `typeof record.id !== 'number'` para rechazar. La documentación oficial de Unsplash confirma que `id` es un string (ej. `"LBI7cgq3pbM"`). Con una respuesta real de la API, **ningún candidato pasa nunca esta validación** — el resultado es `image: null` siempre, para toda receta, incondicionalmente. Esto no es un caso borde: es la ruta feliz completa rota. Se corrige en 12.2.
+2. **`links.download_location` no se valida como requisito de forma.** El tipo ya lo declara (`links: { html: string; download_location: string }`) pero `isValidCandidate` sólo verifica `links.html`; un candidato con `download_location` ausente o vacío pasa igual la validación de forma y recién explota más tarde, al intentar el tracking. Se corrige en 12.2.
+3. **No existe ninguna validación de HTTPS/dominio.** Ningún campo de URL del candidato (`urls.regular`, `links.html`, `user.links.html`, `links.download_location`) se valida contra un dominio esperado antes de usarse. El header `Authorization: Client-ID <key>` se envía hoy, sin condición, al host que venga en `candidate.links.download_location` — si ese valor viniera corrompido, mal formado, o (en un escenario de proveedor comprometido/respuesta manipulada) apuntando a un host arbitrario, la key saldría igual hacia ese host. Se corrige en 12.3.
+4. **No se agrega UTM a `sourceUrl`/`photographerUrl`.** El código asigna `links.html` y `user.links.html` verbatim. Se corrige en 12.4.
+5. **El tracking ocurre en el momento equivocado.** Hoy `resolveCandidate` llama a `trackDownload` **antes de que la receta exista en la base de datos** (la búsqueda completa, incluido el tracking, se resuelve en `RecipeService.create`/`PlansService` antes de invocar la persistencia). Esto viola el ticket actualizado de dos formas: (a) se trackea un "uso" que todavía podría no llegar a persistirse nunca (si la escritura subsiguiente falla, Unsplash ya registró un uso de una foto que la aplicación nunca terminó de asociar), y (b) no existe ningún estado `PENDING`/`SUCCEEDED`/`FAILED` persistido — el resultado del tracking no se guarda en ningún lado, sólo se loguea. Se corrige en 12.5.
+6. **No hay manejo de cuota.** El código no lee `X-Ratelimit-Remaining` en ningún lugar; cada llamada se intenta sin importar cuántas quedan disponibles. Se corrige en 12.7.
+7. **401/403 no tienen tratamiento distinto de cualquier otro status no-200.** Hoy producen el mismo warning genérico ("Unsplash responded with unexpected status X") que un 500 o un 429. Se corrige en 12.7.
+8. **No existe filtrado de DTO para `image`.** `RecipeRepository.findAll` (vía `$queryRaw`), `RecipeRepository.findById` (vía `prisma.recipe.findUnique`) y `RecipeService.create` (que devuelve directamente lo que `repository.create` resuelve) exponen la columna `image` completa, sin ningún mapeo intermedio. Hoy esto no filtra nada "privado" porque hoy no existe metadata privada — pero en cuanto 12.5 agregue el objeto `tracking` dentro del JSON, estos tres caminos filtrarían metadata interna a clientes públicos si no se corrige. Se corrige en 12.5.4.
+
+### 12.2 `UnsplashCandidate` y `isValidCandidate` corregidos
+
+```ts
+export type UnsplashCandidate = {
+  id: string; // antes: number — Unsplash lo devuelve como string (ej. "LBI7cgq3pbM")
+  urls: { regular: string };
+  links: { html: string; download_location: string };
+  user: { name: string; links: { html: string } };
+  alt_description?: string | null;
+  width: number;
+  height: number;
+  [key: string]: unknown;
+};
+```
+
+Predicado de validez, en este orden (cada paso que falla descarta el candidato completo — mismo criterio "se descarta y se sigue probando el siguiente" ya establecido en la sección 3, sin excepción nueva):
+
+1. `id`: `typeof === 'string'` y `length > 0` (reemplaza la validación numérica).
+2. `urls.regular`: string no vacío.
+3. `links.html`: string no vacío.
+4. `links.download_location`: string no vacío — **requisito nuevo** (fix #2 de la lista de la revisora). Sin esto, un candidato puede quedar seleccionado y persistido, y recién fallar cuando el flujo de tracking post-persistencia (12.5) intenta usarlo — mejor descartarlo en el momento de selección, igual que cualquier otro campo requerido, que descubrir el hueco varios pasos después.
+5. `user.name`: string no vacío.
+6. `user.links.html`: string no vacío.
+7. `width`, `height`: enteros positivos (sin cambios).
+8. **Validación de URL/dominio de los cuatro campos de URL** (`urls.regular`, `links.html`, `user.links.html`, `links.download_location`) — ver 12.3. Se ejecuta como el último paso del mismo predicado, no como una etapa separada: un candidato que falla esta validación es, para todos los efectos de `selectUnsplashCandidate`, un candidato inválido como cualquier otro, y el recorrido continúa con el siguiente elemento del array.
+
+Deduplicación por `id` repetido dentro de la misma respuesta (`Set<string>` en vez de `Set<number>`) — mismo mecanismo y mismo razonamiento de la sección 3, sólo cambia el tipo del `Set`.
+
+**Fixtures de test:** todo fixture de respuesta de Unsplash usado en los tests de este módulo debe reconstruirse con la forma real de la API — `id` como string real (ej. `"LBI7cgq3pbM"`, `"eOLpJytrbsQ"`), `urls.regular` con parámetros de query reales incluyendo `ixid` (ej. `https://images.unsplash.com/photo-...?ixid=...&...`), `links.download_location` apuntando a `https://api.unsplash.com/photos/<id>/download?ixid=...`. Ningún fixture existente con `id` numérico es válido después de este cambio; se reemplazan, no se mantienen en paralelo.
+
+### 12.3 Validación de URL/dominio (nueva etapa)
+
+Función única, reutilizada en los dos lugares donde el código envía el header `Authorization` o persiste una URL del proveedor (selección de candidato y, más adelante, cualquier llamada de tracking/recuperación) — una sola fuente de verdad para "¿este host es de confianza?", para que ambos puntos de chequeo no puedan divergir con el tiempo:
+
+```ts
+function isValidUnsplashUrl(value: unknown, expectedHost: string): boolean {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'https:' && parsed.hostname === expectedHost;
+}
+```
+
+- **"HTTPS"** significa exactamente `parsed.protocol === 'https:'` después de parsear con el `URL` nativo de Node/WebPlatform — no una comprobación de substring sobre el string crudo. Usar el parser real evita trucos de userinfo (`https://api.unsplash.com@evil.com/...`, donde `new URL(...).hostname` resuelve correctamente a `evil.com`, no a `api.unsplash.com`) y cualquier otra ambigüedad de parseo manual.
+- **Dominios exactos por campo** (comparación de igualdad estricta sobre `hostname`, sin wildcard de subdominio, sin normalizar `www.`):
+  - `urls.regular` → `images.unsplash.com`
+  - `links.html` → `unsplash.com`
+  - `user.links.html` → `unsplash.com`
+  - `links.download_location` → `api.unsplash.com`
+- **Qué pasa si falla:** el candidato completo se descarta (paso 8 del predicado de 12.2) y `selectUnsplashCandidate` continúa con el siguiente elemento del array — exactamente el mismo criterio ya usado para cualquier otro campo de forma inválida (sección 3), sin una rama de manejo de error distinta.
+- **Regla dura sin excepción:** el header `Authorization: Client-ID <key>` **nunca** se adjunta a un `fetch` cuyo host de destino no haya pasado `isValidUnsplashUrl` con el `expectedHost` correspondiente a ese campo, inmediatamente antes de ese `fetch` — no sólo en el momento de selección del candidato. Esto importa especialmente para el tracking post-persistencia (12.5) y la recuperación (12.6): ambos leen `trackingUrl` de vuelta desde la base de datos (no desde la respuesta fresca de Unsplash), así que revalidan el host en ese momento también, en vez de confiar en que el valor persistido sigue siendo seguro sólo porque lo era cuando se escribió. Defensa en profundidad, no una optimización: un valor persistido es un dato más, no una fuente de confianza transitiva.
+
+### 12.4 Agregado de UTM a `sourceUrl`/`photographerUrl` (`imageUrl` no se toca)
+
+```ts
+function withAttributionUtm(url: string): string {
+  const parsed = new URL(url); // ya pasó isValidUnsplashUrl antes de llegar acá
+  parsed.searchParams.set('utm_source', 'nutria');
+  parsed.searchParams.set('utm_medium', 'referral');
+  return parsed.toString();
+}
+```
+
+- Se aplica a `sourceUrl` (origen: `links.html`) y a `photographerUrl` (origen: `user.links.html`) en el momento de construir el `RecipeImage` público, después de que esas URLs ya pasaron la validación de 12.3.
+- Se usa `URLSearchParams.set`, no `append`: si por cualquier motivo la URL ya trajera un `utm_source`/`utm_medium` propio, `set` lo reemplaza en vez de producir dos valores conflictivos para la misma clave. Cualquier otro parámetro existente (no `utm_source`/`utm_medium`) se conserva intacto porque `URLSearchParams` sólo toca las claves que se le pide tocar.
+- `imageUrl` (origen: `urls.regular`) **no pasa por esta función** — se persiste exactamente como lo entrega Unsplash, conservando `ixid` y cualquier otro parámetro, tal como exige el ticket ("URLs de imagen originales, conservando parámetros e ixid; no descargar bytes ni servir copias propias").
+
+### 12.5 Arquitectura del tracking post-persistencia
+
+#### 12.5.1 Forma exacta del JSON ampliado de `Recipe.image`
+
+```ts
+// Contrato público — sin cambios de forma, sigue siendo exactamente esto en cualquier DTO:
+type RecipeImage = {
+  provider: 'UNSPLASH';
+  providerPhotoId: string;
+  imageUrl: string;
+  sourceUrl: string;
+  photographer: string;
+  photographerUrl: string;
+  alt: string;
+  query: string;
+  retrievedAt: string; // ISO 8601 UTC
+};
+
+// Metadata privada — sólo existe dentro de la columna persistida, nunca en un DTO:
+type UnsplashTrackingMetadata = {
+  trackingUrl: string;              // el download_location exacto usado/a usar
+  status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
+  lastAttemptAt: string | null;     // ISO 8601 UTC; null hasta el primer intento
+};
+
+// Forma real de la columna Recipe.image (JSONB | NULL):
+type PersistedRecipeImage = RecipeImage & { tracking: UnsplashTrackingMetadata };
+```
+
+**Decisión de forma — namespace anidado (`tracking: {...}`), no campos sueltos al mismo nivel que el contrato público.** Razonamiento: el proyecto no tiene un precedente idéntico (columna JSON con metadata pública + privada en el mismo objeto), pero sí tiene un precedente de criterio directamente aplicable — `buildProfileSnapshot`/`buildRequestSnapshot` (NUT-75) ya construyen sus snapshots por **lista blanca explícita**, nunca por *spread* del objeto fuente, precisamente para que sea imposible filtrar un campo no contemplado por accidente. Anidar la metadata privada bajo una única clave (`tracking`) refuerza ese mismo criterio desde la forma del dato: hace visualmente obvio, en cualquier lugar del código que toque este JSON, que hay una sección que no es parte del contrato — mucho más difícil de omitir sin querer que si `trackingUrl`/`status`/`lastAttemptAt` estuvieran al mismo nivel que `provider`/`imageUrl`/etc., donde un `...image` descuidado los arrastraría igual.
+
+**Función única de mapeo público, reutilizada en todo camino de lectura/escritura que responda al cliente:**
+
+```ts
+function toPublicRecipeImage(persisted: PersistedRecipeImage | null): RecipeImage | null {
+  if (!persisted) return null;
+  const { tracking, ...publicFields } = persisted;
+  return publicFields;
+  // o, más explícito y a prueba de que alguien agregue un campo privado nuevo sin tocar
+  // esta función: construir el objeto de salida con las 9 claves nombradas una por una,
+  // igual que buildProfileSnapshot/buildRequestSnapshot. Cualquiera de las dos formas
+  // cumple el contrato; la segunda es más robusta a futuro y es la preferida si el costo
+  // de escribir 9 líneas no se considera excesivo — decisión de implementación, no de diseño.
+}
+```
+
+Este mapeo debe aplicarse, sin excepción, en: la respuesta de `POST /recipes` (hoy `RecipeService.create` devuelve el resultado crudo de `repository.create` — hay que envolverlo), `GET /recipes` (lista, hoy vía `$queryRaw` sin mapeo), `GET /recipes/:id` (hoy vía `findUnique` sin mapeo), y cualquier respuesta de plan que incluya una receta embebida con su `image`. Ningún snapshot de `GenerationRun` (`profileSnapshot`/`requestSnapshot`/`outputSnapshot`/`validationSnapshot`) toca hoy el campo `image` de `Recipe` — se confirmó revisando esos constructores — así que no hay una ruta de fuga ahí, pero se deja documentado como invariante a vigilar si alguna vez un snapshot futuro decidiera incluir datos de receta.
+
+**Decisión sobre `RecipeRepository.findAll` (`$queryRaw`):** se mantiene trayendo la columna `image` completa (incluyendo `tracking`) en el resultado del `$queryRaw`, y se filtra en la capa de servicio con `toPublicRecipeImage` antes de serializar la respuesta — no se intenta que el propio SQL proyecte sólo los campos públicos del JSON. Razonamiento: proyectar sólo los 9 campos públicos directamente en SQL (vía `jsonb_build_object(...)` o similar) obligaría a duplicar, en SQL, la lista exacta de claves del contrato `RecipeImage` — una segunda fuente de verdad que hay que mantener manualmente en sincronía con el tipo TypeScript cada vez que el contrato cambie, sin ningún chequeo de tipos que avise si se desincroniza. El `$queryRaw` ya trae la fila completa por otras razones (paginación, el resto de las columnas), así que no hay ninguna ganancia de performance en no traer `image` completo tampoco — el costo adicional es cero. Filtrar en TypeScript, con una única función reutilizada y testeada una vez, es estrictamente más simple y más seguro.
+
+#### 12.5.2 Cuándo se dispara exactamente la actualización de tracking
+
+Se divide la resolución de imagen en dos funciones con responsabilidades distintas, donde hoy existe una sola (`resolveCandidate`, que hace búsqueda + selección + tracking junto):
+
+1. **Búsqueda + selección** (sin tracking): construye la query, llama a `GET /search/photos`, selecciona el candidato válido (12.2-12.3), y arma el `PersistedRecipeImage` completo **con `tracking.status = 'PENDING'`, `tracking.lastAttemptAt = null`, `tracking.trackingUrl = candidate.links.download_location`**. Esto sigue ocurriendo, como hoy, **antes** de la transacción/escritura que crea la receta (D2 sin cambios: esto es la misma llamada de red "búsqueda" que ya vivía fuera de la transacción).
+2. **Persistencia:** la receta (o el batch de recetas de un plan) se crea con ese `image` ya armado — incluyendo el `tracking` en estado `PENDING` — dentro de la misma operación de escritura que ya existe hoy (un `prisma.recipe.create` suelto para creación manual; la transacción existente de persistencia de plan para el batch). Esta escritura **no hace red** — sigue siendo sólo datos planos, D2 se cumple exactamente igual que antes, porque agregar un sub-objeto `tracking` al JSON no es una llamada de red, es más JSON.
+3. **Tracking:** inmediatamente después de que esa escritura de persistencia resuelve (el `await` de `repository.create(...)` o de la transacción de plan termina), **en el mismo método de servicio, todavía dentro del mismo ciclo de vida de la request HTTP, pero fuera de cualquier `$transaction`**, se invoca el `download_location` para cada receta que quedó con un `image` no nulo. Por cada una: fetch con `AbortController`/timeout (mismo mecanismo de sección 4), revalidación de host (12.3) antes de adjuntar el header, y según el resultado, una **segunda escritura** — `prisma.recipe.update({ where: { id }, data: { image: {...mismo objeto, tracking: {...,status:'SUCCEEDED'|'FAILED', lastAttemptAt: new Date().toISOString()} } } })` — por receta, suelta, **no** envuelta en un `$transaction` nuevo (ni individual ni batcheada): cada receta se actualiza de forma independiente para que el timeout o el fallo de tracking de una no bloquee ni condicione la actualización de las demás del mismo batch.
+
+**Por qué se espera (`await`) el tracking antes de responder al cliente HTTP, en vez de dispararlo y no esperarlo ("fire and forget" respecto de la request):** el backend se despliega en Vercel (`.ai/architecture.md`), donde una función serverless puede cortar su ejecución una vez que la respuesta HTTP ya se envió — un `fetch` no esperado lanzado después de `return` corre el riesgo real de quedar cancelado a mitad de camino, lo cual volvería **inevitable** (no sólo posible ante una caída real) que casi todo tracking terminara en `PENDING` y dependiera siempre del mecanismo de recuperación (12.6) para completarse. Esperar el tracking dentro del mismo método de servicio, antes de responder, es compatible con D2 (D2 prohíbe red *dentro de un `$transaction` de Prisma*, no prohíbe red *después* de que la escritura de persistencia ya resolvió, dentro del mismo método) y es lo que permite además que la evidencia de demo del ticket (punto 8, fuera de diseño pero mencionado en alcance) pueda mostrar `SUCCEEDED` inmediatamente después de un `POST /recipes` real, sin depender de correr la recuperación manualmente.
+
+**Qué pasa si el proceso muere entre persistir la receta y completar el tracking:** la fila ya quedó escrita con `tracking.status = 'PENDING'` en el mismo paso 2 (la persistencia), **antes** de que el tracking se intente siquiera — así que un crash en cualquier punto entre el fin del paso 2 y el fin del paso 3 deja la fila exactamente en el estado que el mecanismo de recuperación (12.6) sabe interpretar como "falta intentar", sin necesidad de ninguna escritura adicional de "marcar como pendiente" porque esa marca ya se escribió como parte natural de crear la receta. Esto es intencional: el estado inicial `PENDING` nunca depende de una segunda escritura exitosa para existir.
+
+**Batch de plan — bounded concurrency reutilizada:** cuando una generación/regeneración de plan crea N recetas nuevas, el paso 3 (tracking) se ejecuta con el mismo `resolveWithBoundedConcurrency`/límite de 3 ya usado para la búsqueda (D3) — mismo razonamiento: la cuota es compartida por key, no por tipo de llamada, así que no tiene sentido acotar las búsquedas a 3 concurrentes y después lanzar hasta 21 tracking calls en paralelo sin límite.
+
+**Recetas reutilizadas (`origin` existente, sin receta nueva):** cuando un plan referencia una receta ya existente en el catálogo (no se crea una fila `Recipe` nueva), ni la búsqueda ni el tracking se disparan — esto ya es así hoy porque la resolución de imagen sólo está conectada a los caminos de creación de receta nueva, nunca al camino de "asociar receta existente a una comida". Se deja como invariante explícito a testear (no a implementar de nuevo): una receta reutilizada no genera ninguna llamada a Unsplash, de búsqueda ni de tracking.
+
+**Dos recetas distintas que comparten el mismo candidato (misma query normalizada, dentro del mismo batch):** la búsqueda se sigue deduplicando por query normalizada (D3, sin cambios) — las dos recetas comparten el mismo candidato resuelto. El **tracking no se deduplica entre recetas distintas**: cada receta dispara su propio `download_location`, aunque dos recetas terminen apuntando al mismo `providerPhotoId`. Razonamiento: el ticket define el evento de tracking como "asociar una foto a **una receta**" — son dos asociaciones reales y distintas (dos filas de `Recipe` distintas usando la misma foto), no la misma asociación leída dos veces; la única deduplicación que el ticket pide explícitamente es la de "confirmar el mismo borrador ya asociado" (la misma receta, dos veces), que es un caso distinto (12.5.3). No hay evidencia en el ticket de que haya que tratar "misma foto, dos recetas" como un evento único, y tratarlo como dos eventos es la lectura más simple y más alineada con los términos de uso reales de Unsplash (cada lugar donde la foto se muestra de forma nueva es un uso nuevo).
+
+#### 12.5.3 Receta/borrador ya asociado — no reenviar el evento
+
+Si una receta ya persistida tiene `image.tracking.status === 'SUCCEEDED'`, ningún camino del sistema debe volver a invocar `download_location` para ella — ni una relectura (ya es así: las lecturas nunca tocan Unsplash, sección 5), ni una futura confirmación de borrador de NUT-73 (fuera de alcance de implementación en este ticket, pero el principio se deja documentado para cuando exista: el momento de "confirmar un borrador" no es un momento de "nueva asociación" si el borrador ya tenía `image` con `tracking.status` distinto de ausente — confirmar reutiliza el `image` tal cual está, no dispara nada nuevo). La recuperación (12.6) refuerza esto estructuralmente: su query sólo trae filas `PENDING`/`FAILED`, así que una fila `SUCCEEDED` es estructuralmente invisible para el mecanismo de reintento, no por una condición `if` que alguien podría olvidar sino porque la consulta misma no la selecciona.
+
+#### 12.5.4 Qué pasa si el tracking falla
+
+Sin cambios de principio respecto de lo ya implementado para el caso de fallo: la receta y la imagen elegida se conservan tal cual (nunca se revierte la asociación de imagen por un fallo de tracking), se escribe `tracking.status = 'FAILED'` y `tracking.lastAttemptAt` con la escritura suelta del paso 3, y se emite un warning saneado (nunca la key, nunca el body crudo de la respuesta de Unsplash) indicando la categoría de fallo (timeout, status recibido, error de red). La diferencia respecto de hoy es que este resultado ahora **se persiste** (antes sólo se logueaba) — es lo que hace posible que 12.6 pueda encontrar y reintentar estos casos sin depender de revisar logs.
+
+### 12.6 Mecanismo de recuperación
+
+**Forma elegida: un método de servicio invocado desde un script standalone (`npx tsx`), no un endpoint HTTP de administración.**
+
+Razonamiento: el proyecto no tiene ningún precedente de endpoint admin (se verificó: no existe ningún controlador ni ruta con ese rol en el código actual) — crear uno implicaría diseñar además autenticación/autorización específica para administración, rate limiting propio, y decidir quién puede invocarlo en producción: alcance real no pedido por el ticket para lo que es, en sus propias palabras, un mecanismo operativo para una demo. El proyecto sí tiene un precedente exacto de la forma que hace falta acá: `prisma/seed.ts`, invocado con `npx tsx` y expuesto como script de `package.json` (`prisma:seed`), ejecutado manualmente por una persona con acceso a las variables de entorno correctas. Seguir ese mismo patrón para la recuperación — un script nuevo, análogo, con su propio script de `package.json` (ej. `unsplash:recover-tracking`) — mantiene el mecanismo dentro de la postura operacional ya revisada del proyecto (igual que una migración: alguien con acceso corre algo a mano, mira el resultado, decide el siguiente paso) en vez de introducir una superficie HTTP nueva que el ticket, además, excluye de forma expresa al poner "nueva infraestructura de colas/workers" fuera de alcance — un endpoint admin en producción es, en los hechos, ese tipo de infraestructura nueva (necesita monitoreo, autorización, protección contra abuso) aunque no use colas.
+
+**Qué hace exactamente, paso a paso:**
+
+1. **Query de candidatos:** trae recetas cuyo `image.tracking.status` sea `PENDING` o `FAILED`, usando el filtrado nativo de JSON de Prisma sobre Postgres (no `$queryRaw`, por la misma razón de 12.5.1: una única fuente de verdad tipada, sin duplicar la forma del JSON en SQL a mano) —
+
+   ```ts
+   prisma.recipe.findMany({
+     where: {
+       OR: [
+         { image: { path: ['tracking', 'status'], equals: 'PENDING' } },
+         { image: { path: ['tracking', 'status'], equals: 'FAILED' } },
+       ],
+     },
+     take: limit, // default razonable, ej. 50 — evita una corrida contra todo el catálogo en un solo lote sin control
+     orderBy: { createdAt: 'asc' },
+   })
+   ```
+
+   Una receta con `image = NULL` (nunca tuvo candidato) no tiene `tracking` y por lo tanto no matchea ningún `path`/`equals` de esta query — queda excluida sin necesidad de una condición `IS NOT NULL` aparte.
+
+2. **Por cada receta encontrada**, con la misma concurrencia acotada (3) que el resto del módulo: revalidar `trackingUrl` contra `isValidUnsplashUrl(..., 'api.unsplash.com')` (12.3) antes de adjuntar el header — un valor persistido no es una fuente de confianza transitiva, se revalida igual que en 12.5.2; intentar `GET trackingUrl` con `Authorization: Client-ID <UNSPLASH_ACCESS_KEY>`, un único intento acotado por timeout (mismo mecanismo, sin reintento interno — si este intento también falla, la fila queda `FAILED` y espera a la **próxima corrida** del script, no a un retry automático dentro de la misma corrida).
+3. **Actualización de estado:** éxito → `prisma.recipe.update` suelto (fuera de transacción, igual que 12.5.2) con `tracking.status = 'SUCCEEDED'`, `lastAttemptAt` = ahora; fallo → `tracking.status = 'FAILED'`, `lastAttemptAt` = ahora (se mantiene `FAILED`, elegible para la próxima corrida).
+4. **Por qué nunca reprocesa `SUCCEEDED`:** estructuralmente, no por una condición explícita que alguien podría quitar sin querer — la query del paso 1 sólo trae `PENDING`/`FAILED`; una fila `SUCCEEDED` nunca entra al conjunto de trabajo del script, en ninguna corrida.
+5. **Nunca se ejecuta en un `GET`, no tiene loop automático, no corre en un cron ni en un hook de arranque** — se invoca a mano, una vez por corrida, por una persona.
+
+**Documentación operativa para la demo:**
+1. Con `UNSPLASH_ACCESS_KEY` y `DATABASE_URL` configuradas en el entorno, ejecutar el script (ej. `npx tsx apps/api/prisma/recover-unsplash-tracking.ts` o el script de `package.json` equivalente, con un flag opcional de límite).
+2. El script imprime un resumen: cuántas filas encontró, cuántas quedaron `SUCCEEDED` en esta corrida, cuántas siguen `FAILED` (con su `providerPhotoId`, para seguimiento manual si corresponde).
+3. Es seguro correrlo más de una vez: las filas ya `SUCCEEDED` quedan excluidas de la query del paso 1 en cualquier corrida posterior, así que repetir la ejecución no reenvía ningún evento ya confirmado.
+4. No reemplaza ni automatiza nada del flujo de creación — es exclusivamente para cerrar el hueco de filas que quedaron `PENDING`/`FAILED` por una caída, timeout o reinicio del proceso entre la persistencia y el tracking.
+
+### 12.7 401/403 y cuota (`X-Ratelimit-Remaining`)
+
+**401/403:** se trata como una categoría de fallo distinta de cualquier otro status no-200 — mensaje de warning específico indicando que la configuración de Unsplash es inválida (sin incluir la key en ningún punto del mensaje), `image: null`, sin reintento (igual que cualquier otro fallo de proveedor). No se agrega, más allá de esto, ningún corte de llamadas restantes del mismo batch ante un 401/403 — a diferencia de la cuota (abajo), el ticket no pide ese comportamiento para credenciales inválidas, y agregarlo sería alcance no pedido: si la key es inválida, cada llamada individual ya degrada a `null` de forma segura y acotada por su propio timeout/intento único, sin necesidad de un mecanismo de corte adicional.
+
+**Cuota (`X-Ratelimit-Remaining`):** estado en memoria del proceso (`quotaRemaining: number | null`, `null` = "todavía no se observó", tratado como "asumir disponible" porque es el estado inicial legítimo de un proceso recién arrancado). Algoritmo exacto:
+
+1. **Antes de cada intento de búsqueda:** si `quotaRemaining === 0`, no se hace ningún `fetch` — se devuelve `image: null` de inmediato, con un warning saneado ("unsplash quota exhausted, skipping search"), mismo tratamiento que la ausencia de API key (D4): se sabe de antemano que la llamada fallaría, así que no se hace.
+2. **Después de cada respuesta de búsqueda** (sin importar el status — Unsplash incluye este header tanto en respuestas 200 como en varias respuestas de error), si el header `X-Ratelimit-Remaining` está presente y parsea a un entero no negativo válido, se sobreescribe `quotaRemaining` con ese valor — la observación más reciente siempre gana, no se acumula ni se decrementa manualmente en el cliente.
+3. El resultado de la llamada que sí se hizo (si `quotaRemaining` todavía no era 0 al momento de iniciarla) se usa normalmente, aunque su propia respuesta traiga `X-Ratelimit-Remaining: 0` — el corte aplica a la **próxima** llamada, no revierte la que ya se pagó/contó.
+4. **Límite conocido:** este estado es en memoria, por proceso — se reinicia en cada despliegue/reinicio y no se comparte entre instancias si el servicio corriera con más de una réplica. Se documenta como limitación aceptada para el despliegue actual (instancia única para la demo), no como un defecto a resolver: persistirlo o compartirlo entre instancias requeriría infraestructura nueva (un store compartido), que el ticket excluye expresamente.
+5. **Test de agotamiento:** simular una respuesta (200 o un status de error, cualquiera que incluya el header) con `X-Ratelimit-Remaining: 0`; verificar que esa respuesta igual se usa con normalidad, y que la llamada subsiguiente (misma corrida de proceso) no dispara ningún `fetch` y devuelve `image: null` de inmediato.
+
+**Lo que ya estaba bien y se mantiene sin cambios:** un solo intento por llamada (sin retries automáticos), timeout acotado de punta a punta (incluyendo la lectura del body, corrección ya aplicada en una revisión anterior), máximo 3 llamadas concurrentes, reutilización de búsqueda por query normalizada dentro de una misma operación de generación, búsquedas fuera de cualquier transacción de Prisma, degradación a `image: null` sin romper la creación/confirmación de recetas o planes bajo ningún escenario de fallo del proveedor.
+
+### 12.8 Historias y criterios de aceptación (revisión mayor)
+
+Cada historia referencia el ítem de "Pruebas mínimas" del ticket actualizado y/o el punto de la lista de 8 fixes de la revisora que cubre, para trazabilidad. Estas historias **extienden** las 16 de la sección 6 (que siguen vigentes donde no las contradicen); donde una historia de la sección 6 queda desactualizada por el cambio de tipo de `id` o por el nuevo orden del tracking, esta sección es la versión vigente.
+
+1. **[Fix #1] `id` como string — ruta feliz real.**
+   Given una respuesta real de Unsplash con candidatos cuyo `id` es un string (ej. `"LBI7cgq3pbM"`),
+   When se ejecuta la selección de candidato,
+   Then el primer candidato válido por posición se selecciona normalmente (no se descarta por el tipo de `id`), y `providerPhotoId` en el `RecipeImage` resultante es exactamente ese string.
+
+2. **[Fix #2] `download_location` ausente invalida el candidato.**
+   Given un candidato que cumple todo el resto del predicado de validez pero tiene `links.download_location` vacío o ausente,
+   When se evalúa su validez,
+   Then el candidato se descarta y se evalúa el siguiente elemento del array, sin excepción lanzada.
+
+3. **[Fix #3] Candidato con URL de dominio inválido se descarta.**
+   Given un candidato cuyo `urls.regular` (o `links.html`, `user.links.html`, `links.download_location`) no es HTTPS, o cuyo host no coincide exactamente con el dominio esperado para ese campo,
+   When se evalúa su validez,
+   Then el candidato se descarta (no se selecciona, no se persiste, no se intenta tracking sobre él), y se continúa evaluando el siguiente candidato de la respuesta.
+
+4. **[Fix #3] Nunca se envía `Authorization` a un host no validado.**
+   Given un `trackingUrl` persistido (desde una receta existente o desde el flujo de recuperación) cuyo host ya no coincide con `api.unsplash.com` (dato corrupto o manipulado),
+   When el flujo de tracking o de recuperación intenta usarlo,
+   Then no se realiza ningún `fetch` con el header `Authorization`, la fila queda/permanece en `FAILED`, y se emite un warning saneado — verificable con un espía sobre `fetch` que confirma que nunca se lo invoca con ese host.
+
+5. **[Fix #4] UTM en `sourceUrl`/`photographerUrl`, `imageUrl` intacta.**
+   Given un candidato válido con `links.html` y `user.links.html` conteniendo parámetros de query propios de Unsplash,
+   When se construye el `RecipeImage`,
+   Then `sourceUrl` y `photographerUrl` incluyen `utm_source=nutria&utm_medium=referral` además de cualquier parámetro original preexistente, y `imageUrl` es exactamente igual a `urls.regular` sin ningún parámetro agregado ni quitado, `ixid` incluido.
+
+6. **[Fix #5 / Pruebas mínimas #4] Creación manual — secuencia completa.**
+   Given `POST /recipes` con una key válida configurada y un candidato válido disponible,
+   When se crea la receta,
+   Then la receta queda persistida con `image.tracking.status = 'PENDING'` en el instante en que la escritura de persistencia resuelve (verificable interceptando esa escritura antes del paso de tracking), y al finalizar el método de servicio completo (antes de responder al cliente HTTP) `image.tracking.status` es `SUCCEEDED` si el tracking tuvo éxito.
+
+7. **[Fix #5 / Pruebas mínimas #4] Generación/regeneración de plan — secuencia completa.**
+   Given una generación o regeneración de plan que crea N recetas nuevas, todas con candidato válido,
+   When se completa la persistencia,
+   Then el tracking de las N recetas se dispara después de que la transacción de persistencia del plan ya commiteó (nunca antes, nunca dentro de ella), con concurrencia acotada a 3, y todas terminan con `tracking.status` en `SUCCEEDED` o `FAILED` (nunca quedan en `PENDING` si el proceso no se interrumpió).
+
+8. **[Fix #5 / Pruebas mínimas #8] Ninguna llamada externa dentro de una transacción Prisma — extendido al tracking.**
+   Given el mismo flujo de generación de plan del punto anterior,
+   When se inspecciona qué corre dentro del callback de `$transaction` de la persistencia del plan,
+   Then ese callback no referencia ni invoca ni al adaptador de búsqueda ni al de tracking de Unsplash — ambos ya resolvieron (búsqueda) o resuelven después (tracking) de ese callback.
+
+9. **[Fix #5] Tracking fallido conserva receta e imagen.**
+   Given un candidato válido ya persistido, y que la llamada de tracking falla (timeout, 4xx, 5xx, o error de red),
+   When se completa el intento,
+   Then la receta sigue existiendo con exactamente el mismo `RecipeImage` público que tenía antes del intento (ningún campo de los 9 públicos cambia), `tracking.status` queda en `FAILED`, `tracking.lastAttemptAt` se actualiza, y se emite un warning saneado — nunca una excepción que revierta la creación de la receta.
+
+10. **[Fix #5] Recuperación procesa sólo `PENDING`/`FAILED`.**
+    Given un conjunto de recetas con `tracking.status` en los tres valores posibles (`PENDING`, `SUCCEEDED`, `FAILED`),
+    When se ejecuta el mecanismo de recuperación,
+    Then sólo las filas `PENDING`/`FAILED` reciben un intento nuevo; ninguna llamada de red se dispara para las filas `SUCCEEDED` (verificable con un espía sobre `fetch` contando invocaciones exactas = cantidad de filas `PENDING`+`FAILED` elegibles, nunca más).
+
+11. **[Fix #5] Recuperación es segura de correr más de una vez.**
+    Given una corrida de recuperación que dejó una fila en `SUCCEEDED`,
+    When se corre el mecanismo de recuperación una segunda vez sin cambios en la base,
+    Then esa fila no genera ninguna llamada nueva (queda excluida de la query del paso 1), y el resumen de la segunda corrida no la cuenta entre las procesadas.
+
+12. **[Fix #5 / Pruebas mínimas #9] Metadata privada nunca sale en un DTO público.**
+    Given una receta persistida con `image.tracking` en cualquier estado,
+    When se la lee vía `GET /recipes`, `GET /recipes/:id`, la respuesta de `POST /recipes`, o embebida en la respuesta de un plan,
+    Then el campo `image` de la respuesta contiene exactamente los 9 campos del contrato público `RecipeImage` y ninguna clave `tracking`, `trackingUrl`, `status` ni `lastAttemptAt` en ningún nivel del body — verificable con una aserción que compara las claves presentes contra la lista blanca exacta, no sólo "no contiene la palabra tracking".
+
+13. **[Fix #5 / Pruebas mínimas #9] Metadata privada nunca sale en logs ni snapshots.**
+    Given cualquier camino de fallo o éxito de búsqueda, tracking o recuperación,
+    When se inspecciona cada línea de log emitida (espía sobre el logger) y cada snapshot de `GenerationRun` generado en el mismo flujo,
+    Then ningún log ni snapshot contiene el valor crudo de `UNSPLASH_ACCESS_KEY`, el header `Authorization` completo, ni el body crudo de ninguna respuesta de Unsplash.
+
+14. **[Fix #6 / Pruebas mínimas #5] 401/403 — mensaje específico.**
+    Given Unsplash responde `401` o `403`,
+    When se resuelve la imagen,
+    Then `image` queda `null`, se emite un warning indicando específicamente "configuración de Unsplash inválida" (sin la key), y la creación/confirmación de receta o plan se completa con normalidad.
+
+15. **[Fix #6] Cuota agotada no dispara más búsquedas.**
+    Given una respuesta previa que trajo `X-Ratelimit-Remaining: 0`,
+    When se intenta resolver la imagen de otra receta en el mismo proceso,
+    Then no se realiza ningún `fetch` de búsqueda, `image` queda `null`, y se emite el warning de cuota agotada — sin tocar el estado de ninguna receta ya persistida.
+
+16. **[Pruebas mínimas #1] Parámetros y normalización — sin cambios de fondo, revalidado con ids string.**
+    Given un título de receta con acentos/mayúsculas/espacios irregulares, y una respuesta simulada con `id` string,
+    When se resuelve la imagen,
+    Then la query enviada sigue el algoritmo de la sección 2 sin cambios, la request incluye `order_by=relevant` y `content_filter=high` además de `query`/`page`/`per_page`, y el candidato seleccionado es el primero válido por posición.
+
+17. **[Pruebas mínimas #2] Mapeo completo de DTO y alt fallback — revalidado.**
+    Given un candidato válido con `alt_description` ausente,
+    When se construye el `RecipeImage`,
+    Then `alt` es exactamente `` `Imagen ilustrativa de ${título original de la receta}` `` (no la query normalizada), y el resto del mapeo (`providerPhotoId`, `imageUrl`, `sourceUrl` con UTM, `photographer`, `photographerUrl` con UTM) es completo y correcto.
+
+18. **[Pruebas mínimas #3] Imagen persistida estable en lecturas, a nivel del contrato público.**
+    Given una receta con `image` no nulo persistido (incluyendo su `tracking` interno en cualquier estado),
+    When se lee esa receta por cualquier camino existente, dos veces,
+    Then ambas lecturas devuelven exactamente el mismo `RecipeImage` público (los 9 campos, sin `tracking`), y ninguna lectura dispara una llamada a Unsplash.
+
+19. **[Pruebas mínimas #6] Receta reutilizada no re-busca ni re-trackea.**
+    Given un plan que referencia una receta ya existente en el catálogo (sin crear una fila `Recipe` nueva),
+    When se genera/persiste ese plan,
+    Then no se dispara ninguna búsqueda ni ningún tracking para esa receta — verificable con un espía sobre `fetch` contando cero invocaciones atribuibles a esa receta.
+
+20. **[Pruebas mínimas #7 — ya cubierta en 9/10/11, referenciada acá para trazabilidad 1:1 con el ticket] Tracking fallido es recuperable y la recuperación no reprocesa `SUCCEEDED`.** Ver historias 9, 10 y 11.
+
+**Nota sobre "Prueba real con la aplicación Unsplash configurada" (último ítem de "Pruebas mínimas" del ticket, y punto 8 de la lista de fixes de la revisora):** esto es un paso de evidencia de demo en vivo (API levantada, `UNSPLASH_ACCESS_KEY` real, `POST /recipes` real, inspección de la base para confirmar `tracking.status = 'SUCCEEDED'`, y registro del `X-Ratelimit-Limit` real recibido) — se menciona acá como parte del alcance total del ticket, pero **no se diseña en este documento**: es un paso operativo posterior a la implementación, no una decisión de arquitectura.
+
+### 12.9 Reconciliación con `.ai/release-and-evidence.md`
+
+Mismo formato ya usado en las secciones 8 y 10 de este documento.
+
+- **Issue de Linear vinculado:** NUT-83. Sigue sin poder citarse/enlazarse por API en esta sesión (MCP de Linear no autorizado) — verificación manual de quien suba el PR, sin cambios respecto de la sección 10.
+- **Criterios de aceptación:** las 16 AC de la sección 6 más las 20 de la sección 12.8 de este documento — las de 12.8 son las vigentes donde contradicen a las de la sección 6 (tipo de `id`, momento del tracking).
+- **Tests/CI:** pendiente de ejecución después de que el explorer/tester/implementer apliquen esta revisión — no se afirma un resultado de corrida acá porque esta sesión es exclusivamente de diseño, sin tocar código ni ejecutar tests.
+- **Seguridad de la migración:** sin cambios respecto de la sección 8/10 — esta revisión no toca el schema de `Recipe` ni agrega ninguna migración nueva; `image Json?` ya aprobado sigue siendo la única columna involucrada.
+- **Exposición de secretos:** reforzada respecto de la sección 7/11.2 — además de la key y los headers salientes, ahora también se exige explícitamente que la metadata privada de tracking (`tracking.trackingUrl`/`status`/`lastAttemptAt`) nunca llegue a un DTO público, log, o snapshot (12.5.1, 12.8 historias 12-13). Esto es un requisito nuevo de esta revisión, no una repetición de lo ya cubierto.
+- **Impacto de accesibilidad:** no aplica — cambio exclusivamente de backend, sin componente de UI/frontend.
+- **Ruta de rollout:** sin cambios de infraestructura o despliegue — el código de esta revisión se despliega igual que cualquier cambio de backend normal (sin fases, sin migración nueva que aprobar). El nuevo script de recuperación es una herramienta operativa adicional, no parte del camino crítico de despliegue.
+- **Ruta de rollback:** sin cambios respecto de la sección 8/10 (`ALTER TABLE "recipes" DROP COLUMN "image";`, sin pérdida de datos de otros campos). Adicionalmente: si esta revisión necesitara revertirse a nivel de código (no de schema), las recetas que ya hubieran completado tracking (`SUCCEEDED`) no quedan en ningún estado inconsistente al revertir — la metadata de tracking es aditiva dentro de un campo `JSONB` ya existente, no una estructura nueva de la que dependa otro código.
