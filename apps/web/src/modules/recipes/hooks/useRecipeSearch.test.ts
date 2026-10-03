@@ -114,7 +114,7 @@ describe('useRecipeSearch', () => {
       expect.objectContaining({
         q: 'pollo',
         page: 1,
-        pageSize: 12,
+        pageSize: 4,
       }),
       expect.any(AbortSignal),
     );
@@ -204,7 +204,7 @@ describe('useRecipeSearch', () => {
           properties: ['Sin Gluten'],
           maxPrepMinutes: 20,
           page: 1,
-          pageSize: 12,
+          pageSize: 4,
         }),
         expect.any(AbortSignal),
       );

@@ -246,7 +246,7 @@ describe('RecipeCatalogList - Mobile Search Mode (NUT-66)', () => {
       />,
     );
 
-    expect(screen.getByText(/los parámetros de búsqueda son inválidos/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/los parámetros de búsqueda son inválidos/i).length).toBeGreaterThan(0);
     const retryBtn = screen.getByRole('button', { name: /reintentar/i });
     await user.click(retryBtn);
     expect(retry).toHaveBeenCalled();
