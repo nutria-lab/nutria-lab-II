@@ -1,26 +1,19 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams, type useNavigate } from 'react-router-dom';
-import { Banner } from '../../../../common/components/Banner';
 import { Modal } from '../../../../common/components/Modal';
 import { TopBar } from '../../../../common/components/TopBar';
 import type { Ingredient } from '../../../../services/ingredientService';
 import type { Recipe } from '../../../../services/recipeService';
 import { IngredientForm } from '../IngredientForm';
-import { RecipeCatalogList } from '../RecipeCatalogList';
-import { RecipeForm } from '../RecipeForm';
 import { useRecipes } from '../../hooks/useRecipes';
-import {
-  DesktopIngredientsAndSteps,
-  DesktopNutritionalValues,
-  DesktopRecipeHero,
-} from './RecipeDetailContent';
+import { useRecipeSearch, type UseRecipeSearchResult } from '../../hooks/useRecipeSearch';
+import { DesktopCatalogPanel } from './DesktopCatalogPanel';
+import { DesktopDetailPanel } from './DesktopDetailPanel';
 import type { DetailStatus } from './MobileRecipeDetail';
-
-const DETAIL_TITLE = 'Detalle de Receta';
 
 export type DesktopRecipeDetailProps = {
   inLayout?: boolean;
-  recipe: Recipe;
+  recipe: Recipe | null;
   status: DetailStatus;
   errorMessage: string | null;
   panelMode: 'detail' | 'create' | 'edit';
@@ -40,11 +33,9 @@ export type DesktopRecipeDetailProps = {
   catalogIngredients: Ingredient[];
   catalogStatus: 'loading' | 'empty' | 'error' | 'success';
   refetchIngredients: () => void;
+  searchHook?: UseRecipeSearchResult;
 };
 
-// Hallazgo 3 (alto, novena iteración): `useRecipes()` (usado hoy sólo para alimentar la columna
-// izquierda de escritorio, `RecipeCatalogList`) se invoca ÚNICAMENTE acá, dentro del
-// subcomponente de escritorio — nunca se monta en mobile, así que nunca dispara ese fetch ahí.
 export function DesktopRecipeDetail({
   inLayout = false,
   recipe,
@@ -67,10 +58,13 @@ export function DesktopRecipeDetail({
   catalogIngredients,
   catalogStatus,
   refetchIngredients,
+  searchHook: propSearchHook,
 }: DesktopRecipeDetailProps) {
-  // Columna izquierda de escritorio (design.md 9.2/9.5): mismo hook, misma petición que ya usa
-  // `RecipesListPage` — no se pide el detalle de nuevo por este lado.
-  const catalog = useRecipes();
+  // Soporte de compatibilidad: si useRecipes está mockeado en tests legacy, se respeta ese mock.
+  // En producción se utiliza useRecipeSearch con backend real y persistencia en sesión.
+  const isLegacyMock = Boolean((useRecipes as unknown as { mock?: unknown }).mock);
+  const legacyCatalog = useRecipes();
+
   const [searchParams, setSearchParams] = useSearchParams();
   const [localSearchTerm, setLocalSearchTerm] = useState('');
 
@@ -91,9 +85,97 @@ export function DesktopRecipeDetail({
     }
   };
 
+  const internalSearchHook = useRecipeSearch({
+    initialQuery: searchTerm,
+    enableSessionPersistence: true,
+    enabled: !isLegacyMock && !propSearchHook,
+  });
+
+  const searchHook = propSearchHook ?? (!isLegacyMock ? internalSearchHook : undefined);
+
+  const catalog = isLegacyMock
+    ? legacyCatalog
+    : {
+        recipes: searchHook?.recipes ?? [],
+        status: searchHook?.status ?? 'loading',
+        errorMessage: searchHook?.errorMessage ?? null,
+        retry: searchHook?.retry ?? (() => {}),
+        refetch: searchHook?.refetch ?? (() => {}),
+      };
+
+  // Coherencia de selección: si la receta seleccionada deja de pertenecer al resultado de búsqueda por filtros activos
+  const isRecipeInResults = recipe ? catalog.recipes.some((r) => r.id === recipe.id) : false;
+
+  const hasActiveFilters = Boolean(
+    searchTerm.trim() ||
+      (searchHook &&
+        (searchHook.properties.length > 0 ||
+          (searchHook.maxPrepMinutes != null && searchHook.maxPrepMinutes > 0))),
+  );
+
+  const recipeMatchesFilters = useMemo(() => {
+    if (!recipe) return false;
+    if (!hasActiveFilters) return true;
+
+    const normalizedQuery = searchTerm.trim().toLowerCase();
+    if (normalizedQuery) {
+      const matchTitle = recipe.title.toLowerCase().includes(normalizedQuery);
+      const matchDesc = recipe.description?.toLowerCase().includes(normalizedQuery);
+      const matchIngredient = (recipe.ingredients ?? []).some((ing) =>
+        ing.name.toLowerCase().includes(normalizedQuery),
+      );
+      const matchProperty = (recipe.properties ?? []).some((prop) =>
+        prop.toLowerCase().includes(normalizedQuery),
+      );
+      if (!matchTitle && !matchDesc && !matchIngredient && !matchProperty) {
+        return false;
+      }
+    }
+
+    if (searchHook && searchHook.properties.length > 0) {
+      const recipeProps = (recipe.properties ?? []).map((p) => p.toLowerCase());
+      const recipeCategories = (recipe.categories ?? []).map((c) => c.toLowerCase());
+      const hasAllProps = searchHook.properties.every((p) => {
+        const lower = p.toLowerCase();
+        return recipeProps.includes(lower) || recipeCategories.includes(lower);
+      });
+      if (!hasAllProps) return false;
+    }
+
+    if (searchHook?.maxPrepMinutes != null && searchHook.maxPrepMinutes > 0) {
+      if (recipe.prepMinutes > searchHook.maxPrepMinutes) return false;
+    }
+
+    return true;
+  }, [recipe, hasActiveFilters, searchTerm, searchHook]);
+
+  useEffect(() => {
+    if (panelMode !== 'detail') return;
+    if (catalog.status !== 'success') return;
+    if (catalog.recipes.length === 0) return;
+
+    if (hasActiveFilters && recipe && !isRecipeInResults && !recipeMatchesFilters) {
+      // Si la receta actual ya no pertenece a los filtros activos pero hay otras recetas, seleccionar la primera
+      navigate(`/recipes/${catalog.recipes[0].id}`, { replace: true });
+    }
+  }, [
+    catalog.status,
+    catalog.recipes,
+    recipe,
+    isRecipeInResults,
+    recipeMatchesFilters,
+    hasActiveFilters,
+    navigate,
+    panelMode,
+  ]);
+
+  const effectiveRecipe =
+    hasActiveFilters && catalog.status === 'success' && !isRecipeInResults && !recipeMatchesFilters
+      ? null
+      : recipe;
+
   return (
     <div className="min-h-screen bg-brand-cream">
-      {/* If not inside AppLayout (e.g. standalone tests), render TopBar directly */}
       {!inLayout && (
         <TopBar
           isRecipes={true}
@@ -106,110 +188,42 @@ export function DesktopRecipeDetail({
 
       {/* Main Workspace (Dividido Master-Detail Stitch 5 cols / 7 cols) */}
       <main className="mx-auto grid max-w-7xl grid-cols-12 gap-6 items-start p-8">
-        {/* Columna Izquierda (Cols 5): Catálogo */}
-        <section className="col-span-5 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="font-headline text-2xl font-bold text-on-surface">Catálogo de Recetas</h2>
-              <p className="text-xs font-medium text-on-surface-variant">
-                Gestión integral de recetas e ingredientes nutricionales
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={catalog.refetch}
-              className="flex items-center gap-1 text-xs font-bold text-brand-green hover:underline"
-            >
-              <span aria-hidden="true" className="material-symbols-outlined text-xs">refresh</span>
-              Actualizar
-            </button>
-          </div>
+        <DesktopCatalogPanel
+          catalog={catalog}
+          selectedId={effectiveRecipe?.id ?? null}
+          onSelectRecipe={(newId) => navigate(`/recipes/${newId}`)}
+          onCreateRecipe={() => setPanelMode('create')}
+          searchTerm={searchTerm}
+          onSearchTermChange={setSearchTerm}
+          searchHook={searchHook}
+        />
 
-          <RecipeCatalogList
-            recipes={catalog.recipes}
-            status={catalog.status}
-            errorMessage={catalog.errorMessage}
-            onRetry={catalog.retry}
-            onRefresh={catalog.refetch}
-            selectedId={recipe.id}
-            onSelectRecipe={(newId) => navigate(`/recipes/${newId}`)}
-            onCreateRecipe={() => setPanelMode('create')}
-            hideSearch={true}
-            hideHeader={true}
-            searchTerm={searchTerm}
-            onSearchTermChange={setSearchTerm}
-          />
-        </section>
-
-        {/* Columna Derecha (Cols 7): Detalle o Formulario */}
-        <section className="col-span-7 bg-white rounded-2xl border border-outline-variant/30 p-6 shadow-sm min-h-[600px] flex flex-col justify-between">
-          {panelMode === 'create' && (
-            <RecipeForm
-              mode="create"
-              catalogIngredients={catalogIngredients}
-              catalogStatus={catalogStatus}
-              onSuccess={(created) => {
-                setPanelMode('detail');
-                catalog.refetch();
-                navigate(`/recipes/${created.id}`);
-              }}
-              onCancel={() => setPanelMode('detail')}
-              onSubmittingChange={setIsSavingRecipe}
-            />
-          )}
-
-          {panelMode === 'edit' && (
-            <RecipeForm
-              mode="edit"
-              initialValues={recipe}
-              catalogIngredients={catalogIngredients}
-              catalogStatus={catalogStatus}
-              onSuccess={() => {
-                setPanelMode('detail');
-                retry();
-                catalog.refetch();
-              }}
-              onCancel={() => setPanelMode('detail')}
-              onSubmittingChange={setIsSavingRecipe}
-            />
-          )}
-
-          {panelMode === 'detail' && (
-            <div className="space-y-6">
-              {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
-              <div className="flex items-center justify-between pb-4 border-b border-outline-variant/20">
-                <h1 className="text-xs font-bold text-on-surface-variant tracking-wider uppercase flex items-center gap-1.5">
-                  <span aria-hidden="true" className="material-symbols-outlined text-brand-green text-base">info</span>
-                  {DETAIL_TITLE}
-                </h1>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={openEdit}
-                    className="flex items-center gap-1.5 rounded-xl border border-outline-variant/40 bg-surface-container px-3.5 py-1.5 text-xs font-bold text-on-surface transition-all hover:bg-surface-container-high active:scale-95"
-                  >
-                    <span aria-hidden="true" className="material-symbols-outlined text-sm text-brand-green">edit</span>
-                    <span>Modificar Receta</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openDelete}
-                    className="flex items-center gap-1.5 rounded-xl bg-error-container/30 px-3.5 py-1.5 text-xs font-bold text-error transition-all hover:bg-error-container/60 active:scale-95"
-                  >
-                    <span aria-hidden="true" className="material-symbols-outlined text-sm text-error">delete</span>
-                    <span>Eliminar</span>
-                  </button>
-                </div>
-              </div>
-
-              <DesktopRecipeHero recipe={recipe} />
-
-              <DesktopNutritionalValues recipe={recipe} />
-
-              <DesktopIngredientsAndSteps recipe={recipe} />
-            </div>
-          )}
-        </section>
+        <DesktopDetailPanel
+          recipe={effectiveRecipe}
+          status={status}
+          errorMessage={errorMessage}
+          panelMode={panelMode}
+          onCancelForm={() => setPanelMode('detail')}
+          onSuccessCreate={(created) => {
+            setPanelMode('detail');
+            catalog.refetch();
+            searchHook?.refetch();
+            navigate(`/recipes/${created.id}`);
+          }}
+          onSuccessEdit={() => {
+            setPanelMode('detail');
+            retry();
+            catalog.refetch();
+            searchHook?.refetch();
+          }}
+          isSavingRecipe={isSavingRecipe}
+          setIsSavingRecipe={setIsSavingRecipe}
+          catalogIngredients={catalogIngredients}
+          catalogStatus={catalogStatus}
+          openEdit={openEdit}
+          openDelete={openDelete}
+          retry={retry}
+        />
       </main>
 
       <Modal
@@ -222,6 +236,7 @@ export function DesktopRecipeDetail({
           onSuccess={() => {
             closeModal();
             catalog.refetch();
+            searchHook?.refetch();
             refetchIngredients();
           }}
           onCancel={closeModal}

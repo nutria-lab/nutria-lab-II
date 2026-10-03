@@ -16,24 +16,24 @@ export type RecipeDetailPageProps = {
 export function RecipeDetailPage({ inLayout = false }: RecipeDetailPageProps = {}) {
   const controller = useRecipeDetailController();
 
-  if (controller.status === 'loading') {
-    return <RecipeDetailSkeleton />;
-  }
-
-  if (controller.status === 'notFound') {
-    return <RecipeDetailNotFound />;
-  }
-
-  if (!controller.recipe) {
-    return (
-      <RecipeDetailError
-        message={controller.errorMessage ?? GENERIC_ERROR_MESSAGE}
-        onRetry={controller.retry}
-      />
-    );
-  }
-
   if (!controller.effectiveIsDesktop) {
+    if (controller.status === 'loading') {
+      return <RecipeDetailSkeleton />;
+    }
+
+    if (controller.status === 'notFound') {
+      return <RecipeDetailNotFound />;
+    }
+
+    if (!controller.recipe) {
+      return (
+        <RecipeDetailError
+          message={controller.errorMessage ?? GENERIC_ERROR_MESSAGE}
+          onRetry={controller.retry}
+        />
+      );
+    }
+
     return (
       <MobileRecipeDetail
         recipe={controller.recipe}
@@ -54,6 +54,8 @@ export function RecipeDetailPage({ inLayout = false }: RecipeDetailPageProps = {
     );
   }
 
+  // En escritorio, siempre mostramos el layout Master-Detail de dos columnas para
+  // que el catálogo de la izquierda nunca desaparezca ante 404, loading o errores del detalle.
   return (
     <DesktopRecipeDetail
       inLayout={inLayout}

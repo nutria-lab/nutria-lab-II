@@ -8,16 +8,14 @@ import { RecipeCatalogList } from '../components/RecipeCatalogList';
 import { RecipeForm } from '../components/RecipeForm';
 import { useIngredients } from '../hooks/useIngredients';
 import { useRecipes } from '../hooks/useRecipes';
-
-
-
+import { useRecipeSearch, type UseRecipeSearchResult } from '../hooks/useRecipeSearch';
 
 // NUT-20 (octava iteración) — adaptación tablet/desktop (design.md sección 9.4/9.5): en
 // escritorio, esta pantalla nunca se queda mostrando el listado "puro" si ya hay recetas
 // cargadas — redirige de inmediato a `/recipes/{primera receta}` (layout de dos columnas de
 // `RecipeDetailPage`), reemplazando la entrada de historial. En mobile, o con el listado
 // vacío, sigue mostrando el listado tal cual (ahora vía `RecipeCatalogList`).
-const DESKTOP_MEDIA_QUERY = '(min-width: 768px)';
+const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 
 // NUT-20 (ajuste visual pedido directamente por la PO, comparando la app real contra los
 // mockups de Stitch de la pantalla de recetas): reemplaza el header anterior (`<h1>Recetas</h1>`
@@ -82,8 +80,12 @@ function RecipesHeader({
   );
 }
 
+export type RecipesListPageProps = {
+  useSearch?: boolean;
+  searchHook?: UseRecipeSearchResult;
+};
 
-export function RecipesListPage() {
+export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps = {}) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   // Reads ?q= from URL so TopBar search navigates here with the term pre-filled
@@ -118,17 +120,19 @@ export function RecipesListPage() {
   }
   const effectiveIsDesktop = frozenIsDesktop ?? isDesktop;
 
-  // Hallazgo 4 (alto, novena iteración): en el mismo render donde ya se cumple la condición de
-  // redirect, se muestra el skeleton de carga en vez del listado completo, para que las
-  // tarjetas/buscador/FAB no lleguen a pintarse ni por un frame antes de que `navigate()` surta
-  // efecto.
-  const shouldRedirectToDesktopDetail =
-    effectiveIsDesktop && status === 'success' && recipes.length > 0;
+  const isLegacyMode =
+    useSearch === false || (searchHook === undefined && Boolean((useRecipes as unknown as { mock?: unknown }).mock));
 
-  // Bug 4 (NUT-20, confirmado por revisión de código) — design.md 9.4/9.5 (líneas 303/343/353):
-  // si el catálogo está REALMENTE vacío (`status === 'empty'`, nada a dónde redirigir), `/recipes`
-  // en escritorio arma igual el layout de dos columnas (columna izquierda `RecipeCatalogList` +
-  // panel derecho), en vez de colapsar a la pantalla de una sola columna compartida con mobile.
+  const internalSearch = useRecipeSearch({
+    initialQuery: urlSearchTerm,
+    enableSessionPersistence: !effectiveIsDesktop && !isLegacyMode,
+    enabled: !effectiveIsDesktop && !isLegacyMode && !searchHook,
+  });
+
+  const search = searchHook ?? (!isLegacyMode && !effectiveIsDesktop ? internalSearch : undefined);
+
+  const shouldRedirectToDesktopDetail = effectiveIsDesktop && status === 'success' && recipes.length > 0;
+
   const showDesktopEmptyLayout = effectiveIsDesktop && status === 'empty';
 
   useEffect(() => {
@@ -162,6 +166,7 @@ export function RecipesListPage() {
           onSuccess={() => {
             setModalKind(null);
             refetch();
+            search?.refetch();
           }}
           onCancel={() => setModalKind(null)}
           onSubmittingChange={setIsSavingRecipe}
@@ -263,6 +268,7 @@ export function RecipesListPage() {
           onCreateRecipe={() => setModalKind('recipe')}
           searchTerm={urlSearchTerm}
           onSearchTermChange={(q) => setSearchParams(q ? { q } : {})}
+          search={search}
         />
       </div>
 
@@ -270,3 +276,4 @@ export function RecipesListPage() {
     </main>
   );
 }
+

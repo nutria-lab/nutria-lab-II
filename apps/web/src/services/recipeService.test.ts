@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from './apiClient';
 import {
+  adaptRecipesSearchLocally,
   recipeService,
   RecipeRequestError,
   type CreateRecipeRequest,
@@ -299,3 +300,171 @@ describe('recipeService.remove', () => {
     await expect(recipeService.remove('recipe-1')).rejects.toBe(unauthorizedError);
   });
 });
+
+describe('adaptRecipesSearchLocally', () => {
+  const sampleRecipes: Recipe[] = [
+    buildRecipe({
+      id: 'r1',
+      title: 'Pollo al horno',
+      description: 'Pollo jugoso con especias',
+      prepMinutes: 15,
+      cookMinutes: 45,
+      ingredients: [{ name: 'Pechuga de pollo', quantity: 500, unit: 'g' }],
+      properties: ['Alto en Proteína', 'Sin Gluten'],
+    }),
+    buildRecipe({
+      id: 'r2',
+      title: 'Ensalada César',
+      description: 'Ensalada fresca con aderezo clásico',
+      prepMinutes: 10,
+      cookMinutes: 0,
+      ingredients: [{ name: 'Lechuga', quantity: 200, unit: 'g' }],
+      properties: ['Bajo en Grasa'],
+    }),
+    buildRecipe({
+      id: 'r3',
+      title: 'Sopa de Verduras',
+      description: 'Sopa caliente reconfortante',
+      prepMinutes: 25,
+      cookMinutes: 30,
+      ingredients: [{ name: 'Zanahoria', quantity: 100, unit: 'g' }],
+      properties: ['Sin Gluten', 'Bajo en Grasa', 'Vegano'],
+    }),
+  ];
+
+  it('filters by query text matching title, description, ingredients, or properties', () => {
+    const byTitle = adaptRecipesSearchLocally(sampleRecipes, { q: 'pollo', page: 1, pageSize: 12 });
+    expect(byTitle.items.map((r) => r.id)).toEqual(['r1']);
+
+    const byDesc = adaptRecipesSearchLocally(sampleRecipes, { q: 'fresca', page: 1, pageSize: 12 });
+    expect(byDesc.items.map((r) => r.id)).toEqual(['r2']);
+
+    const byIng = adaptRecipesSearchLocally(sampleRecipes, { q: 'zanahoria', page: 1, pageSize: 12 });
+    expect(byIng.items.map((r) => r.id)).toEqual(['r3']);
+
+    const byProp = adaptRecipesSearchLocally(sampleRecipes, { q: 'vegano', page: 1, pageSize: 12 });
+    expect(byProp.items.map((r) => r.id)).toEqual(['r3']);
+  });
+
+  it('filters by multiple properties with AND semantics (case-insensitive)', () => {
+    const glutenFree = adaptRecipesSearchLocally(sampleRecipes, {
+      properties: ['sin gluten'],
+      page: 1,
+      pageSize: 12,
+    });
+    expect(glutenFree.items.map((r) => r.id)).toEqual(['r1', 'r3']);
+
+    const glutenFreeAndLowFat = adaptRecipesSearchLocally(sampleRecipes, {
+      properties: ['sin gluten', 'bajo en grasa'],
+      page: 1,
+      pageSize: 12,
+    });
+    expect(glutenFreeAndLowFat.items.map((r) => r.id)).toEqual(['r3']);
+  });
+
+  it('filters by maxPrepMinutes (prepMinutes <= maxPrepMinutes)', () => {
+    const fast = adaptRecipesSearchLocally(sampleRecipes, {
+      maxPrepMinutes: 15,
+      page: 1,
+      pageSize: 12,
+    });
+    expect(fast.items.map((r) => r.id)).toEqual(['r1', 'r2']);
+
+    const superFast = adaptRecipesSearchLocally(sampleRecipes, {
+      maxPrepMinutes: 10,
+      page: 1,
+      pageSize: 12,
+    });
+    expect(superFast.items.map((r) => r.id)).toEqual(['r2']);
+  });
+
+  it('handles pagination correctly with page and pageSize', () => {
+    const page1 = adaptRecipesSearchLocally(sampleRecipes, { page: 1, pageSize: 2 });
+    expect(page1.items.map((r) => r.id)).toEqual(['r1', 'r2']);
+    expect(page1.page).toBe(1);
+    expect(page1.pageSize).toBe(2);
+    expect(page1.total).toBe(3);
+
+    const page2 = adaptRecipesSearchLocally(sampleRecipes, { page: 2, pageSize: 2 });
+    expect(page2.items.map((r) => r.id)).toEqual(['r3']);
+    expect(page2.page).toBe(2);
+    expect(page2.pageSize).toBe(2);
+    expect(page2.total).toBe(3);
+  });
+});
+
+describe('recipeService.search', () => {
+  it('GETs /recipes with serialized query params and returns backend search response when formatted', async () => {
+    const searchResponse = {
+      items: [buildRecipe({ id: 'r1' })],
+      page: 1,
+      pageSize: 12,
+      total: 1,
+    };
+    vi.mocked(apiClient.get).mockResolvedValue({ data: searchResponse });
+
+    const result = await recipeService.search({
+      q: 'pollo',
+      properties: ['Sin Gluten', 'Alto en Proteína'],
+      maxPrepMinutes: 30,
+      page: 1,
+      pageSize: 12,
+    });
+
+    expect(result).toEqual(searchResponse);
+    expect(apiClient.get).toHaveBeenCalledWith(
+      '/recipes',
+      expect.objectContaining({
+        params: {
+          q: 'pollo',
+          properties: 'Sin Gluten,Alto en Proteína',
+          maxPrepMinutes: 30,
+          page: 1,
+          pageSize: 12,
+        },
+        timeout: expect.any(Number),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('falls back to local adaptation when backend returns a plain Recipe[] array', async () => {
+    const rawRecipes = [
+      buildRecipe({ id: 'r1', title: 'Pollo al verdeo', prepMinutes: 20 }),
+      buildRecipe({ id: 'r2', title: 'Carne asada', prepMinutes: 50 }),
+    ];
+    vi.mocked(apiClient.get).mockResolvedValue({ data: rawRecipes });
+
+    const result = await recipeService.search({
+      q: 'pollo',
+      page: 1,
+      pageSize: 12,
+    });
+
+    expect(result.items.map((r) => r.id)).toEqual(['r1']);
+    expect(result.total).toBe(1);
+    expect(result.page).toBe(1);
+  });
+
+  it('throws RecipeRequestError with kind "validation" on 400', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(httpFailure(400));
+
+    await expect(recipeService.search({ page: 1 })).rejects.toMatchObject({ kind: 'validation' });
+  });
+
+  it('throws RecipeRequestError with kind "network" on network error', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(
+      new AxiosError('Network Error', AxiosError.ERR_NETWORK, requestConfig),
+    );
+
+    await expect(recipeService.search({ page: 1 })).rejects.toMatchObject({ kind: 'network' });
+  });
+
+  it('propagates 401 unwrapped', async () => {
+    const unauthorizedError = httpFailure(401);
+    vi.mocked(apiClient.get).mockRejectedValue(unauthorizedError);
+
+    await expect(recipeService.search({ page: 1 })).rejects.toBe(unauthorizedError);
+  });
+});
+
