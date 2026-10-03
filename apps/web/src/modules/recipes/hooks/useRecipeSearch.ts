@@ -8,7 +8,6 @@ import {
 
 export const RECIPE_SEARCH_SESSION_KEY = 'nutria_recipe_search_state';
 export const DEBOUNCE_DELAY_MS = 300;
-export const DEFAULT_PAGE_SIZE = 4;
 
 export type RecipeSearchState = {
   draftText: string;
@@ -77,6 +76,7 @@ function loadPersisted(): PersistedRecipeSearch | null {
 type QueryResultState = {
   recipes: Recipe[];
   total: number;
+  pageSize?: number;
   status: 'loading' | 'empty' | 'error' | 'success';
   isFetchingMore: boolean;
   errorMessage: string | null;
@@ -85,7 +85,7 @@ type QueryResultState = {
 
 export function useRecipeSearch({
   initialQuery,
-  pageSize = DEFAULT_PAGE_SIZE,
+  pageSize: propPageSize,
   enableSessionPersistence = true,
   enabled = true,
 }: UseRecipeSearchOptions = {}): UseRecipeSearchResult {
@@ -175,7 +175,7 @@ export function useRecipeSearch({
             properties: properties.length > 0 ? properties : undefined,
             maxPrepMinutes,
             page: targetPage,
-            pageSize,
+            pageSize: propPageSize,
           },
           controller.signal,
         )
@@ -194,6 +194,7 @@ export function useRecipeSearch({
                   ...data.items.filter((item) => !prev.recipes.some((r) => r.id === item.id)),
                 ],
             total: data.total,
+            pageSize: data.pageSize,
             status: isFirstPage && data.items.length === 0 ? 'empty' : 'success',
             isFetchingMore: false,
           }));
@@ -213,7 +214,7 @@ export function useRecipeSearch({
           }));
         });
     },
-    [committedQuery, properties, maxPrepMinutes, pageSize],
+    [committedQuery, properties, maxPrepMinutes, propPageSize],
   );
 
   // 3. Efecto de búsqueda ante cambios de página o filtros estabilizados
@@ -295,7 +296,7 @@ export function useRecipeSearch({
     properties: searchState.properties,
     maxPrepMinutes: searchState.maxPrepMinutes,
     page: searchState.page,
-    pageSize,
+    pageSize: queryResult.pageSize ?? propPageSize ?? 12,
 
     recipes: queryResult.recipes,
     total: queryResult.total,

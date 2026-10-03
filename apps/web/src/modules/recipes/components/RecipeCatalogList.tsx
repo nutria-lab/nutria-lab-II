@@ -110,7 +110,12 @@ export function RecipeCatalogList({
 
   const isSearchMode = Boolean(search);
 
-  const recipes = search ? search.recipes : propRecipes;
+  const rawRecipes = search ? search.recipes : propRecipes;
+  const recipes = Array.isArray(rawRecipes)
+    ? rawRecipes
+    : Array.isArray((rawRecipes as any)?.items)
+      ? (rawRecipes as any).items
+      : [];
   const status = search ? search.status : propStatus;
   const errorMessage = search ? search.errorMessage : propErrorMessage;
   const onRetry = search ? search.retry : propOnRetry;

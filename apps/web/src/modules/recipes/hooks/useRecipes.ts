@@ -40,8 +40,13 @@ export function useRecipes(): UseRecipesResult {
         if (latestRequestIdRef.current !== requestId) {
           return;
         }
-        setRecipes(data);
-        setStatus(data.length === 0 ? 'empty' : 'success');
+        const items = Array.isArray(data)
+          ? data
+          : Array.isArray((data as any)?.items)
+            ? (data as any).items
+            : [];
+        setRecipes(items);
+        setStatus(items.length === 0 ? 'empty' : 'success');
       })
       .catch(() => {
         if (latestRequestIdRef.current !== requestId) {

@@ -180,11 +180,20 @@ export function adaptRecipesSearchLocally(
 export const recipeService = {
   async list(signal: AbortSignal = new AbortController().signal): Promise<Recipe[]> {
     try {
-      const response = await apiClient.get<Recipe[]>('/recipes', {
+      const response = await apiClient.get<Recipe[] | RecipeSearchResponse>('/recipes', {
         timeout: RECIPE_REQUEST_TIMEOUT_MS,
         signal,
       });
-      return response.data;
+
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+
+      if (response.data && Array.isArray((response.data as RecipeSearchResponse).items)) {
+        return (response.data as RecipeSearchResponse).items;
+      }
+
+      return [];
     } catch (error) {
       return rethrow(error);
     }
@@ -197,8 +206,11 @@ export const recipeService = {
     try {
       const queryParams: Record<string, string | number> = {
         page: params.page,
-        pageSize: params.pageSize ?? 12,
       };
+
+      if (params.pageSize !== undefined) {
+        queryParams.pageSize = params.pageSize;
+      }
 
       if (params.q?.trim()) {
         queryParams.q = params.q.trim();
