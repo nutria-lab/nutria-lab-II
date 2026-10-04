@@ -1,29 +1,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-/**
- * NUT-83 — AC11 (receta existente sin imagen sigue devolviendo `image: null`, sin backfill) y
- * AC16 (la migración aditiva no rompe el contrato existente de `Recipe` de NUT-61/NUT-75).
- *
- * Mismo patrón exacto que `generation-run-migration.spec.ts`: lectura de texto plano con
- * `fs.readFileSync`/`fs.readdirSync` sobre `migration.sql` y los `.prisma` reales, sin ejecutar
- * ningún comando de Prisma ni tocar ninguna base de datos (ni local ni remota).
- *
- * Corrección de revisión de PR: la migración se regeneró con `prisma migrate dev --create-only`
- * (sobre la base local de desarrollo de la usuaria, con su consentimiento explícito) en vez de
- * quedar escrita a mano, siguiendo el Commit 1 de `.ai/database-and-migrations.md`. Este archivo
- * sigue buscando la carpeta de forma DINÁMICA por patrón de nombre en vez de hardcodear el
- * timestamp exacto (`20260930220304_add_recipe_image`), para no romper si se regenera de nuevo.
- */
+// Lee migration.sql y los .prisma como texto: no ejecuta Prisma ni toca ninguna base.
 describe('Recipe.image — Migración y schema (NUT-83 AC11/AC16)', () => {
   const prismaDir = path.resolve(__dirname, '../../../prisma');
   const migrationsDir = path.resolve(prismaDir, 'migrations');
   const recipeModelFile = path.resolve(prismaDir, 'models/recipe.prisma');
 
-  // Última migración conocida antes de NUT-83 (NUT-75, ya mergeada — ver plan.md sección 2).
+  // Última migración antes de NUT-83.
   const BASELINE_MIGRATION = '20260922204917_add_generation_run_and_meal_plan_versioning';
-  // Patrón de nombre pedido explícitamente por el prompt de esta etapa: cualquier carpeta que
-  // matchee "*_add_recipe_image*" (substring, case-insensitive), sin fijar ningún timestamp.
+  // Se busca por patrón de nombre, no por timestamp, por si la migración se regenera.
   const MIGRATION_NAME_PATTERN = /_add_recipe_image/i;
 
   function findRecipeImageMigrationDir(): string | null {
@@ -66,10 +52,7 @@ describe('Recipe.image — Migración y schema (NUT-83 AC11/AC16)', () => {
   });
 
   describe('AC11 - columna aditiva, nullable, sin backfill (contraste explícito con "origin", que sí tiene DEFAULT)', () => {
-    // NUT-83 (regenerada con `prisma migrate dev --create-only` en vez de a mano, corrección de
-    // revisión de PR): el SQL generado por la herramienta usa espacios múltiples entre
-    // `ADD COLUMN` y el nombre de columna (formato propio de Prisma), no un único espacio como
-    // asumía la versión escrita a mano de este archivo — \s+ en vez de un espacio literal.
+    // El SQL generado por Prisma puede usar varios espacios después de ADD COLUMN.
     it('agrega la columna "image" de tipo JSON/JSONB a "recipes"', () => {
       expect(migrationSql).toMatch(/ALTER TABLE "recipes" ADD COLUMN\s+"image" JSONB?\s*;/);
     });

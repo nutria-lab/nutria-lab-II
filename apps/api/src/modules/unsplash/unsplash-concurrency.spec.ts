@@ -1,6 +1,3 @@
-// `resolveWithBoundedConcurrency` is a generic pool primitive with no provider knowledge
-// (design.md D3) — unchanged by the Pexels -> Unsplash swap. Only the constant name/import
-// path change (plan.md 11.2: UNSPLASH_MAX_CONCURRENT_REQUESTS, value still 3).
 import { UNSPLASH_MAX_CONCURRENT_REQUESTS, resolveWithBoundedConcurrency } from './unsplash.service';
 
 function createDeferred<T>() {
@@ -61,7 +58,7 @@ describe('resolveWithBoundedConcurrency', () => {
 
     const resultPromise = resolveWithBoundedConcurrency(items, resolveOne);
 
-    // Resolve out of completion order to prove results are mapped by input position.
+    // Se resuelven desordenados para probar que el resultado respeta el orden de entrada.
     deferreds[3].resolve('fourth-resolved');
     deferreds[1].resolve('second-resolved');
     deferreds[0].resolve('first-resolved');
@@ -81,8 +78,6 @@ describe('resolveWithBoundedConcurrency', () => {
     expect(resolveOne).not.toHaveBeenCalled();
   });
 
-  // Defense-in-depth: design.md guarantees resolveImage itself never throws, so this only
-  // covers a resolveOne that rejects due to a programming error.
   it('does not let a single resolveOne rejection propagate out of the orchestrator', async () => {
     const items = ['a', 'b', 'c'];
 

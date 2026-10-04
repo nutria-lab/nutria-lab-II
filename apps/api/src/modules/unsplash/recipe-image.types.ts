@@ -1,6 +1,4 @@
-// Persisted shape of a resolved recipe image (design.md section 8). Provider-agnostic on
-// purpose except for the `provider` literal — same type survived the Pexels -> Unsplash swap
-// unchanged (design.md 11.2).
+// Imagen pública: es lo único que ve el cliente en recipe.image.
 export type RecipeImage = {
   provider: 'UNSPLASH';
   providerPhotoId: string;
@@ -13,16 +11,13 @@ export type RecipeImage = {
   retrievedAt: string;
 };
 
-// Private metadata (design.md 12.5.1) - lives only inside the persisted `Recipe.image` column,
-// never in a public DTO. Nested under its own key so a careless `...image` spread still carries
-// it along visibly, instead of looking like just another public field.
+// Metadata privada del registro de uso en Unsplash. Se guarda dentro de Recipe.image pero nunca
+// sale en una respuesta (toPublicRecipeImage la quita).
 export type UnsplashTrackingMetadata = {
   trackingUrl: string;
   status: 'PENDING' | 'SUCCEEDED' | 'FAILED';
   lastAttemptAt: string | null;
 };
 
-// Real shape of the persisted `Recipe.image` JSONB column: the public contract plus the private
-// tracking metadata. A DTO must only ever expose `RecipeImage` (via `toPublicRecipeImage`),
-// never this type directly.
+// Lo que realmente se guarda en la columna Recipe.image.
 export type PersistedRecipeImage = RecipeImage & { tracking: UnsplashTrackingMetadata };

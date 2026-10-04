@@ -1,10 +1,7 @@
-// Candidate validity predicate + selection (design.md section 3, field names per Unsplash
-// contract - plan.md 11.2). `alt_description` is intentionally not required here: its
-// absence is handled by the service's alt-fallback, not by candidate validity.
 import { isValidUnsplashUrl, UNSPLASH_API_HOST, UNSPLASH_IMAGE_HOST, UNSPLASH_PAGE_HOST } from './unsplash-url-validator.util';
 
 export type UnsplashCandidate = {
-  id: string; // Unsplash returns string ids (e.g. "LBI7cgq3pbM"), never numbers (design.md 12.1/12.2 fix #1).
+  id: string; // Unsplash devuelve ids string (ej.: "LBI7cgq3pbM"), nunca números.
   urls: { regular: string };
   links: { html: string; download_location: string };
   user: { name: string; links: { html: string } };
@@ -22,6 +19,8 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
+// Un candidato sirve si trae todos los campos que guardamos, dimensiones positivas y URLs HTTPS
+// de los hosts de Unsplash. alt_description es opcional: si falta se usa un texto de respaldo.
 function isValidCandidate(candidate: unknown): candidate is UnsplashCandidate {
   if (typeof candidate !== 'object' || candidate === null) {
     return false;
@@ -62,6 +61,7 @@ function isValidCandidate(candidate: unknown): candidate is UnsplashCandidate {
     return false;
   }
 
+  // Cada URL tiene que ser HTTPS y del host esperado para ese campo.
   if (
     !isValidUnsplashUrl(urls.regular, UNSPLASH_IMAGE_HOST) ||
     !isValidUnsplashUrl(links.html, UNSPLASH_PAGE_HOST) ||
@@ -74,8 +74,8 @@ function isValidCandidate(candidate: unknown): candidate is UnsplashCandidate {
   return true;
 }
 
-// Duplicate ids in the same response collapse to the first occurrence by position (design.md
-// section 3, tie-break interpretation) before the "first valid by position" rule applies.
+// Devuelve el primer candidato válido respetando el orden de relevancia de Unsplash.
+// Si un id aparece repetido en la respuesta, sólo cuenta la primera vez.
 export function selectUnsplashCandidate(results: unknown): UnsplashCandidate | null {
   if (!Array.isArray(results)) {
     return null;

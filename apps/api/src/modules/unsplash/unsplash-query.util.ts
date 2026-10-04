@@ -1,6 +1,5 @@
-// Deterministic query builder (design.md section 2). NFKD + strip combining diacritics mirrors
-// the DB-level `unaccent` convention already used elsewhere in this domain, applied here at the
-// application layer since there's no DB involved in building an external API query.
+// Arma la query a partir del título: sin acentos, en minúsculas, con espacios simples y el sufijo
+// fijo "food recipe". Ej.: "  Ñoquis de Papá " -> "noquis de papa food recipe".
 export function buildUnsplashQuery(title: string): string {
   const normalized = title
     .normalize('NFKD')

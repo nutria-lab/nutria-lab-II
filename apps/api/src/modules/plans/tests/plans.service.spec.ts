@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { UnsplashService } from '../../unsplash/unsplash.service';
+import { pendingPersistedImage, unsplashPhoto, unsplashResponse, unsplashSearchBody } from '../../unsplash/unsplash-search.fixture';
 
 /**
  * Unit tests de PlansService con PlansRepository y GeminiService mockeados (mismo patrón de
@@ -111,26 +112,13 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         .fn()
         .mockResolvedValueOnce({ run: newRun, wasCreated: true })
         .mockResolvedValueOnce({ run: existingRun, wasCreated: false }),
-      // Ciclo B (design.md 12.5.2, plan.md 12.2.2): the transaction now also reports which
-      // recipes it created with a resolved image, so the service can track them after it
-      // resolves. Default has no new recipes with an image - tests that need tracking override
-      // this explicitly.
       createPlanTransaction: jest.fn().mockResolvedValue({ planId: persistedPlan.id, recipesForTracking: [] }),
       findPlanByWeek: jest.fn().mockResolvedValue(persistedPlan),
       transitionGenerationRun: jest.fn().mockResolvedValue(1),
     };
 
-    // Mocked at the orchestrator level (searchAndSelectImages(days), not resolveImage(title)
-    // per recipe): that's the exact integration point inside validateAndPersistPlan/updatePlan
-    // (design.md 12.5.2 paso 1 — búsqueda/selección sin tracking, antes de la transacción), and
-    // it keeps "never called" (AC13) / "called before the transaction" (AC14) trivial to express
-    // without coupling this file to resolveWithBoundedConcurrency's own concurrency details
-    // (covered in isolation by unsplash-concurrency.spec.ts).
     mockUnsplash = {
       searchAndSelectImages: jest.fn().mockImplementation(async (days: any) => days),
-      // Ciclo B (design.md 12.5.2 paso 3): post-persistence tracking, invoked per recipe
-      // reported by createPlanTransaction/updatePlanTransaction's recipesForTracking. Default
-      // behavior just marks it SUCCEEDED; tests that care about ordering/failure override this.
       trackDownload: jest.fn().mockImplementation(async (image: any) => ({
         ...image,
         tracking: { ...(image?.tracking ?? {}), status: 'SUCCEEDED', lastAttemptAt: new Date().toISOString() },
@@ -456,9 +444,6 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  // D1 (corrected): image resolution applies to every new recipe regardless of `origin` or
-  // creation path, so neither validateAndPersistPlan nor updatePlan may condition the call to
-  // attachImages on generationRunId being set (plan.md 10.1).
   describe('NUT-83 - integración de UnsplashService en validateAndPersistPlan (AC5 parte 2, AC13, AC14)', () => {
     it('AC14: generateAndPersistPlan (camino feliz, mismo camino que AC3/AC9) invoca unsplash.searchAndSelectImages ANTES de repository.createPlanTransaction', async () => {
       const callOrder: string[] = [];
@@ -546,14 +531,9 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  // Gap 2 (BLOQUEANTE): attachImages itself (the batch orchestrator, not resolveImage) has no
-  // try/catch at either call site. design.md D4/Flujo B say a provider failure must never block
-  // plan persistence — chosen interpretation here is degradation (continue with dto.days as-is,
-  // still persist), consistent with how resolveImage's own documented failures already degrade
-  // to image: null rather than failing the plan.
   describe('NUT-83 revisión de reviewers - Gap 2 (BLOQUEANTE) - fallo inesperado de unsplash.searchAndSelectImages no debe propagarse sin control', () => {
     it('generateAndPersistPlan: si unsplash.searchAndSelectImages rechaza con una excepción inesperada, el plan igual se persiste (degradación) en vez de que createPlanTransaction nunca se invoque', async () => {
-      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en attachImages'));
+      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en searchAndSelectImages'));
 
       const result = await service.generateAndPersistPlan(userId, weekStartStr);
 
@@ -568,7 +548,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         .fn()
         .mockResolvedValue({ run: newRun, wasCreated: true });
       mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
-      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en attachImages'));
+      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en searchAndSelectImages'));
 
       const dto = { weekStart: weekStartStr, days: generatedDays } as any;
 
@@ -579,23 +559,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  // Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.2) - tracking must run AFTER the persistence
-  // transaction already resolved, never inside it, for every recipe the transaction reports as
-  // newly created with a resolved image (repository-level contract tested in
-  // plans.repository.spec.ts).
-  describe('NUT-83 ciclo B - tracking post-persistencia se invoca DESPUÉS de la transacción (design.md 12.5.2, plan.md 12.2.2)', () => {
-    const pendingImage = {
-      provider: 'UNSPLASH',
-      providerPhotoId: '12345',
-      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
-      sourceUrl: 'https://unsplash.com/photos/12345?utm_source=nutria&utm_medium=referral',
-      photographer: 'Jane Doe',
-      photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
-      alt: 'A bowl of quinoa salad',
-      query: 'ensalada de quinoa food recipe',
-      retrievedAt: '2026-09-30T12:00:00.000Z',
-      tracking: { status: 'PENDING', lastAttemptAt: null, trackingUrl: 'https://api.unsplash.com/photos/12345/download' },
-    };
+  describe('NUT-83 - registro de uso post-persistencia se invoca DESPUÉS de la transacción (design.md 6.3)', () => {
+    const pendingImage = pendingPersistedImage();
 
     it('generateAndPersistPlan: invoca unsplash.trackDownload para la receta nueva DESPUÉS de que createPlanTransaction ya resolvió (nunca antes, nunca durante)', async () => {
       const callOrder: string[] = [];
@@ -676,26 +641,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  // Ciclo B (design.md 12.5.1/12.3) - every plan read must filter the private `tracking`
-  // metadata out of each embedded recipe's image before it reaches the controller, even though
-  // findPlanByWeek (mocked here as the repository) returns the raw persisted JSON.
-  describe('NUT-83 ciclo B - getPlanByWeek filtra metadata privada de tracking antes de devolver el plan (design.md 12.5.1)', () => {
-    const rawImage = {
-      provider: 'UNSPLASH',
-      providerPhotoId: '12345',
-      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
-      sourceUrl: 'https://unsplash.com/photos/12345?utm_source=nutria&utm_medium=referral',
-      photographer: 'Jane Doe',
-      photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
-      alt: 'A bowl of quinoa salad',
-      query: 'ensalada de quinoa food recipe',
-      retrievedAt: '2026-09-30T12:00:00.000Z',
-      tracking: {
-        status: 'SUCCEEDED',
-        lastAttemptAt: '2026-09-30T12:05:00.000Z',
-        trackingUrl: 'https://api.unsplash.com/photos/12345/download',
-      },
-    };
+  describe('NUT-83 - getPlanByWeek filtra metadata privada de tracking antes de devolver el plan (design.md 5.4)', () => {
+    const rawImage = pendingPersistedImage({ tracking: { status: 'SUCCEEDED', lastAttemptAt: '2026-09-30T12:05:00.000Z' } });
 
     it('cada recipe.image llega sin la clave "tracking", aunque el repositorio devuelva el image crudo con tracking', async () => {
       const planWithRawImage = {
@@ -747,25 +694,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
   });
 });
 
-// ---------------------------------------------------------------------------------------------
-// NUT-83 - gap real verificado contra el código actual (no hipotético): `resolveImagesOrDegrade`
-// (plans.service.ts, método privado ~línea 33) sigue invocando `this.unsplash.searchAndSelectImages(days)`
-// - el método VIEJO que hace búsqueda + selección + tracking de `download_location` TODO JUNTO,
-// antes de `repository.createPlanTransaction`. design.md 12.5.2 paso 1/paso 3 exige que, para el
-// camino de persistencia de plan, el tracking (`download_location`) sólo se dispare DESPUÉS de
-// que la receta ya exista en la base (paso 3, ya implementado como `trackNewRecipeImages`,
-// invocado después de `createPlanTransaction` en `validateAndPersistPlan`/`updatePlan`) - nunca
-// antes. El describe "NUT-83 - integración de UnsplashService..." más arriba no detecta esto
-// porque mockea el objeto `unsplash` COMPLETO (incluido `attachImages`), sin ejercitar nunca la
-// implementación real de `UnsplashService`.
-//
-// Este describe usa una instancia REAL de `UnsplashService` (sólo `fetch` global mockeado) para
-// verificar la garantía real que falta: ningún `fetch` a una URL de `download_location` ocurre
-// ANTES de que `repository.createPlanTransaction` sea invocado. Es esperable que este test falle
-// en rojo contra el código actual: `attachImages` llama a `trackDownload` internamente, antes de
-// que `createPlanTransaction` se invoque siquiera.
-// ---------------------------------------------------------------------------------------------
-describe('PlansService - NUT-83 gap real: tracking de download_location con UnsplashService REAL (design.md 12.5.2)', () => {
+describe('PlansService - NUT-83: búsqueda y registro de uso con UnsplashService REAL (design.md 6.3)', () => {
   const MOCK_API_KEY = 'test-unsplash-key-plan-integration';
   const userId = 'user-real-unsplash-1';
   const weekStartStr = '2026-09-14';
@@ -811,20 +740,7 @@ describe('PlansService - NUT-83 gap real: tracking de download_location con Unsp
     buildDay(DayOfWeek.SUNDAY, '2026-09-20', 'Pescado a la Plancha'),
   ];
 
-  // Candidato válido según el predicado real de selección (design.md 12.2/12.3): dominios
-  // exactos https://images.unsplash.com, https://unsplash.com, https://api.unsplash.com.
-  const candidate = {
-    id: 'photo-plan-real-1',
-    urls: { regular: 'https://images.unsplash.com/photo-111?w=1080' },
-    links: {
-      html: 'https://unsplash.com/photos/111',
-      download_location: 'https://api.unsplash.com/photos/111/download',
-    },
-    user: { name: 'Jane Doe', links: { html: 'https://unsplash.com/@jane-doe' } },
-    alt_description: 'A bowl of food',
-    width: 1920,
-    height: 1280,
-  };
+  const candidate = unsplashPhoto('planReal001');
 
   const originalFetch = global.fetch;
 
@@ -840,11 +756,11 @@ describe('PlansService - NUT-83 gap real: tracking de download_location con Unsp
       const urlStr = String(url);
       if (urlStr.includes('/search/photos')) {
         callOrder.push('searchFetch');
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ results: [candidate] }) });
+        return Promise.resolve(unsplashResponse(unsplashSearchBody([candidate])));
       }
       if (urlStr.includes('/download')) {
         callOrder.push('downloadFetch');
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({}) });
+        return Promise.resolve(unsplashResponse({}));
       }
       return Promise.reject(new Error(`fetch inesperado en el test: ${urlStr}`));
     });
@@ -858,13 +774,17 @@ describe('PlansService - NUT-83 gap real: tracking de download_location con Unsp
     const mockRepository: any = {
       getUserWithProfile: jest.fn().mockResolvedValue(mockUser),
       checkPlanExists: jest.fn().mockResolvedValue(false),
-      createPlanTransaction: jest.fn().mockImplementation(async () => {
+      // Igual que el repositorio real: informa las recetas creadas cuya imagen tiene tracking.
+      createPlanTransaction: jest.fn().mockImplementation(async (_userId: string, _weekStart: Date, days: any[]) => {
         callOrder.push('createPlanTransaction');
-        // Deliberadamente recipesForTracking: [] - esta prueba NO ejercita el paso 3
-        // (trackNewRecipeImages, ya correcto); sólo verifica que nada haya llamado a
-        // download_location ANTES de este punto, que es exactamente el paso 2 (persistencia).
-        return { planId: 'plan-real-1', recipesForTracking: [] };
+        const recipesForTracking = days.flatMap((day: any, dayIndex: number) =>
+          day.meals
+            .filter((meal: any) => meal.recipe?.image?.tracking)
+            .map((meal: any) => ({ recipeId: `recipe-${dayIndex}`, image: meal.recipe.image })),
+        );
+        return { planId: 'plan-real-1', recipesForTracking };
       }),
+      updateRecipeImageTracking: jest.fn().mockResolvedValue(undefined),
       findPlanByWeek: jest.fn().mockResolvedValue({ id: 'plan-real-1', userId, days: [] }),
     };
 
@@ -880,9 +800,9 @@ describe('PlansService - NUT-83 gap real: tracking de download_location con Unsp
       .filter(({ entry }) => entry === 'downloadFetch')
       .map(({ index }) => index);
 
-    // Gap real (ver comentario del describe): hoy `attachImages` trackea antes de persistir, así
-    // que `downloadFetch` aparece ANTES de `createPlanTransaction` en `callOrder` - este test
-    // debe fallar en rojo contra la implementación actual.
+    expect(callOrder.indexOf('searchFetch')).toBeLessThan(transactionIndex);
+    // Siete títulos distintos, una sola foto: un solo evento, después de la transacción.
+    expect(downloadIndexes).toHaveLength(1);
     for (const downloadIndex of downloadIndexes) {
       expect(downloadIndex).toBeGreaterThan(transactionIndex);
     }

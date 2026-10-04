@@ -1,11 +1,3 @@
-// Contract under test (does not exist yet, red step): apps/api/src/modules/unsplash/unsplash-url-validator.util.ts
-// (design.md 12.3 / plan.md 12.1.2). Single source of truth for "is this URL a trustworthy
-// Unsplash URL for this field", reused by candidate selection, download tracking and the
-// recovery script so the three can't drift apart on what counts as a trusted host.
-//
-// isValidUnsplashUrl(value, expectedHost): true only for an HTTPS URL whose parsed hostname
-// equals expectedHost exactly (no wildcard subdomain match, no http:// fallback); false for
-// anything else, including a value that doesn't parse as a URL at all - never throws.
 import { isValidUnsplashUrl } from './unsplash-url-validator.util';
 
 describe('isValidUnsplashUrl', () => {
@@ -39,7 +31,7 @@ describe('isValidUnsplashUrl', () => {
     expect(isValidUnsplashUrl(value as unknown as string, 'images.unsplash.com')).toBe(false);
   });
 
-  describe('the 4 real Unsplash hosts that matter (design.md 12.3)', () => {
+  describe('the 4 real Unsplash hosts that matter (design.md 3.4)', () => {
     it('urls.regular -> images.unsplash.com', () => {
       const url =
         'https://images.unsplash.com/photo-1518791841217-8f162f1e1131?ixid=M3w0NjAwMjN8MHwxfHNlYXJjaHwxfHxmb29kfGVufDB8fHx8MTcwMDAwMDAwMHww&ixlib=rb-4.0.3';

@@ -1,40 +1,14 @@
-// Contract under test (does not exist yet, red step):
-// apps/api/src/modules/unsplash/unsplash-recovery.util.ts (design.md 12.6, plan.md 12.4).
-//
-// export async function recoverPendingAndFailedTracking(
-//   prisma: { recipe: { findMany: Function; update: Function } },
-//   unsplashService: { trackDownload: (persisted: PersistedRecipeImage) => Promise<PersistedRecipeImage> },
-//   options?: { limit?: number },
-// ): Promise<RecoverySummary>
-//
-// RecoverySummary = { found: number; succeeded: number; failed: Array<{ recipeId: string; providerPhotoId: string }> }
-//
-// Same pattern as seedBaseData/seed.spec.ts: a flat, hand-rolled `prisma` mock (findMany/update as
-// jest.fn()), never a real PrismaClient, never real network. `unsplashService.trackDownload` is a
-// plain jest.fn() standing in for UnsplashService - this spec never instantiates the real service.
 import type { PersistedRecipeImage } from './recipe-image.types';
+import { pendingPersistedImage, unsplashPhoto } from './unsplash-search.fixture';
 
 const UNSPLASH_RECOVERY_DEFAULT_LIMIT = 50;
 const UNSPLASH_RECOVERY_MAX_CONCURRENT = 3;
 
+// Cada foto tiene su propio download_location, como lo devuelve Unsplash.
 function persistedImage(overrides: Partial<PersistedRecipeImage> = {}): PersistedRecipeImage {
-  return {
-    provider: 'UNSPLASH',
-    providerPhotoId: 'LBI7cgq3pbM',
-    imageUrl: 'https://images.unsplash.com/photo-123?ixid=abc',
-    sourceUrl: 'https://unsplash.com/photos/LBI7cgq3pbM?utm_source=nutria&utm_medium=referral',
-    photographer: 'Jane Doe',
-    photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
-    alt: 'Imagen ilustrativa de Pollo con Arroz',
-    query: 'pollo con arroz food recipe',
-    retrievedAt: '2026-09-30T12:00:00.000Z',
-    tracking: {
-      status: 'PENDING',
-      lastAttemptAt: null,
-      trackingUrl: 'https://api.unsplash.com/photos/LBI7cgq3pbM/download?ixid=abc',
-    },
-    ...overrides,
-  };
+  const photo = unsplashPhoto(overrides.providerPhotoId ?? 'LBI7cgq3pbM');
+  const base = pendingPersistedImage({ providerPhotoId: photo.id, tracking: { trackingUrl: photo.links.download_location } });
+  return { ...base, ...overrides };
 }
 
 function recipeRow(id: string, image: PersistedRecipeImage, createdAt = new Date('2026-09-01T00:00:00.000Z')) {
@@ -219,5 +193,27 @@ describe('recoverPendingAndFailedTracking', () => {
     expect(unsplashService.trackDownload).not.toHaveBeenCalled();
     expect(prisma.recipe.update).not.toHaveBeenCalled();
     expect(summary).toEqual({ found: 0, succeeded: 0, failed: [] });
+  });
+  it('sends a single usage event for rows sharing a trackingUrl (a recipe preserved into a new plan version) and writes the result to each row', async () => {
+    const original = persistedImage({ providerPhotoId: 'sharedPhoto1', alt: 'Versión original' });
+    const copy = { ...original, alt: 'Copia en la versión nueva', tracking: { ...original.tracking, status: 'FAILED' as const } };
+    const other = persistedImage({ providerPhotoId: 'otherPhoto02' });
+    const prisma = createPrismaMock([recipeRow('recipe-old', original), recipeRow('recipe-new', copy), recipeRow('recipe-other', other)]);
+    const unsplashService = createUnsplashServiceMock();
+    unsplashService.trackDownload.mockImplementation((image: PersistedRecipeImage) =>
+      Promise.resolve({ ...image, tracking: { ...image.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-03T12:00:00.000Z' } }),
+    );
+    const { recoverPendingAndFailedTracking } = await import('./unsplash-recovery.util');
+
+    const summary = await recoverPendingAndFailedTracking(prisma as any, unsplashService as any);
+
+    expect(unsplashService.trackDownload).toHaveBeenCalledTimes(2);
+    expect(prisma.recipe.update).toHaveBeenCalledTimes(3);
+    const written = Object.fromEntries(prisma.recipe.update.mock.calls.map(([args]: any) => [args.where.id, args.data.image]));
+    expect(written['recipe-old'].tracking.status).toBe('SUCCEEDED');
+    expect(written['recipe-new'].tracking.status).toBe('SUCCEEDED');
+    // Cada fila conserva sus campos públicos; sólo se comparte el resultado del tracking.
+    expect(written['recipe-new'].alt).toBe('Copia en la versión nueva');
+    expect(summary).toEqual({ found: 3, succeeded: 3, failed: [] });
   });
 });

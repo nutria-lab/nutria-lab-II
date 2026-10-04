@@ -1,5 +1,3 @@
-// Normalization algorithm is unchanged by the Pexels -> Unsplash swap (design.md 11.2) —
-// only the function name changes. Cases mirror design.md section 2.
 import { buildUnsplashQuery } from './unsplash-query.util';
 
 describe('buildUnsplashQuery', () => {

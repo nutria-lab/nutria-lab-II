@@ -4,6 +4,7 @@ import { PlansRepository } from '../plans.repository';
 import { MealPlanDayDto } from '../dto';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import * as generationRunStateMachine from '../generation-run-state-machine';
+import { pendingPersistedImage } from '../../unsplash/unsplash-search.fixture';
 
 /**
  * Unit tests aislados de PlansRepository con Prisma completamente mockeado (mismo patrón
@@ -82,6 +83,16 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
   beforeEach(() => {
     mockPrisma = {};
     repository = new PlansRepository(mockPrisma);
+  });
+
+  it('findPlanByWeek only reads the current version of this user\'s plan for this week, recipes included', async () => {
+    mockPrisma.mealPlan = { findFirst: jest.fn().mockResolvedValue(null) };
+
+    await repository.findPlanByWeek(userId, weekStart);
+
+    const args = mockPrisma.mealPlan.findFirst.mock.calls[0][0];
+    expect(args.where).toEqual({ userId, startDate: weekStart, isCurrent: true });
+    expect(args.include.days.include.meals.include).toEqual({ recipe: true });
   });
 
   describe('AC2 - conflicto de unicidad al regenerar (supersede)', () => {
@@ -521,24 +532,8 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
     });
   });
 
-  // `image` integration into createDaysMealsAndRecipes, shared by createPlanTransaction and
-  // updatePlanTransaction (plan.md 10.1: one fix covers both paths). D1 (corrected): image
-  // resolution applies regardless of `origin`, so updatePlanTransaction must behave exactly
-  // like createPlanTransaction here — no origin-based branch should exist. The provider call
-  // itself (Unsplash) is already tested in isolation elsewhere; this only checks that the
-  // already-resolved value on meal.recipe.image reaches tx.recipe.create's data untouched.
   describe('NUT-83 - integración de `image` resuelto (createPlanTransaction / updatePlanTransaction)', () => {
-    const sampleRecipeImage = {
-      provider: 'UNSPLASH',
-      providerPhotoId: '12345',
-      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
-      sourceUrl: 'https://unsplash.com/photos/12345',
-      photographer: 'Jane Doe',
-      photographerUrl: 'https://unsplash.com/@janedoe',
-      alt: 'A bowl of quinoa salad',
-      query: 'ensalada de quinoa food recipe',
-      retrievedAt: '2026-09-30T12:00:00.000Z',
-    };
+    const sampleRecipeImage = pendingPersistedImage();
 
     const withRecipeImage = (image: unknown): any =>
       newDays.map(day => ({
@@ -632,23 +627,8 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
     });
   });
 
-  // Gap 1 (BLOQUEANTE): buildOutputSnapshot wraps the same days array the service already
-  // populated with meal.recipe.image before opening the transaction. design.md section 1
-  // ("Consecuencias") forbids any provider data reaching GenerationRun snapshots — the only
-  // place the resolved image may live is Recipe.image. The `image` key itself must be absent
-  // from the snapshot entirely (not `image: null`, which would still be provider-derived data).
   describe('NUT-83 revisión de reviewers - Gap 1 (BLOQUEANTE) - outputSnapshot de GenerationRun nunca debe incluir datos de Unsplash', () => {
-    const sampleRecipeImage = {
-      provider: 'UNSPLASH',
-      providerPhotoId: '12345',
-      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
-      sourceUrl: 'https://unsplash.com/photos/12345',
-      photographer: 'Jane Doe',
-      photographerUrl: 'https://unsplash.com/@janedoe',
-      alt: 'A bowl of quinoa salad',
-      query: 'ensalada de quinoa food recipe',
-      retrievedAt: '2026-09-30T12:00:00.000Z',
-    };
+    const sampleRecipeImage = pendingPersistedImage();
 
     const withRecipeImage = (image: unknown): any =>
       newDays.map(day => ({
@@ -719,29 +699,8 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
     });
   });
 
-  // Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.2) - the transaction must also report which
-  // recipes it just created with a resolved image, with enough info (recipeId + the image, whose
-  // tracking.status is PENDING at this point) for the service layer to invoke tracking AFTER
-  // this transaction already resolved. Shape assumed here per plan.md 12.2.2 (a documented
-  // implementation decision, not fixed by design.md): `{ planId, recipesForTracking }` - update
-  // this describe if the implementer picks a different shape.
-  describe('NUT-83 ciclo B - createPlanTransaction/updatePlanTransaction devuelven los recipeId creados para trackear después (design.md 12.5.2, plan.md 12.2.2)', () => {
-    const pendingImage = {
-      provider: 'UNSPLASH',
-      providerPhotoId: '12345',
-      imageUrl: 'https://images.unsplash.com/photo-12345?w=1080',
-      sourceUrl: 'https://unsplash.com/photos/12345?utm_source=nutria&utm_medium=referral',
-      photographer: 'Jane Doe',
-      photographerUrl: 'https://unsplash.com/@janedoe?utm_source=nutria&utm_medium=referral',
-      alt: 'A bowl of quinoa salad',
-      query: 'ensalada de quinoa food recipe',
-      retrievedAt: '2026-09-30T12:00:00.000Z',
-      tracking: {
-        status: 'PENDING',
-        lastAttemptAt: null,
-        trackingUrl: 'https://api.unsplash.com/photos/12345/download',
-      },
-    };
+  describe('NUT-83 - createPlanTransaction/updatePlanTransaction devuelven los recipeId creados para registrar uso después (design.md 6.3)', () => {
+    const pendingImage = pendingPersistedImage();
 
     const withPendingImage = (image: unknown): any =>
       newDays.map(day => ({
@@ -777,6 +736,31 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
 
       expect(result.planId).toBe('plan-1');
       expect(result.recipesForTracking).toEqual([{ recipeId: 'recipe-created-99', image: pendingImage }]);
+    });
+
+    // El servicio reconoce las imágenes conservadas por referencia: tiene que volver el mismo objeto.
+    it('recipesForTracking keeps the received image reference, and a payload recipe id is never written to the new row', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-created-99' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const days = withPendingImage(pendingImage);
+      days[0].meals[0].recipe.id = '7f8a1c2e-3b4d-4e5f-8a9b-0c1d2e3f4a5b';
+
+      const result: any = await repository.createPlanTransaction(userId, weekStart, days, 'run-1');
+
+      expect(result.recipesForTracking[0].image).toBe(pendingImage);
+      expect(capturedRecipeData[0]).not.toHaveProperty('id');
     });
 
     it('createPlanTransaction: cuando ninguna receta nueva trae image resuelto (todas reusadas o sin image), recipesForTracking es un array vacío', async () => {

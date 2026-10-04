@@ -203,6 +203,15 @@ export class RecipeRepository {
     });
   }
 
+  // Guarda la imagen completa (un update de una columna Json reemplaza todo el valor).
+  // Va aparte de update() porque el cliente nunca puede escribir `image`.
+  async updateImage(id: string, image: Prisma.InputJsonValue) {
+    return this.prisma.recipe.update({
+      where: { id },
+      data: { image },
+    });
+  }
+
   async delete(id: string) {
     return this.prisma.recipe.delete({
       where: { id },

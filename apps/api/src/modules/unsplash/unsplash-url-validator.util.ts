@@ -1,8 +1,5 @@
-// Single source of truth for "is this URL a trustworthy Unsplash URL for this field" (design.md
-// 12.3), reused by candidate selection and any code that attaches the Authorization header to a
-// provider URL. `URL` parsing (not substring matching) defeats the userinfo trick
-// (https://host@evil.com/... parses to hostname=evil.com) and look-alike subdomains
-// (host.evil.com !== host via strict ===).
+// true sólo si la URL es HTTPS y su host es exactamente expectedHost. Se parsea con URL (no se
+// buscan substrings) para que https://api.unsplash.com@evil.com o subdominios parecidos no pasen.
 export function isValidUnsplashUrl(value: unknown, expectedHost: string): boolean {
   if (typeof value !== 'string' || value.length === 0) {
     return false;
@@ -18,8 +15,7 @@ export function isValidUnsplashUrl(value: unknown, expectedHost: string): boolea
   return parsed.protocol === 'https:' && parsed.hostname === expectedHost;
 }
 
-// Hosts expected per candidate field (design.md 12.3) - exported so the consumers of
-// isValidUnsplashUrl don't each repeat the hostname literal.
+// Host esperado para cada tipo de URL que devuelve Unsplash.
 export const UNSPLASH_IMAGE_HOST = 'images.unsplash.com';
 export const UNSPLASH_PAGE_HOST = 'unsplash.com';
 export const UNSPLASH_API_HOST = 'api.unsplash.com';

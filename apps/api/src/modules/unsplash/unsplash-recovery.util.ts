@@ -1,8 +1,5 @@
-// Recovery mechanism for recipes whose Unsplash download-tracking call never completed
-// (design.md 12.6): a process crash/restart between persisting a PENDING image and running its
-// trackDownload leaves the row stuck. This is invoked from a standalone script
-// (prisma/recover-unsplash-tracking.ts), never from an HTTP path - see design.md 12.6 for why an
-// admin endpoint was rejected in favor of the prisma/seed.ts script pattern.
+// Recuperación manual de los registros de uso que quedaron PENDING o FAILED.
+// Sólo se llama desde el script prisma/recover-unsplash-tracking.ts, nunca desde un endpoint.
 import type { PersistedRecipeImage } from './recipe-image.types';
 import { resolveWithBoundedConcurrency } from './unsplash.service';
 
@@ -25,6 +22,8 @@ type RecoveryUnsplashService = {
   trackDownload: (persisted: PersistedRecipeImage) => Promise<PersistedRecipeImage>;
 };
 
+// Vuelve a intentar el registro de uso de esas recetas y guarda el nuevo estado.
+// Las SUCCEEDED nunca se reprocesan porque la consulta sólo trae PENDING y FAILED.
 export async function recoverPendingAndFailedTracking(
   prisma: RecoveryPrismaClient,
   unsplashService: RecoveryUnsplashService,
@@ -47,16 +46,26 @@ export async function recoverPendingAndFailedTracking(
     return summary;
   }
 
-  // Bounded concurrency (3) reused as-is from unsplash.service.ts - same cap as every other
-  // provider-facing batch in this module (design.md 12.6 step 2).
-  await resolveWithBoundedConcurrency(candidates, async (recipe) => {
-    const result = await unsplashService.trackDownload(recipe.image);
-    await prisma.recipe.update({ where: { id: recipe.id }, data: { image: result } });
+  // Recetas con el mismo trackingUrl son la misma asociación (ej.: una receta conservada en una
+  // versión nueva del plan): se manda un solo evento y el resultado se escribe en todas.
+  const rowsByTrackingUrl = new Map<string, Array<{ id: string; image: PersistedRecipeImage }>>();
+  for (const recipe of candidates) {
+    const rows = rowsByTrackingUrl.get(recipe.image.tracking.trackingUrl) ?? [];
+    rows.push(recipe);
+    rowsByTrackingUrl.set(recipe.image.tracking.trackingUrl, rows);
+  }
 
-    if (result.tracking.status === 'SUCCEEDED') {
-      summary.succeeded += 1;
-    } else {
-      summary.failed.push({ recipeId: recipe.id, providerPhotoId: result.providerPhotoId });
+  await resolveWithBoundedConcurrency(Array.from(rowsByTrackingUrl.values()), async (rows) => {
+    const { tracking } = await unsplashService.trackDownload(rows[0].image);
+
+    for (const recipe of rows) {
+      await prisma.recipe.update({ where: { id: recipe.id }, data: { image: { ...recipe.image, tracking } } });
+
+      if (tracking.status === 'SUCCEEDED') {
+        summary.succeeded += 1;
+      } else {
+        summary.failed.push({ recipeId: recipe.id, providerPhotoId: recipe.image.providerPhotoId });
+      }
     }
   });
 

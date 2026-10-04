@@ -4,20 +4,19 @@ import type { RecipeImage, PersistedRecipeImage } from './recipe-image.types';
 import { buildUnsplashQuery } from './unsplash-query.util';
 import { selectUnsplashCandidate, type UnsplashCandidate } from './unsplash-candidate-selector.util';
 import { isValidUnsplashUrl, UNSPLASH_API_HOST } from './unsplash-url-validator.util';
-// Type-only import: no runtime dependency between modules/unsplash and modules/plans, so no
-// risk of a circular module import (plan.md 10.3/11.2).
+// Import sólo de tipo: evita una dependencia circular en runtime con el módulo de planes.
 import type { MealPlanDayDto } from '@/modules/plans/dto';
 
-// Bounded concurrency limit for resolving a batch of images (design.md D3). Code constant, not
-// an env var (plan.md section 8).
+// Máximo de llamadas simultáneas a Unsplash (la cuota es por key, no por receta).
 export const UNSPLASH_MAX_CONCURRENT_REQUESTS = 3;
 
-// Generic bounded-concurrency pool, no provider knowledge. A resolveOne rejection never
-// propagates out of the orchestrator (defense in depth - resolveImage itself never throws).
+// Ejecuta resolveOne sobre todos los items con a lo sumo 3 a la vez y devuelve los resultados en
+// el mismo orden. Si un item falla, su resultado queda undefined en vez de romper todo el lote.
 export async function resolveWithBoundedConcurrency<T, R>(items: T[], resolveOne: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
 
+  // Cada worker toma el siguiente item libre hasta que no quedan más.
   async function worker(): Promise<void> {
     for (;;) {
       const currentIndex = nextIndex;
@@ -43,16 +42,22 @@ export async function resolveWithBoundedConcurrency<T, R>(items: T[], resolveOne
   return results;
 }
 
-// Single-attempt timeout in ms (design.md section 4/11.2): AbortController + setTimeout, no
-// retries, same mechanism as GeminiService's own timeout.
+// Un solo intento por llamada; pasado este tiempo se aborta y se sigue sin imagen.
 export const UNSPLASH_TIMEOUT_MS = 5000;
+
+// Si la cuota llega a 0 y Unsplash no dice cuándo se renueva, se espera 1 hora.
+export const UNSPLASH_QUOTA_FALLBACK_COOLDOWN_MS = 60 * 60 * 1000;
 
 const UNSPLASH_SEARCH_URL = 'https://api.unsplash.com/search/photos';
 const UNSPLASH_PER_PAGE = 5;
 
-// Attribution UTM on sourceUrl/photographerUrl (design.md 12.4) - `set` replaces rather than
-// duplicates a pre-existing utm_source/utm_medium, leaving any other query param untouched.
-// imageUrl never goes through this: it's persisted byte-for-byte as urls.regular.
+// Un reset >= este valor es un timestamp epoch en segundos; uno menor, segundos desde ahora.
+const EPOCH_SECONDS_THRESHOLD = 1_000_000_000;
+
+type SearchResult = { query: string; candidate: UnsplashCandidate };
+
+// Agrega la UTM de atribución que pide Unsplash conservando los demás parámetros.
+// `set` reemplaza un utm_* que ya existiera en vez de duplicarlo.
 function withAttributionUtm(url: string): string {
   const parsed = new URL(url);
   parsed.searchParams.set('utm_source', 'nutria');
@@ -60,9 +65,14 @@ function withAttributionUtm(url: string): string {
   return parsed.toString();
 }
 
-// Single public-mapping function (design.md 12.5.1), reused by every read/write path that ever
-// responds to a client: explicit whitelist of the 9 public fields, never spread+destructure, so
-// a future private field added to PersistedRecipeImage can't leak here by accident.
+// Lee un header sin romperse si la respuesta no trae headers (por ejemplo, un mock de test).
+function readHeader(response: Response, name: string): string | null {
+  const value = (response as unknown as { headers?: { get?: (header: string) => string | null } }).headers?.get?.(name);
+  return typeof value === 'string' ? value : null;
+}
+
+// Convierte la imagen guardada en la que se devuelve al cliente: copia sólo los 9 campos
+// públicos, así la metadata privada de tracking nunca sale en una respuesta.
 export function toPublicRecipeImage(persisted: PersistedRecipeImage | null): RecipeImage | null {
   if (!persisted) {
     return null;
@@ -80,73 +90,129 @@ export function toPublicRecipeImage(persisted: PersistedRecipeImage | null): Rec
   };
 }
 
-// Unlike GeminiService, this adapter must construct successfully regardless of whether
-// UNSPLASH_ACCESS_KEY is set (D4): the key is read on each attempt, inside resolveImage, never
-// in the constructor.
+// Adaptador de Unsplash. Nunca lanza excepciones: ante cualquier problema devuelve null o FAILED,
+// para que crear recetas y planes no dependa de Unsplash. La key se lee en cada llamada.
 @Injectable()
 export class UnsplashService {
   private readonly logger = new Logger(UnsplashService.name);
 
-  // In-memory, per-instance quota state (design.md 12.7). `null` = not observed yet, treated as
-  // available since that's the legitimate state of a freshly started process. Updated from every
-  // search response (200 or error) and consulted before the NEXT search attempt only - the call
-  // that reported 0 already used the quota it consumed.
-  private quotaRemaining: number | null = null;
+  // Hasta cuándo no se busca porque la cuota está agotada (null = hay cuota). Vive en memoria.
+  private quotaExhaustedUntil: number | null = null;
 
   constructor(private readonly configService: ConfigService) {}
 
-  // Overwrites quotaRemaining from X-Ratelimit-Remaining when present and a valid non-negative
-  // integer; otherwise leaves existing state untouched (design.md 12.7 step 2).
-  private applyQuotaFromResponse(response: Response): void {
-    const header = (response as unknown as { headers?: { get?: (name: string) => string | null } }).headers?.get?.(
-      'X-Ratelimit-Remaining',
-    );
-    if (typeof header !== 'string') {
-      return;
-    }
-    const parsed = Number.parseInt(header, 10);
-    if (Number.isInteger(parsed) && parsed >= 0) {
-      this.quotaRemaining = parsed;
-    }
-  }
-
-  // Legacy single-call convenience (used by RecipeService.create's callers that don't care about
-  // the PENDING/SUCCEEDED/FAILED split): search+select then immediately track, same cadence as
-  // before the ciclo B split, returning the public 9-field shape only.
-  async resolveImage(title: string): Promise<RecipeImage | null> {
-    const persisted = await this.searchAndSelectCandidate(title);
-    if (!persisted) {
-      return null;
-    }
-    const tracked = await this.trackDownload(persisted);
-    return toPublicRecipeImage(tracked);
-  }
-
-  // Ciclo B (design.md 12.5.2 paso 1, plan.md 12.1.3.b): search + candidate selection only - no
-  // tracking fetch. Returns the full PersistedRecipeImage already built (public fields + a
-  // `tracking` namespace set to PENDING with `trackingUrl: candidate.links.download_location`),
-  // ready to be persisted by the caller BEFORE the tracking fetch is ever attempted.
+  // Para POST /recipes: busca la foto de una receta y la devuelve lista para guardar, con el
+  // tracking en PENDING. No registra el uso: eso se hace después de guardar (trackDownload).
   async searchAndSelectCandidate(title: string): Promise<PersistedRecipeImage | null> {
-    const raw = await this.searchAndSelectCandidateRaw(title);
-    if (!raw) {
-      return null;
-    }
-    return {
-      ...this.buildRecipeImage(raw.candidate, raw.query, title),
-      tracking: {
-        status: 'PENDING',
-        lastAttemptAt: null,
-        trackingUrl: raw.candidate.links.download_location,
-      },
-    };
+    const result = await this.searchCandidate(title);
+    return result ? this.buildPendingImage(result, title) : null;
   }
 
-  // Shared by resolveImage/searchAndSelectCandidate and attachImages: search + candidate
-  // selection only, cacheable per normalized query (bug fix, design.md 11.2) - deliberately
-  // stops short of the per-recipe alt fallback, which depends on the title of the recipe
-  // actually being rendered, not whichever title first produced this query. No tracking call
-  // happens here (design.md 12.5.2): that is always the caller's own, separate step.
-  private async searchAndSelectCandidateRaw(title: string): Promise<{ query: string; candidate: UnsplashCandidate } | null> {
+  // Para planes: le agrega `image` a cada receta del plan. Hace una sola búsqueda por query
+  // (títulos que normalizan igual comparten foto) y no busca para las recetas que ya traen
+  // la clave `image` (las que el PUT conserva de la base).
+  async searchAndSelectImages(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
+    const needsImage = (recipe: MealPlanDayDto['meals'][number]['recipe']) => Boolean(recipe) && !('image' in recipe);
+
+    // 1. Juntar las queries distintas (con el primer título que produjo cada una).
+    const titleByQuery = new Map<string, string>();
+    for (const day of days) {
+      for (const meal of day.meals) {
+        if (needsImage(meal.recipe)) {
+          const normalizedQuery = buildUnsplashQuery(meal.recipe.title);
+          if (!titleByQuery.has(normalizedQuery)) {
+            titleByQuery.set(normalizedQuery, meal.recipe.title);
+          }
+        }
+      }
+    }
+
+    // 2. Buscar cada query una sola vez, de a 3 en paralelo.
+    const uniqueQueries = Array.from(titleByQuery.keys());
+    const results = await resolveWithBoundedConcurrency(uniqueQueries, (normalizedQuery) =>
+      this.searchCandidate(titleByQuery.get(normalizedQuery) as string),
+    );
+
+    const resultByQuery = new Map<string, SearchResult | null>();
+    uniqueQueries.forEach((normalizedQuery, index) => {
+      resultByQuery.set(normalizedQuery, results[index] ?? null);
+    });
+
+    // 3. Armar la imagen de cada receta con su propio título (el alt de respaldo usa el título).
+    return days.map((day) => ({
+      ...day,
+      meals: day.meals.map((meal) => {
+        if (!needsImage(meal.recipe)) {
+          return meal;
+        }
+        const resolved = resultByQuery.get(buildUnsplashQuery(meal.recipe.title));
+        return {
+          ...meal,
+          recipe: {
+            ...meal.recipe,
+            image: resolved ? this.buildPendingImage(resolved, meal.recipe.title) : null,
+          },
+        };
+      }),
+    }));
+  }
+
+  // Registra en Unsplash el uso de una foto ya guardada con su receta (llamando a download_location).
+  // Devuelve una copia de la imagen con el tracking en SUCCEEDED o FAILED; nunca lanza.
+  async trackDownload(persisted: PersistedRecipeImage): Promise<PersistedRecipeImage> {
+    const { trackingUrl } = persisted.tracking;
+    const withStatus = (status: 'SUCCEEDED' | 'FAILED'): PersistedRecipeImage => ({
+      ...persisted,
+      tracking: { ...persisted.tracking, status, lastAttemptAt: new Date().toISOString() },
+    });
+
+    // La URL viene de la base: se vuelve a validar antes de mandarle la key.
+    if (!isValidUnsplashUrl(trackingUrl, UNSPLASH_API_HOST)) {
+      this.logger.error(
+        `Unsplash download tracking skipped for providerPhotoId=${persisted.providerPhotoId}: tracking URL failed host validation`,
+      );
+      return withStatus('FAILED');
+    }
+
+    const apiKey = this.configService.get<string>('UNSPLASH_ACCESS_KEY');
+    if (!apiKey) {
+      this.logger.warn(
+        `Unsplash download tracking skipped: UNSPLASH_ACCESS_KEY is missing or empty (providerPhotoId=${persisted.providerPhotoId})`,
+      );
+      return withStatus('FAILED');
+    }
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), UNSPLASH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(trackingUrl, {
+        headers: { Authorization: `Client-ID ${apiKey}` },
+        signal: abortController.signal,
+      });
+
+      // fetch() no falla con un status de error (4xx/5xx): hay que revisarlo a mano.
+      if (!response.ok) {
+        this.logger.error(
+          `Unsplash download tracking failed for providerPhotoId=${persisted.providerPhotoId}: received status ${response.status}`,
+        );
+        return withStatus('FAILED');
+      }
+
+      return withStatus('SUCCEEDED');
+    } catch (error: any) {
+      // Timeout o error de red. Nunca se loguea la URL ni la key.
+      const reason = error?.name === 'AbortError' ? `timed out after ${UNSPLASH_TIMEOUT_MS}ms` : 'request failed';
+      this.logger.error(`Unsplash download tracking ${reason} for providerPhotoId=${persisted.providerPhotoId}`);
+      return withStatus('FAILED');
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  // Hace la búsqueda en Unsplash y elige el primer candidato válido. Devuelve null si falta la
+  // key, si la cuota está agotada, si no hay resultados o ante cualquier error del proveedor.
+  private async searchCandidate(title: string): Promise<SearchResult | null> {
     const apiKey = this.configService.get<string>('UNSPLASH_ACCESS_KEY');
     if (!apiKey) {
       this.logger.warn('Unsplash image resolution skipped: UNSPLASH_ACCESS_KEY is missing or empty');
@@ -155,10 +221,10 @@ export class UnsplashService {
 
     const query = buildUnsplashQuery(title);
 
-    // Cut-off for the NEXT call only (design.md 12.7 step 1) - skip the fetch entirely once a
-    // prior response told us the quota is already at zero.
-    if (this.quotaRemaining === 0) {
-      this.logger.warn(`Unsplash quota exhausted, skipping search for query="${query}"`);
+    if (this.isQuotaExhausted()) {
+      this.logger.warn(
+        `Unsplash quota exhausted until ${new Date(this.quotaExhaustedUntil as number).toISOString()}, skipping search for query="${query}"`,
+      );
       return null;
     }
 
@@ -172,9 +238,7 @@ export class UnsplashService {
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => abortController.abort(), UNSPLASH_TIMEOUT_MS);
 
-    // The AbortSignal must stay live across both fetch() and response.json() (regression fixed
-    // for Pexels, same mechanism required here - design.md 11.2), so clearTimeout lives in a
-    // single finally wrapping both steps.
+    // Un solo try/finally para fetch() y json(): el timeout también cubre la lectura del body.
     try {
       const response = await fetch(url.toString(), {
         headers: { Authorization: `Client-ID ${apiKey}` },
@@ -182,11 +246,9 @@ export class UnsplashService {
       });
 
       this.applyQuotaFromResponse(response);
-      this.logger.warn(`[DEMO] X-Ratelimit-Limit=${response.headers.get('X-Ratelimit-Limit')} X-Ratelimit-Remaining=${response.headers.get('X-Ratelimit-Remaining')}`);
 
       if (response.status !== 200) {
-        // 401/403 means the credential itself is wrong, not a transient provider issue (design.md
-        // 12.7) - distinct message so this category is identifiable in logs, key never included.
+        // 401/403 = key inválida o sin permisos: mensaje propio para detectarlo en los logs.
         if (response.status === 401 || response.status === 403) {
           this.logger.warn(`Unsplash configuration appears invalid (status ${response.status}) for query="${query}"`);
         } else {
@@ -200,8 +262,7 @@ export class UnsplashService {
         data = await response.json();
       } catch (error: any) {
         if (error?.name === 'AbortError') {
-          // Timeout fired while reading the body, not during fetch() itself - rethrow so the
-          // outer catch treats it exactly like a fetch()-time timeout.
+          // Timeout mientras se leía el body: se trata igual que un timeout de fetch() (catch de abajo).
           throw error;
         }
         this.logger.warn(`Unsplash returned an invalid (non-JSON) response body for query="${query}"`);
@@ -212,10 +273,10 @@ export class UnsplashService {
       const candidate = selectUnsplashCandidate(results);
 
       if (!candidate) {
-        if (Array.isArray(results) && results.length === 0) {
-          return null;
+        // Sin resultados es normal (no se loguea); resultados sin ningún candidato válido, no.
+        if (!(Array.isArray(results) && results.length === 0)) {
+          this.logger.warn(`Unsplash returned no valid image candidate for query="${query}"`);
         }
-        this.logger.warn(`Unsplash returned no valid image candidate for query="${query}"`);
         return null;
       }
 
@@ -232,10 +293,50 @@ export class UnsplashService {
     }
   }
 
-  // Builds the public RecipeImage for one recipe. `title` is that recipe's own title, not
-  // necessarily the one that produced `candidate`/`query` (bug fix, design.md 11.2): the alt
-  // fallback must reflect the recipe actually being rendered when alt_description is absent.
-  private buildRecipeImage(candidate: UnsplashCandidate, query: string, title: string): RecipeImage {
+  // ¿Hay que saltear la búsqueda por cuota agotada? Al pasar la hora de reset se vuelve a habilitar.
+  private isQuotaExhausted(): boolean {
+    if (this.quotaExhaustedUntil === null) {
+      return false;
+    }
+    if (Date.now() >= this.quotaExhaustedUntil) {
+      this.quotaExhaustedUntil = null;
+      return false;
+    }
+    return true;
+  }
+
+  // Actualiza el estado de cuota con cada respuesta de búsqueda (también las de error).
+  // Si el header falta o no es un número válido, no cambia nada.
+  private applyQuotaFromResponse(response: Response): void {
+    const remainingHeader = readHeader(response, 'X-Ratelimit-Remaining');
+    if (remainingHeader === null) {
+      return;
+    }
+    const remaining = Number.parseInt(remainingHeader, 10);
+    if (!Number.isInteger(remaining) || remaining < 0) {
+      return;
+    }
+    this.quotaExhaustedUntil = remaining === 0 ? this.resolveQuotaResetAt(response) : null;
+  }
+
+  // Hasta cuándo bloquear: lo que diga X-Ratelimit-Reset, o 1 hora si no viene (Unsplash hoy no lo manda).
+  private resolveQuotaResetAt(response: Response): number {
+    const now = Date.now();
+    const resetHeader = readHeader(response, 'X-Ratelimit-Reset');
+    const reset = resetHeader === null ? Number.NaN : Number.parseInt(resetHeader, 10);
+
+    if (Number.isInteger(reset) && reset > 0) {
+      const resetAt = reset >= EPOCH_SECONDS_THRESHOLD ? reset * 1000 : now + reset * 1000;
+      if (resetAt > now) {
+        return resetAt;
+      }
+    }
+    return now + UNSPLASH_QUOTA_FALLBACK_COOLDOWN_MS;
+  }
+
+  // Arma la imagen que se guarda en Recipe.image: los 9 campos públicos + tracking en PENDING.
+  // imageUrl se guarda tal cual (con ixid); sólo los enlaces de atribución llevan UTM.
+  private buildPendingImage({ candidate, query }: SearchResult, title: string): PersistedRecipeImage {
     const alt =
       typeof candidate.alt_description === 'string' && candidate.alt_description.length > 0
         ? candidate.alt_description
@@ -251,197 +352,7 @@ export class UnsplashService {
       alt,
       query,
       retrievedAt: new Date().toISOString(),
+      tracking: { status: 'PENDING', lastAttemptAt: null, trackingUrl: candidate.links.download_location },
     };
-  }
-
-  // Ciclo B (design.md 12.5.2 paso 3, plan.md 12.1.3.b): public, invoked AFTER the recipe row
-  // already exists, independently of search+selection. Takes the full persisted image (so it has
-  // `tracking.trackingUrl`/`providerPhotoId` to work with) and returns a COPY with `tracking`
-  // updated to SUCCEEDED/FAILED + `lastAttemptAt` - never mutates the argument, so a caller that
-  // already persisted the PENDING version can safely diff before/after. Re-reads the API key
-  // itself (D4): the key may have changed between search time and this later call. Same
-  // single-attempt timeout/error-swallowing contract as the old private tracking call it
-  // replaces, plus host revalidation (design.md 12.3): a persisted trackingUrl is just data, not
-  // a trusted value, so it's checked again right before the fetch, not only at selection time.
-  async trackDownload(persisted: PersistedRecipeImage): Promise<PersistedRecipeImage> {
-    const { trackingUrl } = persisted.tracking;
-    const fail = (): PersistedRecipeImage => ({
-      ...persisted,
-      tracking: { ...persisted.tracking, status: 'FAILED', lastAttemptAt: new Date().toISOString() },
-    });
-
-    if (!isValidUnsplashUrl(trackingUrl, UNSPLASH_API_HOST)) {
-      this.logger.error(
-        `Unsplash download_location tracking skipped for providerPhotoId=${persisted.providerPhotoId}: trackingUrl failed host validation`,
-      );
-      return fail();
-    }
-
-    const apiKey = this.configService.get<string>('UNSPLASH_ACCESS_KEY');
-    if (!apiKey) {
-      this.logger.warn(
-        `Unsplash download_location tracking skipped: UNSPLASH_ACCESS_KEY is missing or empty (providerPhotoId=${persisted.providerPhotoId})`,
-      );
-      return fail();
-    }
-
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), UNSPLASH_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(trackingUrl, {
-        headers: { Authorization: `Client-ID ${apiKey}` },
-        signal: abortController.signal,
-      });
-
-      // fetch() only rejects on transport failure, not on an error status (bug fix, design.md
-      // 11.2) - a resolved-but-failed tracking call must still be logged as error and FAILED.
-      if (!response.ok) {
-        this.logger.error(
-          `Unsplash download_location tracking failed for providerPhotoId=${persisted.providerPhotoId} url=${trackingUrl}: received status ${response.status}`,
-        );
-        return fail();
-      }
-
-      return {
-        ...persisted,
-        tracking: { ...persisted.tracking, status: 'SUCCEEDED', lastAttemptAt: new Date().toISOString() },
-      };
-    } catch (error: any) {
-      this.logger.error(
-        `Unsplash download_location tracking failed for providerPhotoId=${persisted.providerPhotoId} url=${trackingUrl}: ${error?.message ?? 'unknown error'}`,
-      );
-      return fail();
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  // Ciclo B batch (design.md 12.5.2 paso 1, gap real NUT-83): same search+select+memoization
-  // mechanics as attachImages below, but stops there - no trackDownload call, ever. Each
-  // resolved recipe gets a full PersistedRecipeImage with tracking already PENDING, so the
-  // caller (PlansService) can persist it as plain data and run the tracking fetch itself, after
-  // the transaction commits (D2).
-  async searchAndSelectImages(days: MealPlanDayDto[]): Promise<any[]> {
-    const titleByQuery = new Map<string, string>();
-    for (const day of days) {
-      for (const meal of day.meals) {
-        if (meal.recipe) {
-          const normalizedQuery = buildUnsplashQuery(meal.recipe.title);
-          if (!titleByQuery.has(normalizedQuery)) {
-            titleByQuery.set(normalizedQuery, meal.recipe.title);
-          }
-        }
-      }
-    }
-
-    const uniqueQueries = Array.from(titleByQuery.keys());
-    const rawList = await resolveWithBoundedConcurrency(uniqueQueries, (normalizedQuery) =>
-      this.searchAndSelectCandidateRaw(titleByQuery.get(normalizedQuery) as string),
-    );
-
-    const rawByQuery = new Map<string, { query: string; candidate: UnsplashCandidate } | null>();
-    uniqueQueries.forEach((normalizedQuery, index) => {
-      rawByQuery.set(normalizedQuery, rawList[index] ?? null);
-    });
-
-    return days.map((day) => ({
-      ...day,
-      meals: day.meals.map((meal) => {
-        if (!meal.recipe) {
-          return meal;
-        }
-        const resolved = rawByQuery.get(buildUnsplashQuery(meal.recipe.title));
-        return {
-          ...meal,
-          recipe: {
-            ...meal.recipe,
-            image: resolved
-              ? {
-                  ...this.buildRecipeImage(resolved.candidate, resolved.query, meal.recipe.title),
-                  tracking: {
-                    status: 'PENDING' as const,
-                    lastAttemptAt: null,
-                    trackingUrl: resolved.candidate.links.download_location,
-                  },
-                }
-              : null,
-          },
-        };
-      }),
-    }));
-  }
-
-  // Batch orchestrator (same role as PexelsService.attachImages): resolves every new recipe's
-  // image regardless of origin (D1 corrected), bounded concurrency (D3), deduplicated by
-  // normalized query rather than raw title so two titles that normalize the same share one real
-  // search call. Tracking is deduplicated the same way (one download_location call per unique
-  // candidate, design.md 11.2), reusing the new public trackDownload - this orchestrator predates
-  // the ciclo B post-persistence split and still resolves+tracks eagerly in one pass; its own
-  // tests fix that contract, so it's preserved as-is rather than folded into the PENDING-only
-  // searchAndSelectCandidate path used by the plan-persistence flow.
-  async attachImages(days: MealPlanDayDto[]): Promise<any[]> {
-    const titleByQuery = new Map<string, string>();
-    for (const day of days) {
-      for (const meal of day.meals) {
-        if (meal.recipe) {
-          const normalizedQuery = buildUnsplashQuery(meal.recipe.title);
-          if (!titleByQuery.has(normalizedQuery)) {
-            titleByQuery.set(normalizedQuery, meal.recipe.title);
-          }
-        }
-      }
-    }
-
-    const uniqueQueries = Array.from(titleByQuery.keys());
-    const rawList = await resolveWithBoundedConcurrency(uniqueQueries, (normalizedQuery) =>
-      this.searchAndSelectCandidateRaw(titleByQuery.get(normalizedQuery) as string),
-    );
-
-    // Cached by query: only the candidate, never a finished `alt` (bug fix, design.md 11.2) -
-    // `alt`'s fallback is computed below, per recipe, from its own title.
-    const rawByQuery = new Map<string, { query: string; candidate: UnsplashCandidate } | null>();
-    uniqueQueries.forEach((normalizedQuery, index) => {
-      rawByQuery.set(normalizedQuery, rawList[index] ?? null);
-    });
-
-    // One download_location call per unique candidate, shared by every recipe resolving to the
-    // same normalized query - never one per recipe.
-    await resolveWithBoundedConcurrency(uniqueQueries, async (normalizedQuery) => {
-      const raw = rawByQuery.get(normalizedQuery);
-      if (!raw) {
-        return;
-      }
-      const trackingOnly: PersistedRecipeImage = {
-        provider: 'UNSPLASH',
-        providerPhotoId: raw.candidate.id,
-        imageUrl: '',
-        sourceUrl: '',
-        photographer: '',
-        photographerUrl: '',
-        alt: '',
-        query: raw.query,
-        retrievedAt: new Date().toISOString(),
-        tracking: { status: 'PENDING', lastAttemptAt: null, trackingUrl: raw.candidate.links.download_location },
-      };
-      await this.trackDownload(trackingOnly);
-    });
-
-    return days.map((day) => ({
-      ...day,
-      meals: day.meals.map((meal) => {
-        if (!meal.recipe) {
-          return meal;
-        }
-        const resolved = rawByQuery.get(buildUnsplashQuery(meal.recipe.title));
-        return {
-          ...meal,
-          recipe: {
-            ...meal.recipe,
-            image: resolved ? this.buildRecipeImage(resolved.candidate, resolved.query, meal.recipe.title) : null,
-          },
-        };
-      }),
-    }));
   }
 }

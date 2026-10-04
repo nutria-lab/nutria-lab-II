@@ -22,48 +22,76 @@ export class PlansService {
     private readonly unsplash: UnsplashService
   ) {}
 
-  /**
-   * searchAndSelectImages (the batch orchestrator, design.md 12.5.2 paso 1) is our own code and
-   * can reject on an unexpected bug, unlike resolveImage itself (designed to never throw). Any
-   * rejection degrades (never rethrows): continue with `days` as-is, unresolved, so plan
-   * generation/confirmation never fails because of a provider problem (design.md Flujo B).
-   * Deliberately NOT attachImages: that method tracks download_location before the recipe is
-   * persisted, which violates 12.5.2 (tracking only after createPlanTransaction/
-   * updatePlanTransaction commits, via trackNewRecipeImages below).
-   */
+  // Prepara las recetas antes de buscar imágenes:
+  // - descarta cualquier `image` que venga en el payload o de la IA (nunca se confía en eso);
+  // - en el PUT, si el id de la receta está en el plan actual, le copia la imagen guardada.
+  // Devuelve también esas imágenes conservadas, para después no registrar su uso de nuevo.
+  private prepareRecipeImages(
+    days: MealPlanDayDto[],
+    currentPlan?: { days?: Array<{ meals?: Array<{ recipe?: { id: string; image?: unknown } | null }> }> } | null,
+  ): { days: MealPlanDayDto[]; preservedImages: Set<unknown> } {
+    const persistedImageById = new Map<string, unknown>();
+    for (const day of currentPlan?.days ?? []) {
+      for (const meal of day.meals ?? []) {
+        if (meal.recipe) {
+          persistedImageById.set(meal.recipe.id, meal.recipe.image ?? null);
+        }
+      }
+    }
+
+    const preservedImages = new Set<unknown>();
+    const preparedDays = days.map((day) => ({
+      ...day,
+      meals: day.meals.map((meal) => {
+        if (!meal.recipe) {
+          return meal;
+        }
+        const recipe: MealPlanDayDto['meals'][number]['recipe'] & { image?: unknown } = { ...meal.recipe };
+        delete recipe.image;
+
+        if (recipe.id && persistedImageById.has(recipe.id)) {
+          const image = persistedImageById.get(recipe.id);
+          if (image) {
+            preservedImages.add(image);
+          }
+          return { ...meal, recipe: { ...recipe, image } };
+        }
+        return { ...meal, recipe };
+      }),
+    }));
+
+    return { days: preparedDays, preservedImages };
+  }
+
+  // Busca las imágenes del plan. Si algo falla de forma inesperada, el plan se guarda sin imágenes.
   private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
     try {
       return await this.unsplash.searchAndSelectImages(days);
     } catch (error: any) {
       this.logger.error(
-        `attachImages failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
+        `Image search failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
         error?.stack
       );
       return days;
     }
   }
 
-  /**
-   * Ciclo B (design.md 12.5.2 paso 3, plan.md 12.2.2): invoked AFTER createPlanTransaction/
-   * updatePlanTransaction already committed, outside any try/catch tied to the GenerationRun's
-   * FAILED transition - a tracking failure must never make the transaction itself look failed,
-   * it only leaves that one recipe's `image.tracking.status` as FAILED for the recovery
-   * mechanism to pick up later. Same bounded concurrency as the search step (D3, shared quota).
-   * `repository.updateRecipeImageTracking` is called optionally (`?.`) so this stays safe even
-   * against a repository stub that doesn't implement it yet.
-   */
+  // Después de guardar el plan: registra el uso de cada foto nueva (un evento por foto, de a 3 en
+  // paralelo) y guarda el resultado en cada receta.
   private async trackNewRecipeImages(recipesForTracking: RecipeForTracking[]): Promise<void> {
-    if (recipesForTracking.length === 0) {
-      return;
+    const recipesByTrackingUrl = new Map<string, RecipeForTracking[]>();
+    for (const item of recipesForTracking) {
+      const group = recipesByTrackingUrl.get(item.image.tracking.trackingUrl) ?? [];
+      group.push(item);
+      recipesByTrackingUrl.set(item.image.tracking.trackingUrl, group);
     }
-    await resolveWithBoundedConcurrency(recipesForTracking, async (item) => {
-      // plans.repository.ts deliberately types this as a local structural type, never importing
-      // PersistedRecipeImage from the image adapter module (it would trip the AC14/D2 guard,
-      // plans-transaction-no-network.spec.ts) - safe to re-assert the real shape here, since this
-      // service layer is exactly where the two representations are meant to meet.
-      const tracked = await this.unsplash.trackDownload(item.image as unknown as PersistedRecipeImage);
-      await this.repository.updateRecipeImageTracking?.(item.recipeId, tracked as any);
-      return tracked;
+
+    await resolveWithBoundedConcurrency(Array.from(recipesByTrackingUrl.values()), async (group) => {
+      // El repositorio no conoce el tipo de Unsplash (ver plans-transaction-no-network.spec.ts).
+      const { tracking } = await this.unsplash.trackDownload(group[0].image as unknown as PersistedRecipeImage);
+      for (const item of group) {
+        await this.repository.updateRecipeImageTracking(item.recipeId, { ...item.image, tracking });
+      }
     });
   }
 
@@ -231,14 +259,9 @@ export class PlansService {
       throw error;
     }
 
-    // NUT-83 (design.md D1 corregido/D2/D3): resolver TODAS las imágenes del batch, con
-    // concurrencia acotada, ANTES de invocar createPlanTransaction — SIEMPRE, sin condicionar a
-    // generationRunId. Aplica igual al camino IA (generateAndPersistPlan, que llega acá con
-    // generationRunId definido) y al camino manual (POST /meal-plans -> createPlan ->
-    // validateAndPersistPlan sin generationRunId). Nunca lanza (cada resolución individual ya
-    // devuelve RecipeImage | null); un fallo inesperado del propio orquestador se degrada en
-    // resolveImagesOrDegrade (Gap 2 de la revisión de reviewers), nunca bloquea la persistencia.
-    const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
+    // Imágenes: se buscan ANTES de la transacción (nunca hay llamadas externas dentro de ella).
+    const { days: preparedDays } = this.prepareRecipeImages(dto.days);
+    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
@@ -263,9 +286,7 @@ export class PlansService {
       throw error;
     }
 
-    // NUT-83 ciclo B (design.md 12.5.2 paso 3): tracking corre DESPUÉS de que la transacción ya
-    // commiteó, fuera del try/catch de arriba — un fallo de tracking nunca debe transicionar el
-    // GenerationRun a FAILED, sólo deja esa receta en tracking.status FAILED para 12.6.
+    // Fuera del try/catch: un fallo de tracking no debe marcar el GenerationRun como FAILED.
     await this.trackNewRecipeImages(recipesForTracking);
 
     return this.getPlanByWeek(userId, dto.weekStart);
@@ -349,12 +370,9 @@ export class PlansService {
       throw error;
     }
 
-    // NUT-83 (design.md D1 corregido/D2): mismo criterio que validateAndPersistPlan — resolver
-    // TODAS las imágenes de dto.days ANTES de invocar updatePlanTransaction. Este camino
-    // (PUT /meal-plans, edición/regeneración manual) está dentro de alcance de D1 corregido:
-    // toda receta nueva intenta resolución de imagen, sin importar `origin`. Un fallo
-    // inesperado del orquestador se degrada (Gap 2), nunca bloquea la persistencia.
-    const daysForPersistence = await this.resolveImagesOrDegrade(dto.days);
+    // Imágenes: las recetas que ya existían en el plan conservan la suya; sólo se buscan las nuevas.
+    const { days: preparedDays, preservedImages } = this.prepareRecipeImages(dto.days, plan);
+    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
@@ -373,8 +391,8 @@ export class PlansService {
       throw error;
     }
 
-    // NUT-83 ciclo B: mismo criterio que validateAndPersistPlan — tracking fuera del try/catch.
-    await this.trackNewRecipeImages(recipesForTracking);
+    // Registro de uso sólo para las imágenes nuevas, fuera del try/catch (igual que al crear).
+    await this.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
 
     return this.getPlanByWeek(userId, dto.weekStart);
   }
@@ -385,10 +403,6 @@ export class PlansService {
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
 
-    // NUT-83 ciclo B (design.md 12.5.1): single choke point for every plan read with an embedded
-    // recipe - strips the private `tracking` namespace before it ever reaches a controller.
-    // Builds a copy (never mutates `plan`/`days`, same criterion already used by
-    // buildOutputSnapshot in plans.repository.ts).
     return {
       ...plan,
       days: (plan.days ?? []).map((day: any) => ({
@@ -401,6 +415,7 @@ export class PlansService {
             ...meal,
             recipe: {
               ...meal.recipe,
+              // Se quita la metadata privada de tracking antes de devolver el plan.
               image: toPublicRecipeImage(meal.recipe.image as PersistedRecipeImage | null),
             },
           };
