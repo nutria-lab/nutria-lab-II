@@ -3,6 +3,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MealPlanDayDto } from './dto';
 import { isValidTransition, GenerationStatus } from './generation-run-state-machine';
 
+// Copia mínima del tipo de imagen del adaptador. No se importa porque este archivo no puede
+// mencionar al adaptador (plans-transaction-no-network.spec.ts lo verifica).
+type RecipeImageWithTracking = {
+  tracking: { status: 'PENDING' | 'SUCCEEDED' | 'FAILED'; lastAttemptAt: string | null; trackingUrl: string };
+  [key: string]: unknown;
+};
+
+// Recetas creadas con imagen, para que el servicio registre su uso después de la transacción.
+// La imagen es el mismo objeto recibido: así el servicio reconoce las que conservó del plan.
+export type RecipeForTracking = { recipeId: string; image: RecipeImageWithTracking };
+
 @Injectable()
 export class PlansRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -88,7 +99,9 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin?: 'MANUAL' | 'AI',
-  ) {
+  ): Promise<RecipeForTracking[]> {
+    const recipesForTracking: RecipeForTracking[] = [];
+
     for (const day of generatedDays) {
       const mealPlanDay = await tx.mealPlanDay.create({
         data: { mealPlanId: planId, day: day.day, date: new Date(day.date) }
@@ -115,8 +128,24 @@ export class PlansRepository {
             recipeData.origin = recipeOrigin;
           }
 
+          // `image` ya viene resuelto desde el servicio: sólo se copia, sin red (D2).
+          const recipeImage = (meal.recipe as { image?: unknown }).image;
+          if (recipeImage !== undefined) {
+            recipeData.image = recipeImage;
+          }
+
           const recipe = await tx.recipe.create({ data: recipeData });
           recipeId = recipe.id;
+
+          // Sólo se anota la receta (sin red); el servicio decide después a cuáles registrar.
+          if (
+            recipeImage !== undefined &&
+            recipeImage !== null &&
+            typeof recipeImage === 'object' &&
+            'tracking' in (recipeImage as object)
+          ) {
+            recipesForTracking.push({ recipeId, image: recipeImage as RecipeImageWithTracking });
+          }
         }
 
         await tx.plannedMeal.create({
@@ -130,6 +159,8 @@ export class PlansRepository {
         });
       }
     }
+
+    return recipesForTracking;
   }
 
   /**
@@ -196,7 +227,7 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin: 'MANUAL' | 'AI' | undefined = generationRunId ? 'AI' : undefined,
-  ) {
+  ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       const planData: any = {
         userId,
@@ -210,7 +241,13 @@ export class PlansRepository {
 
       const plan = await tx.mealPlan.create({ data: planData });
 
-      await this.createDaysMealsAndRecipes(tx, plan.id, generatedDays, generationRunId, recipeOrigin);
+      const recipesForTracking = await this.createDaysMealsAndRecipes(
+        tx,
+        plan.id,
+        generatedDays,
+        generationRunId,
+        recipeOrigin,
+      );
 
       if (generationRunId) {
         // Gap 6 (medio, design.md Flujo C paso 1b: "con outputSnapshot/validationSnapshot ya
@@ -224,7 +261,7 @@ export class PlansRepository {
         });
       }
 
-      return plan.id;
+      return { planId: plan.id, recipesForTracking };
     });
   }
 
@@ -237,8 +274,20 @@ export class PlansRepository {
    * de `profileSnapshot`/`requestSnapshot`, que sí tienen reglas de lista blanca estrictas por
    * design.md sección 6; esas reglas no aplican acá).
    */
+  // NUT-83: los snapshots nunca incluyen la clave `image` (design.md 5.4).
   private buildOutputSnapshot(days: MealPlanDayDto[]): { days: MealPlanDayDto[] } {
-    return { days };
+    const sanitizedDays = days.map(day => ({
+      ...day,
+      meals: day.meals.map(meal => {
+        if (!meal.recipe) {
+          return meal;
+        }
+        const { image, ...recipeWithoutImage } = meal.recipe as any;
+        return { ...meal, recipe: recipeWithoutImage };
+      }),
+    }));
+
+    return { days: sanitizedDays as MealPlanDayDto[] };
   }
 
   /**
@@ -251,7 +300,7 @@ export class PlansRepository {
     weekStart: Date,
     newDays: MealPlanDayDto[],
     generationRunId: string,
-  ) {
+  ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       // 1. Ubicar la versión actual.
       const current = await tx.mealPlan.findFirst({
@@ -304,7 +353,7 @@ export class PlansRepository {
       // `recipeOrigin: 'MANUAL'`, nunca `'AI'`, sin importar que `generationRunId` esté
       // definido: el origen de la receta y la FK de trazabilidad son decisiones
       // independientes (ver `createDaysMealsAndRecipes`).
-      await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
+      const recipesForTracking = await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
 
       // 5. Transición del GenerationRun a SUCCEEDED (Gap 6: con outputSnapshot/validationSnapshot).
       await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
@@ -312,7 +361,7 @@ export class PlansRepository {
         validationSnapshot: { restrictionsChecked: true },
       });
 
-      return newPlan.id;
+      return { planId: newPlan.id, recipesForTracking };
     });
   }
 
@@ -382,6 +431,15 @@ export class PlansRepository {
     });
 
     return result.count;
+  }
+
+  // Guarda el resultado del registro de uso, fuera de la transacción. Escribe la imagen completa
+  // porque un update de una columna Json reemplaza todo el valor.
+  async updateRecipeImageTracking(recipeId: string, fullImage: RecipeImageWithTracking): Promise<void> {
+    await this.prisma.recipe.update({
+      where: { id: recipeId },
+      data: { image: fullImage as any },
+    });
   }
 
   /**

@@ -24,6 +24,7 @@ model Recipe {
   categories        RecipeCategory[] @default([])
   nutritionalValues Json?
   properties        String[]         @default([])
+  image             Json?
   origin            RecipeOrigin     @default(MANUAL)
   generationRunId   String?
   generationRun     GenerationRun?   @relation(fields: [generationRunId], references: [id], onDelete: SetNull)

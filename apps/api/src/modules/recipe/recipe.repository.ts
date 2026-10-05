@@ -47,7 +47,7 @@ export class RecipeRepository {
         SELECT
           "id", "title", "description", "prepMinutes", "cookMinutes",
           "ingredients", "instructions", "categories", "nutritionalValues",
-          "properties", "createdAt", "updatedAt"
+          "properties", "image", "createdAt", "updatedAt"
         FROM "recipes"
         ${where}
         ORDER BY "createdAt" DESC, "id" DESC
@@ -200,6 +200,15 @@ export class RecipeRepository {
         ...(data.ingredients ? { ingredients: data.ingredients as any } : {}),
         ...(data.nutritionalValues ? { nutritionalValues: data.nutritionalValues as any } : {}),
       },
+    });
+  }
+
+  // Guarda la imagen completa (un update de una columna Json reemplaza todo el valor).
+  // Va aparte de update() porque el cliente nunca puede escribir `image`.
+  async updateImage(id: string, image: Prisma.InputJsonValue) {
+    return this.prisma.recipe.update({
+      where: { id },
+      data: { image },
     });
   }
 

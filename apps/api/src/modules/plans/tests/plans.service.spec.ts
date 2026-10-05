@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
+import { UnsplashService } from '../../unsplash/unsplash.service';
+import { pendingPersistedImage, unsplashPhoto, unsplashResponse, unsplashSearchBody } from '../../unsplash/unsplash-search.fixture';
 
 /**
  * Unit tests de PlansService con PlansRepository y GeminiService mockeados (mismo patrón de
@@ -36,6 +39,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
   let service: PlansService;
   let mockRepository: any;
   let mockGemini: any;
+  let mockUnsplash: any;
 
   const userId = 'user-1';
   const weekStartStr = '2026-09-14';
@@ -108,12 +112,20 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         .fn()
         .mockResolvedValueOnce({ run: newRun, wasCreated: true })
         .mockResolvedValueOnce({ run: existingRun, wasCreated: false }),
-      createPlanTransaction: jest.fn().mockResolvedValue(persistedPlan.id),
+      createPlanTransaction: jest.fn().mockResolvedValue({ planId: persistedPlan.id, recipesForTracking: [] }),
       findPlanByWeek: jest.fn().mockResolvedValue(persistedPlan),
       transitionGenerationRun: jest.fn().mockResolvedValue(1),
     };
 
-    service = new PlansService(mockRepository, mockGemini);
+    mockUnsplash = {
+      searchAndSelectImages: jest.fn().mockImplementation(async (days: any) => days),
+      trackDownload: jest.fn().mockImplementation(async (image: any) => ({
+        ...image,
+        tracking: { ...(image?.tracking ?? {}), status: 'SUCCEEDED', lastAttemptAt: new Date().toISOString() },
+      })),
+    };
+
+    service = new PlansService(mockRepository, mockGemini, mockUnsplash);
   });
 
   describe('AC3 - misma solicitud no duplica ejecución', () => {
@@ -248,7 +260,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
           return { run, wasCreated: true };
         },
       );
-      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue('plan-1');
+      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
       mockRepository.transitionGenerationRun = jest.fn().mockResolvedValue(1);
 
       const dtoFirst = { weekStart: weekStartStr, days: buildDaysVariant('Ensalada Original') } as any;
@@ -430,5 +442,369 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         expect.objectContaining({ errorCode: expect.any(String) }),
       );
     });
+  });
+
+  describe('NUT-83 - integración de UnsplashService en validateAndPersistPlan (AC5 parte 2, AC13, AC14)', () => {
+    it('AC14: generateAndPersistPlan (camino feliz, mismo camino que AC3/AC9) invoca unsplash.searchAndSelectImages ANTES de repository.createPlanTransaction', async () => {
+      const callOrder: string[] = [];
+
+      mockUnsplash.searchAndSelectImages = jest.fn().mockImplementation(async (days: any) => {
+        callOrder.push('searchAndSelectImages');
+        return days;
+      });
+      mockRepository.createPlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('createPlanTransaction');
+        return { planId: persistedPlan.id, recipesForTracking: [] };
+      });
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(callOrder).toEqual(['searchAndSelectImages', 'createPlanTransaction']);
+    });
+
+    it('AC13 (corregido): validateAndPersistPlan invocado SIN generationRunId (camino manual POST /meal-plans) SÍ llama a unsplash.searchAndSelectImages, antes de repository.createPlanTransaction', async () => {
+      const callOrder: string[] = [];
+
+      mockUnsplash.searchAndSelectImages = jest.fn().mockImplementation(async (days: any) => {
+        callOrder.push('searchAndSelectImages');
+        return days;
+      });
+      mockRepository.createPlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('createPlanTransaction');
+        return { planId: persistedPlan.id, recipesForTracking: [] };
+      });
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+
+      await service.validateAndPersistPlan(userId, dto);
+
+      expect(callOrder).toEqual(['searchAndSelectImages', 'createPlanTransaction']);
+      expect(mockUnsplash.searchAndSelectImages).toHaveBeenCalledWith(dto.days);
+      expect(mockRepository.createPlanTransaction).toHaveBeenCalledWith(
+        userId,
+        expect.any(Date),
+        dto.days,
+        undefined,
+      );
+    });
+
+    it('AC13 (corregido): updatePlan (regeneración/edición manual, camino updatePlanTransaction) SÍ llama a unsplash.searchAndSelectImages, antes de repository.updatePlanTransaction', async () => {
+      const existingPlan = { id: 'plan-1', userId, days: [] };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(existingPlan);
+      mockRepository.createOrRecoverGenerationRun = jest
+        .fn()
+        .mockResolvedValue({ run: newRun, wasCreated: true });
+
+      const callOrder: string[] = [];
+      mockUnsplash.searchAndSelectImages = jest.fn().mockImplementation(async (days: any) => {
+        callOrder.push('searchAndSelectImages');
+        return days;
+      });
+      mockRepository.updatePlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('updatePlanTransaction');
+        return { planId: 'plan-1', recipesForTracking: [] };
+      });
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+
+      await service.updatePlan(userId, dto);
+
+      expect(callOrder).toEqual(['searchAndSelectImages', 'updatePlanTransaction']);
+      expect(mockUnsplash.searchAndSelectImages).toHaveBeenCalledWith(dto.days);
+    });
+
+    it('si la resolución de imágenes devuelve null para alguna receta del batch, generateAndPersistPlan igual completa exitosamente y persiste el plan', async () => {
+      mockUnsplash.searchAndSelectImages = jest.fn().mockImplementation(async (days: any) =>
+        days.map((day: any) => ({
+          ...day,
+          meals: day.meals.map((meal: any) => ({
+            ...meal,
+            recipe: meal.recipe ? { ...meal.recipe, image: null } : meal.recipe,
+          })),
+        })),
+      );
+
+      const result = await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(result).toEqual(persistedPlan);
+      expect(mockRepository.createPlanTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('NUT-83 revisión de reviewers - Gap 2 (BLOQUEANTE) - fallo inesperado de unsplash.searchAndSelectImages no debe propagarse sin control', () => {
+    it('generateAndPersistPlan: si unsplash.searchAndSelectImages rechaza con una excepción inesperada, el plan igual se persiste (degradación) en vez de que createPlanTransaction nunca se invoque', async () => {
+      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en searchAndSelectImages'));
+
+      const result = await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(result).toEqual(persistedPlan);
+      expect(mockRepository.createPlanTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('updatePlan: si unsplash.searchAndSelectImages rechaza con una excepción inesperada, el plan igual se persiste (degradación) en vez de que updatePlanTransaction nunca se invoque', async () => {
+      const existingPlan = { id: 'plan-1', userId, days: [] };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(existingPlan);
+      mockRepository.createOrRecoverGenerationRun = jest
+        .fn()
+        .mockResolvedValue({ run: newRun, wasCreated: true });
+      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
+      mockUnsplash.searchAndSelectImages = jest.fn().mockRejectedValue(new TypeError('bug inesperado en searchAndSelectImages'));
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+
+      const result = await service.updatePlan(userId, dto);
+
+      expect(result).toEqual(persistedPlan);
+      expect(mockRepository.updatePlanTransaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('NUT-83 - registro de uso post-persistencia se invoca DESPUÉS de la transacción (design.md 6.3)', () => {
+    const pendingImage = pendingPersistedImage();
+
+    it('generateAndPersistPlan: invoca unsplash.trackDownload para la receta nueva DESPUÉS de que createPlanTransaction ya resolvió (nunca antes, nunca durante)', async () => {
+      const callOrder: string[] = [];
+
+      mockRepository.createPlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('createPlanTransaction');
+        return { planId: persistedPlan.id, recipesForTracking: [{ recipeId: 'recipe-1', image: pendingImage }] };
+      });
+      mockUnsplash.trackDownload = jest.fn().mockImplementation(async (image: any) => {
+        callOrder.push('trackDownload');
+        return { ...image, tracking: { ...image.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-01T00:00:00.000Z' } };
+      });
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(callOrder).toEqual(['createPlanTransaction', 'trackDownload']);
+    });
+
+    it('validateAndPersistPlan (camino manual, sin generationRunId): mismo orden createPlanTransaction -> trackDownload', async () => {
+      const callOrder: string[] = [];
+
+      mockRepository.createPlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('createPlanTransaction');
+        return { planId: persistedPlan.id, recipesForTracking: [{ recipeId: 'recipe-1', image: pendingImage }] };
+      });
+      mockUnsplash.trackDownload = jest.fn().mockImplementation(async (image: any) => {
+        callOrder.push('trackDownload');
+        return image;
+      });
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+      await service.validateAndPersistPlan(userId, dto);
+
+      expect(callOrder).toEqual(['createPlanTransaction', 'trackDownload']);
+    });
+
+    it('updatePlan: invoca unsplash.trackDownload DESPUÉS de que updatePlanTransaction ya resolvió', async () => {
+      const existingPlan = { id: 'plan-1', userId, days: [] };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(existingPlan);
+      mockRepository.createOrRecoverGenerationRun = jest.fn().mockResolvedValue({ run: newRun, wasCreated: true });
+
+      const callOrder: string[] = [];
+      mockRepository.updatePlanTransaction = jest.fn().mockImplementation(async () => {
+        callOrder.push('updatePlanTransaction');
+        return { planId: 'plan-1', recipesForTracking: [{ recipeId: 'recipe-1', image: pendingImage }] };
+      });
+      mockUnsplash.trackDownload = jest.fn().mockImplementation(async (image: any) => {
+        callOrder.push('trackDownload');
+        return image;
+      });
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+      await service.updatePlan(userId, dto);
+
+      expect(callOrder).toEqual(['updatePlanTransaction', 'trackDownload']);
+    });
+
+    it('generateAndPersistPlan: cuando recipesForTracking viene vacío (plan sin recetas nuevas, todas reusadas), nunca invoca unsplash.trackDownload', async () => {
+      mockRepository.createPlanTransaction = jest.fn().mockResolvedValue({ planId: persistedPlan.id, recipesForTracking: [] });
+      mockUnsplash.trackDownload = jest.fn();
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(mockUnsplash.trackDownload).not.toHaveBeenCalled();
+    });
+
+    it('updatePlan: cuando recipesForTracking viene vacío, nunca invoca unsplash.trackDownload', async () => {
+      const existingPlan = { id: 'plan-1', userId, days: [] };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(existingPlan);
+      mockRepository.createOrRecoverGenerationRun = jest.fn().mockResolvedValue({ run: newRun, wasCreated: true });
+      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
+      mockUnsplash.trackDownload = jest.fn();
+
+      const dto = { weekStart: weekStartStr, days: generatedDays } as any;
+      await service.updatePlan(userId, dto);
+
+      expect(mockUnsplash.trackDownload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('NUT-83 - getPlanByWeek filtra metadata privada de tracking antes de devolver el plan (design.md 5.4)', () => {
+    const rawImage = pendingPersistedImage({ tracking: { status: 'SUCCEEDED', lastAttemptAt: '2026-09-30T12:05:00.000Z' } });
+
+    it('cada recipe.image llega sin la clave "tracking", aunque el repositorio devuelva el image crudo con tracking', async () => {
+      const planWithRawImage = {
+        id: 'plan-1',
+        userId,
+        days: [
+          {
+            id: 'day-1',
+            meals: [
+              {
+                id: 'meal-1',
+                recipeId: 'recipe-1',
+                recipe: { id: 'recipe-1', title: 'Ensalada de Quinoa', image: rawImage },
+              },
+            ],
+          },
+        ],
+      };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(planWithRawImage);
+
+      const result = await service.getPlanByWeek(userId, weekStartStr);
+
+      const filteredImage = (result as any).days[0].meals[0].recipe.image;
+      expect(filteredImage.tracking).toBeUndefined();
+      expect(Object.keys(filteredImage).sort()).toEqual(
+        ['alt', 'imageUrl', 'photographer', 'photographerUrl', 'provider', 'providerPhotoId', 'query', 'retrievedAt', 'sourceUrl'].sort(),
+      );
+      // El resto del contenido de la receta sigue presente sin cambios.
+      expect((result as any).days[0].meals[0].recipe.title).toBe('Ensalada de Quinoa');
+    });
+
+    it('una receta con image: null sigue devolviendo image: null sin lanzar', async () => {
+      const planWithNullImage = {
+        id: 'plan-1',
+        userId,
+        days: [
+          {
+            id: 'day-1',
+            meals: [{ id: 'meal-1', recipeId: 'recipe-1', recipe: { id: 'recipe-1', title: 'Ensalada de Quinoa', image: null } }],
+          },
+        ],
+      };
+      mockRepository.findPlanByWeek = jest.fn().mockResolvedValue(planWithNullImage);
+
+      const result = await service.getPlanByWeek(userId, weekStartStr);
+
+      expect((result as any).days[0].meals[0].recipe.image).toBeNull();
+    });
+  });
+});
+
+describe('PlansService - NUT-83: búsqueda y registro de uso con UnsplashService REAL (design.md 6.3)', () => {
+  const MOCK_API_KEY = 'test-unsplash-key-plan-integration';
+  const userId = 'user-real-unsplash-1';
+  const weekStartStr = '2026-09-14';
+
+  const mockNutritionProfile = {
+    id: 'profile-real-1',
+    userId,
+    goal: 'LOSE_WEIGHT',
+    diet: 'VEGAN',
+    excludedIngredients: [],
+    cookTimePreference: 'QUICK',
+  };
+
+  const mockUser = { id: userId, nutritionProfile: mockNutritionProfile };
+
+  const buildDay = (day: DayOfWeek, date: string, title: string) => ({
+    day,
+    date,
+    meals: [
+      {
+        mealType: MealType.LUNCH,
+        title,
+        nutritionalValues: { Protein: 20, Fiber: 8, Calories: 350, Description: 'Almuerzo' },
+        recipe: {
+          title,
+          description: 'Receta de prueba',
+          prepMinutes: 10,
+          cookMinutes: 15,
+          ingredients: [{ name: 'Ingrediente', quantity: 100, unit: 'g' }],
+          instructions: ['Paso unico'],
+        },
+      },
+    ],
+  });
+
+  const sevenValidDays = [
+    buildDay(DayOfWeek.MONDAY, '2026-09-14', 'Ensalada de Quinoa'),
+    buildDay(DayOfWeek.TUESDAY, '2026-09-15', 'Tacos de Pollo'),
+    buildDay(DayOfWeek.WEDNESDAY, '2026-09-16', 'Sopa de Lentejas'),
+    buildDay(DayOfWeek.THURSDAY, '2026-09-17', 'Arroz con Vegetales'),
+    buildDay(DayOfWeek.FRIDAY, '2026-09-18', 'Pasta Integral'),
+    buildDay(DayOfWeek.SATURDAY, '2026-09-19', 'Pollo al Horno'),
+    buildDay(DayOfWeek.SUNDAY, '2026-09-20', 'Pescado a la Plancha'),
+  ];
+
+  const candidate = unsplashPhoto('planReal001');
+
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    jest.restoreAllMocks();
+  });
+
+  it('validateAndPersistPlan (camino manual, sin generationRunId) NUNCA dispara un fetch a download_location antes de que repository.createPlanTransaction sea invocado', async () => {
+    const callOrder: string[] = [];
+
+    const fetchMock = jest.fn((url: unknown) => {
+      const urlStr = String(url);
+      if (urlStr.includes('/search/photos')) {
+        callOrder.push('searchFetch');
+        return Promise.resolve(unsplashResponse(unsplashSearchBody([candidate])));
+      }
+      if (urlStr.includes('/download')) {
+        callOrder.push('downloadFetch');
+        return Promise.resolve(unsplashResponse({}));
+      }
+      return Promise.reject(new Error(`fetch inesperado en el test: ${urlStr}`));
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const configService = {
+      get: jest.fn((key: string) => (key === 'UNSPLASH_ACCESS_KEY' ? MOCK_API_KEY : undefined)),
+    } as unknown as ConfigService;
+    const realUnsplash = new UnsplashService(configService);
+
+    const mockRepository: any = {
+      getUserWithProfile: jest.fn().mockResolvedValue(mockUser),
+      checkPlanExists: jest.fn().mockResolvedValue(false),
+      // Igual que el repositorio real: informa las recetas creadas cuya imagen tiene tracking.
+      createPlanTransaction: jest.fn().mockImplementation(async (_userId: string, _weekStart: Date, days: any[]) => {
+        callOrder.push('createPlanTransaction');
+        const recipesForTracking = days.flatMap((day: any, dayIndex: number) =>
+          day.meals
+            .filter((meal: any) => meal.recipe?.image?.tracking)
+            .map((meal: any) => ({ recipeId: `recipe-${dayIndex}`, image: meal.recipe.image })),
+        );
+        return { planId: 'plan-real-1', recipesForTracking };
+      }),
+      updateRecipeImageTracking: jest.fn().mockResolvedValue(undefined),
+      findPlanByWeek: jest.fn().mockResolvedValue({ id: 'plan-real-1', userId, days: [] }),
+    };
+
+    const service = new PlansService(mockRepository, {} as any, realUnsplash);
+
+    const dto = { weekStart: weekStartStr, days: sevenValidDays } as any;
+    await service.validateAndPersistPlan(userId, dto);
+
+    expect(callOrder).toContain('createPlanTransaction');
+    const transactionIndex = callOrder.indexOf('createPlanTransaction');
+    const downloadIndexes = callOrder
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry === 'downloadFetch')
+      .map(({ index }) => index);
+
+    expect(callOrder.indexOf('searchFetch')).toBeLessThan(transactionIndex);
+    // Siete títulos distintos, una sola foto: un solo evento, después de la transacción.
+    expect(downloadIndexes).toHaveLength(1);
+    for (const downloadIndex of downloadIndexes) {
+      expect(downloadIndex).toBeGreaterThan(transactionIndex);
+    }
   });
 });

@@ -4,6 +4,7 @@ import { PlansRepository } from '../plans.repository';
 import { MealPlanDayDto } from '../dto';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import * as generationRunStateMachine from '../generation-run-state-machine';
+import { pendingPersistedImage } from '../../unsplash/unsplash-search.fixture';
 
 /**
  * Unit tests aislados de PlansRepository con Prisma completamente mockeado (mismo patrón
@@ -82,6 +83,16 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
   beforeEach(() => {
     mockPrisma = {};
     repository = new PlansRepository(mockPrisma);
+  });
+
+  it('findPlanByWeek only reads the current version of this user\'s plan for this week, recipes included', async () => {
+    mockPrisma.mealPlan = { findFirst: jest.fn().mockResolvedValue(null) };
+
+    await repository.findPlanByWeek(userId, weekStart);
+
+    const args = mockPrisma.mealPlan.findFirst.mock.calls[0][0];
+    expect(args.where).toEqual({ userId, startDate: weekStart, isCurrent: true });
+    expect(args.include.days.include.meals.include).toEqual({ recipe: true });
   });
 
   describe('AC2 - conflicto de unicidad al regenerar (supersede)', () => {
@@ -518,6 +529,285 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       expect(updateManyMock).toHaveBeenCalledTimes(1);
       const callArgs = updateManyMock.mock.calls[0][0];
       expect(JSON.stringify(callArgs.data.outputSnapshot)).toContain('Ensalada de Quinoa');
+    });
+  });
+
+  describe('NUT-83 - integración de `image` resuelto (createPlanTransaction / updatePlanTransaction)', () => {
+    const sampleRecipeImage = pendingPersistedImage();
+
+    const withRecipeImage = (image: unknown): any =>
+      newDays.map(day => ({
+        ...day,
+        meals: day.meals.map(meal => ({
+          ...meal,
+          recipe: meal.recipe ? { ...meal.recipe, image } : meal.recipe,
+        })),
+      }));
+
+    const buildCreateTx = (capturedRecipeData: any[]) => ({
+      mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+      mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+      recipe: {
+        create: jest.fn().mockImplementation(async (args: any) => {
+          capturedRecipeData.push(args.data);
+          return { id: 'recipe-1' };
+        }),
+      },
+      plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+      generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    });
+
+    it('createPlanTransaction: cuando meal.recipe.image trae un RecipeImage, ese valor llega tal cual al data de tx.recipe.create', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = buildCreateTx(capturedRecipeData);
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, withRecipeImage(sampleRecipeImage), 'run-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(recipeData.image).toEqual(sampleRecipeImage);
+      }
+    });
+
+    it('createPlanTransaction: cuando meal.recipe.image es null (Unsplash no encontró nada / falló), se pasa null tal cual, sin omitir la clave', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = buildCreateTx(capturedRecipeData);
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, withRecipeImage(null), 'run-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(Object.prototype.hasOwnProperty.call(recipeData, 'image')).toBe(true);
+        expect(recipeData.image).toBeNull();
+      }
+    });
+
+    it('createPlanTransaction: cuando meal.recipe.image NO está definido (undefined, caso de hoy sin este ticket), el data pasado a tx.recipe.create NO incluye la clave "image" en absoluto (no pisa el default de Prisma)', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = buildCreateTx(capturedRecipeData);
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      // newDays (fixture de este archivo) no trae ninguna propiedad `image` en `meal.recipe`.
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(Object.prototype.hasOwnProperty.call(recipeData, 'image')).toBe(false);
+      }
+    });
+
+    it('updatePlanTransaction (camino manual, PUT /meal-plans): cuando meal.recipe.image trae un RecipeImage, ese valor llega tal cual al data de tx.recipe.create (D1 corregido: mismo comportamiento que createPlanTransaction, sin importar origin)', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-1' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.updatePlanTransaction(userId, weekStart, withRecipeImage(sampleRecipeImage), 'run-manual-edit-1');
+
+      expect(capturedRecipeData.length).toBeGreaterThan(0);
+      for (const recipeData of capturedRecipeData) {
+        expect(recipeData.image).toEqual(sampleRecipeImage);
+      }
+    });
+  });
+
+  describe('NUT-83 revisión de reviewers - Gap 1 (BLOQUEANTE) - outputSnapshot de GenerationRun nunca debe incluir datos de Unsplash', () => {
+    const sampleRecipeImage = pendingPersistedImage();
+
+    const withRecipeImage = (image: unknown): any =>
+      newDays.map(day => ({
+        ...day,
+        meals: day.meals.map(meal => ({
+          ...meal,
+          recipe: meal.recipe ? { ...meal.recipe, image } : meal.recipe,
+        })),
+      }));
+
+    function assertNoRecipeHasImageKeyAndKeepsRestOfContent(outputSnapshot: any) {
+      expect(outputSnapshot).toBeDefined();
+      expect(outputSnapshot.days).toBeDefined();
+      let recipesChecked = 0;
+      for (const day of outputSnapshot.days) {
+        for (const meal of day.meals) {
+          if (meal.recipe) {
+            recipesChecked += 1;
+            // La clave "image" no debe existir en absoluto -- ni siquiera como `null`.
+            expect(Object.prototype.hasOwnProperty.call(meal.recipe, 'image')).toBe(false);
+            // El resto del contenido de la receta (título, etc.) sigue presente sin cambios.
+            expect(meal.recipe.title).toBe('Ensalada de Quinoa');
+          }
+        }
+      }
+      // Guarda de que el test realmente ejerció al menos una receta (fixture no vacío).
+      expect(recipesChecked).toBeGreaterThan(0);
+    }
+
+    it('createPlanTransaction: el outputSnapshot pasado a la transición final a SUCCEEDED NO incluye la clave "image" en ninguna receta, aunque meal.recipe.image venga definido', async () => {
+      const updateManyMock = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: updateManyMock },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, withRecipeImage(sampleRecipeImage), 'run-1');
+
+      expect(updateManyMock).toHaveBeenCalledTimes(1);
+      const callArgs = updateManyMock.mock.calls[0][0];
+      assertNoRecipeHasImageKeyAndKeepsRestOfContent(callArgs.data.outputSnapshot);
+    });
+
+    it('updatePlanTransaction (supersede): el outputSnapshot pasado a la transición final a SUCCEEDED NO incluye la clave "image" en ninguna receta, aunque meal.recipe.image venga definido', async () => {
+      const updateManyMock = jest.fn().mockResolvedValue({ count: 1 });
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: updateManyMock },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.updatePlanTransaction(userId, weekStart, withRecipeImage(sampleRecipeImage), 'run-1');
+
+      expect(updateManyMock).toHaveBeenCalledTimes(1);
+      const callArgs = updateManyMock.mock.calls[0][0];
+      assertNoRecipeHasImageKeyAndKeepsRestOfContent(callArgs.data.outputSnapshot);
+    });
+  });
+
+  describe('NUT-83 - createPlanTransaction/updatePlanTransaction devuelven los recipeId creados para registrar uso después (design.md 6.3)', () => {
+    const pendingImage = pendingPersistedImage();
+
+    const withPendingImage = (image: unknown): any =>
+      newDays.map(day => ({
+        ...day,
+        meals: day.meals.map(meal => ({
+          ...meal,
+          recipe: meal.recipe ? { ...meal.recipe, image } : meal.recipe,
+        })),
+      }));
+
+    it('createPlanTransaction: el resultado incluye recipesForTracking con el recipeId real y el image con tracking.status PENDING, además de seguir identificando el plan creado', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-created-99' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      const result: any = await repository.createPlanTransaction(
+        userId,
+        weekStart,
+        withPendingImage(pendingImage),
+        'run-1',
+      );
+
+      expect(result.planId).toBe('plan-1');
+      expect(result.recipesForTracking).toEqual([{ recipeId: 'recipe-created-99', image: pendingImage }]);
+    });
+
+    // El servicio reconoce las imágenes conservadas por referencia: tiene que volver el mismo objeto.
+    it('recipesForTracking keeps the received image reference, and a payload recipe id is never written to the new row', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-created-99' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const days = withPendingImage(pendingImage);
+      days[0].meals[0].recipe.id = '7f8a1c2e-3b4d-4e5f-8a9b-0c1d2e3f4a5b';
+
+      const result: any = await repository.createPlanTransaction(userId, weekStart, days, 'run-1');
+
+      expect(result.recipesForTracking[0].image).toBe(pendingImage);
+      expect(capturedRecipeData[0]).not.toHaveProperty('id');
+    });
+
+    it('createPlanTransaction: cuando ninguna receta nueva trae image resuelto (todas reusadas o sin image), recipesForTracking es un array vacío', async () => {
+      const tx = {
+        mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      // newDays (fixture de este archivo) no trae ninguna propiedad `image` en `meal.recipe`.
+      const result: any = await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(result.recipesForTracking).toEqual([]);
+    });
+
+    it('updatePlanTransaction (camino manual): el resultado también incluye recipesForTracking (mismo comportamiento que createPlanTransaction, D1 corregido)', async () => {
+      const capturedRecipeData: any[] = [];
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+        recipe: {
+          create: jest.fn().mockImplementation(async (args: any) => {
+            capturedRecipeData.push(args.data);
+            return { id: 'recipe-updated-77' };
+          }),
+        },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      const result: any = await repository.updatePlanTransaction(
+        userId,
+        weekStart,
+        withPendingImage(pendingImage),
+        'run-manual-edit-1',
+      );
+
+      expect(result.planId).toBe('plan-new-1');
+      expect(result.recipesForTracking).toEqual([{ recipeId: 'recipe-updated-77', image: pendingImage }]);
     });
   });
 });
