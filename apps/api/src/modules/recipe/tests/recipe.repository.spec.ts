@@ -56,6 +56,18 @@ describe('RecipeRepository.findAll', () => {
     expect(countTemplate.join('')).toContain('SELECT COUNT(*) AS "total"');
   });
 
+  it('includes the "image" column in the raw SELECT for items (NUT-83 AC10)', async () => {
+    await repository.findAll({
+      page: 1,
+      pageSize: 10,
+    });
+
+    const [itemsCall] = queryRaw.mock.calls;
+    const itemsTemplate = itemsCall[0] as TemplateStringsArray;
+
+    expect(itemsTemplate.join('')).toMatch(/"image"/);
+  });
+
   it('uses the same property-predicate builder as coverage so NUT-69 property semantics cannot drift', async () => {
     const propertyPredicate = jest.spyOn(repository as never, 'propertyPredicate' as never);
 

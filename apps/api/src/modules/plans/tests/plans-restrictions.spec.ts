@@ -36,10 +36,12 @@ function setup(excludedIngredients: string[]) {
   const repository: any = {
     getUserWithProfile: jest.fn().mockResolvedValue({ id: 'user-1', nutritionProfile: { diet: 'ALL', excludedIngredients } }),
     checkPlanExists: jest.fn().mockResolvedValue(false),
-    createPlanTransaction: jest.fn().mockResolvedValue('plan-1'),
+    createPlanTransaction: jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] }),
     findPlanByWeek: jest.fn().mockResolvedValue({ id: 'plan-1', days: [] }),
   };
-  return { repository, service: new PlansService(repository, {} as any) };
+  // Unsplash sin efectos: devuelve los días tal cual (NUT-83 no es parte de esta prueba).
+  const unsplash: any = { searchAndSelectImages: jest.fn(async (days: unknown) => days), trackDownload: jest.fn() };
+  return { repository, service: new PlansService(repository, {} as any, unsplash) };
 }
 
 describe('Plan semanal - restricciones con ingredientes en español', () => {

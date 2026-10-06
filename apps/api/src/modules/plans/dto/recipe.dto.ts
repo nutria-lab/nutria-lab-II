@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsArray, IsNotEmpty, ValidateNested, Min, ArrayMinSize } from 'class-validator';
+import { IsString, IsNumber, IsArray, IsNotEmpty, ValidateNested, Min, ArrayMinSize, IsOptional, IsUUID } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 
 export class IngredientDto {
@@ -17,6 +17,12 @@ export class IngredientDto {
 }
 
 export class RecipeDto {
+  // Sólo se usa en PUT /meal-plans: si es el id de una receta de la versión actual del plan del
+  // mismo usuario, esa receta conserva su imagen. Cualquier otro id se trata como receta nueva.
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsNotEmpty()
   @IsString()
   title!: string;

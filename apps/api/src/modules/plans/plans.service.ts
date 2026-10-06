@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException, ConflictException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException, ConflictException, Logger } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
 import { GeminiService, GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
 import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
@@ -9,13 +9,92 @@ import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
 import { findRestrictionViolation, forbiddenRestrictions } from './meal-restrictions.util';
+import { UnsplashService, resolveWithBoundedConcurrency, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
+import type { PersistedRecipeImage } from '@/modules/unsplash/recipe-image.types';
+import type { RecipeForTracking } from './plans.repository';
 
 @Injectable()
 export class PlansService {
+  private readonly logger = new Logger(PlansService.name);
+
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService
+    private readonly gemini: GeminiService,
+    private readonly unsplash: UnsplashService
   ) {}
+
+  // Prepara las recetas antes de buscar imágenes:
+  // - descarta cualquier `image` que venga en el payload o de la IA (nunca se confía en eso);
+  // - en el PUT, si el id de la receta está en el plan actual, le copia la imagen guardada.
+  // Devuelve también esas imágenes conservadas, para después no registrar su uso de nuevo.
+  private prepareRecipeImages(
+    days: MealPlanDayDto[],
+    currentPlan?: { days?: Array<{ meals?: Array<{ recipe?: { id: string; image?: unknown } | null }> }> } | null,
+  ): { days: MealPlanDayDto[]; preservedImages: Set<unknown> } {
+    const persistedImageById = new Map<string, unknown>();
+    for (const day of currentPlan?.days ?? []) {
+      for (const meal of day.meals ?? []) {
+        if (meal.recipe) {
+          persistedImageById.set(meal.recipe.id, meal.recipe.image ?? null);
+        }
+      }
+    }
+
+    const preservedImages = new Set<unknown>();
+    const preparedDays = days.map((day) => ({
+      ...day,
+      meals: day.meals.map((meal) => {
+        if (!meal.recipe) {
+          return meal;
+        }
+        const recipe: MealPlanDayDto['meals'][number]['recipe'] & { image?: unknown } = { ...meal.recipe };
+        delete recipe.image;
+
+        if (recipe.id && persistedImageById.has(recipe.id)) {
+          const image = persistedImageById.get(recipe.id);
+          if (image) {
+            preservedImages.add(image);
+          }
+          return { ...meal, recipe: { ...recipe, image } };
+        }
+        return { ...meal, recipe };
+      }),
+    }));
+
+    return { days: preparedDays, preservedImages };
+  }
+
+  // Busca las imágenes del plan. Si algo falla de forma inesperada, el plan se guarda sin imágenes.
+  private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
+    try {
+      return await this.unsplash.searchAndSelectImages(days);
+    } catch (error: any) {
+      this.logger.error(
+        `Image search failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
+        error?.stack
+      );
+      return days;
+    }
+  }
+
+  // Después de guardar el plan: registra el uso de cada foto nueva (un evento por foto, de a 3 en
+  // paralelo) y guarda el resultado en cada receta.
+  private async trackNewRecipeImages(recipesForTracking: RecipeForTracking[]): Promise<void> {
+    const recipesByTrackingUrl = new Map<string, RecipeForTracking[]>();
+    for (const item of recipesForTracking) {
+      const group = recipesByTrackingUrl.get(item.image.tracking.trackingUrl) ?? [];
+      group.push(item);
+      recipesByTrackingUrl.set(item.image.tracking.trackingUrl, group);
+    }
+
+    await resolveWithBoundedConcurrency(Array.from(recipesByTrackingUrl.values()), async (group) => {
+      // El repositorio no conoce el tipo de Unsplash (ver plans-transaction-no-network.spec.ts).
+      const { tracking } = await this.unsplash.trackDownload(group[0].image as unknown as PersistedRecipeImage);
+      for (const item of group) {
+        await this.repository.updateRecipeImageTracking(item.recipeId, { ...item.image, tracking });
+      }
+    });
+  }
 
   private parseDateString(dateStr: string): Date {
     // Treat as UTC to avoid timezone shift
@@ -181,8 +260,14 @@ export class PlansService {
       throw error;
     }
 
+    // Imágenes: se buscan ANTES de la transacción (nunca hay llamadas externas dentro de ella).
+    const { days: preparedDays } = this.prepareRecipeImages(dto.days);
+    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+
+    let recipesForTracking: RecipeForTracking[] = [];
     try {
-      await this.repository.createPlanTransaction(userId, weekStart, dto.days, generationRunId);
+      const persisted = await this.repository.createPlanTransaction(userId, weekStart, daysForPersistence, generationRunId);
+      recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el
       // GenerationRun no debe quedar colgado en PENDING para siempre — se transiciona a FAILED
@@ -201,6 +286,10 @@ export class PlansService {
       }
       throw error;
     }
+
+    // Fuera del try/catch: un fallo de tracking no debe marcar el GenerationRun como FAILED.
+    await this.trackNewRecipeImages(recipesForTracking);
+
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
@@ -282,8 +371,14 @@ export class PlansService {
       throw error;
     }
 
+    // Imágenes: las recetas que ya existían en el plan conservan la suya; sólo se buscan las nuevas.
+    const { days: preparedDays, preservedImages } = this.prepareRecipeImages(dto.days, plan);
+    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+
+    let recipesForTracking: RecipeForTracking[] = [];
     try {
-      await this.repository.updatePlanTransaction(userId, weekStart, dto.days, run.id);
+      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
+      recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto): mismo criterio que en validateAndPersistPlan — transicionar a FAILED
       // antes de re-lanzar, sin dejar que un fallo de limpieza oscurezca el error original.
@@ -297,6 +392,9 @@ export class PlansService {
       throw error;
     }
 
+    // Registro de uso sólo para las imágenes nuevas, fuera del try/catch (igual que al crear).
+    await this.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
+
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
@@ -305,7 +403,26 @@ export class PlansService {
     const plan = await this.repository.findPlanByWeek(userId, weekStart);
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
-    return plan;
+
+    return {
+      ...plan,
+      days: (plan.days ?? []).map((day: any) => ({
+        ...day,
+        meals: (day.meals ?? []).map((meal: any) => {
+          if (!meal.recipe) {
+            return meal;
+          }
+          return {
+            ...meal,
+            recipe: {
+              ...meal.recipe,
+              // Se quita la metadata privada de tracking antes de devolver el plan.
+              image: toPublicRecipeImage(meal.recipe.image as PersistedRecipeImage | null),
+            },
+          };
+        }),
+      })),
+    };
   }
 
   private validateRestrictions(days: MealPlanDayDto[], profile: NutritionProfile) {
