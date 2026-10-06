@@ -3,6 +3,32 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { MealPlanDayDto } from './dto';
 import { isValidTransition, GenerationStatus } from './generation-run-state-machine';
 
+// Estados que ocupan el idempotencyKeyHash (los que no excluye el índice único parcial).
+const ACTIVE_RUN_STATUSES = ['PENDING', 'READY_FOR_REVIEW', 'CONFIRMED', 'SUCCEEDED'];
+
+// El plan cambió (u otro reemplazo ganó) entre que se leyó y que se intentó guardar: 409.
+export class MealReplacementConflictError extends Error {
+  constructor() {
+    super('Meal plan changed during the replacement');
+    this.name = 'MealReplacementConflictError';
+  }
+}
+
+// Datos para guardar un reemplazo: o una receta existente del catálogo, o una nueva generada por IA.
+export interface MealReplacementWrite {
+  userId: string;
+  planId: string;
+  expectedPlanUpdatedAt: Date;
+  plannedMealId: string;
+  generationRunId: string;
+  existingRecipeId?: string;
+  newRecipe?: Record<string, unknown>;
+  title?: string;
+  nutritionalValues: Record<string, unknown>;
+  outputSnapshot: Record<string, unknown>;
+  validationSnapshot: Record<string, unknown>;
+}
+
 // Copia mínima del tipo de imagen del adaptador. No se importa porque este archivo no puede
 // mencionar al adaptador (plans-transaction-no-network.spec.ts lo verifica).
 type RecipeImageWithTracking = {
@@ -383,6 +409,7 @@ export class PlansRepository {
     requestSnapshot: unknown,
     profileSnapshot: unknown,
     idempotencyKeyHash: string,
+    canRetry = true,
   ): Promise<{ run: any; wasCreated: boolean }> {
     try {
       const run = await (this.prisma.generationRun.create as any)({
@@ -401,10 +428,21 @@ export class PlansRepository {
       return { run, wasCreated: true };
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        const existing = await (this.prisma.generationRun.findFirst as any)({
-          where: { userId, kind, idempotencyKeyHash },
+        // Sólo los runs activos ocupan la clave (mismo criterio que el índice único parcial);
+        // un FAILED/REJECTED/EXPIRED viejo con el mismo hash nunca se devuelve.
+        const active = await (this.prisma.generationRun.findMany as any)({
+          where: { userId, kind, idempotencyKeyHash, status: { in: ACTIVE_RUN_STATUSES } },
         });
-        return { run: existing, wasCreated: false };
+        const existing = active.find((run: any) => run.status === 'SUCCEEDED' || run.status === 'CONFIRMED') ?? active[0];
+        if (existing) {
+          return { run: existing, wasCreated: false };
+        }
+        // El run activo terminó mal justo entre el choque y la lectura: la clave ya está libre.
+        if (canRetry) {
+          return this.createOrRecoverGenerationRun(
+            userId, kind, provider, model, promptVersion, schemaVersion, requestSnapshot, profileSnapshot, idempotencyKeyHash, false,
+          );
+        }
       }
       throw error;
     }
@@ -448,5 +486,48 @@ export class PlansRepository {
    */
   async findGenerationRunById(id: string, userId: string) {
     return this.prisma.generationRun.findFirst({ where: { id, userId } });
+  }
+
+  // NUT-77: busca el plan sólo por id (sin filtrar por usuario) para poder distinguir 403 de 404.
+  async findPlanWithMeals(planId: string) {
+    return this.prisma.mealPlan.findUnique({
+      where: { id: planId },
+      include: { days: { include: { meals: true } } },
+    });
+  }
+
+  async findRecipeById(id: string) {
+    return this.prisma.recipe.findUnique({ where: { id } });
+  }
+
+  // NUT-77: guarda el reemplazo de UNA comida. Si algo falla, Prisma revierte todo junto.
+  async replaceMealTransaction(input: MealReplacementWrite) {
+    return this.prisma.$transaction(async (tx: any) => {
+      // Control optimista: sólo sigue si el plan no cambió desde que se leyó y sigue siendo el actual.
+      const locked = await tx.mealPlan.updateMany({
+        where: { id: input.planId, userId: input.userId, isCurrent: true, updatedAt: input.expectedPlanUpdatedAt },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count === 0) {
+        throw new MealReplacementConflictError();
+      }
+
+      const recipe = input.newRecipe
+        ? await tx.recipe.create({ data: { ...input.newRecipe, origin: 'AI', generationRunId: input.generationRunId } })
+        : await tx.recipe.findUniqueOrThrow({ where: { id: input.existingRecipeId } });
+
+      // Sólo cambia la comida objetivo; la receta anterior queda en el catálogo.
+      const plannedMeal = await tx.plannedMeal.update({
+        where: { id: input.plannedMealId },
+        data: { recipeId: recipe.id, title: input.title ?? recipe.title, nutritionalValues: input.nutritionalValues },
+      });
+
+      await this.transitionGenerationRunInTx(tx, input.generationRunId, input.userId, ['PENDING'], 'SUCCEEDED', {
+        outputSnapshot: { ...input.outputSnapshot, recipeId: recipe.id, title: plannedMeal.title },
+        validationSnapshot: input.validationSnapshot,
+      });
+
+      return { recipe, plannedMeal };
+    });
   }
 }

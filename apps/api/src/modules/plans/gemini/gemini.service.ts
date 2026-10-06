@@ -2,7 +2,7 @@ import { Injectable, InternalServerErrorException, RequestTimeoutException, Logg
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { ConfigService } from '@nestjs/config';
 import { NutritionProfile, DayOfWeek, MealType } from '../../../generated/prisma/client';
-import { CURRENT_PROMPT_VERSION } from './prompts';
+import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCriteria } from './prompts';
 
 /**
  * `provider`/`model` de `GenerationRun` (design.md sección 3/6). Se declaran acá, junto al
@@ -29,6 +29,20 @@ export interface GeneratedMealPlanDay {
       instructions: string[];
     };
   }>;
+}
+
+// Comida generada para reemplazar otra: como una comida del plan, sin mealType y con la receta clasificada.
+type GeneratedPlanMeal = GeneratedMealPlanDay['meals'][number];
+export type GeneratedReplacementMeal = Omit<GeneratedPlanMeal, 'mealType' | 'recipe'> & {
+  recipe?: NonNullable<GeneratedPlanMeal['recipe']> & { categories?: string[]; properties?: string[] };
+};
+
+// Gemini no respondió a tiempo o falló: el reemplazo de una comida lo traduce a 503.
+export class AiProviderUnavailableError extends Error {
+  constructor(readonly reason: 'AI_TIMEOUT' | 'AI_PROVIDER_ERROR') {
+    super(`AI provider unavailable: ${reason}`);
+    this.name = 'AiProviderUnavailableError';
+  }
 }
 
 @Injectable()
@@ -81,6 +95,46 @@ export class GeminiService {
         throw new RequestTimeoutException('AI generation timed out');
       }
       throw new InternalServerErrorException('Error generating AI plan');
+    }
+  }
+
+  // Genera UNA comida para reemplazar otra del plan. El timeout cubre toda la respuesta: la
+  // promesa del SDK recién se resuelve con el body completo. Si Gemini falla o no responde lanza
+  // AiProviderUnavailableError; si responde algo que no es JSON devuelve null (lo rechaza el servicio).
+  async generateReplacementMeal(
+    profile: NutritionProfile,
+    mealType: MealType,
+    criteria: ReplacementPromptCriteria,
+  ): Promise<GeneratedReplacementMeal | null> {
+    const model = this.genAI.getGenerativeModel({
+      model: GEMINI_MODEL_NAME,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: REPLACEMENT_PROMPT_VERSION.getSchema(),
+      },
+    });
+    const prompt = REPLACEMENT_PROMPT_VERSION.getPrompt(profile, mealType, criteria);
+
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 15000);
+
+    let text: string;
+    try {
+      const result = await model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        { requestOptions: { signal: abortController.signal } } as any,
+      );
+      text = result.response.text();
+    } catch (error: any) {
+      throw new AiProviderUnavailableError(error?.name === 'AbortError' ? 'AI_TIMEOUT' : 'AI_PROVIDER_ERROR');
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    try {
+      return JSON.parse(text) as GeneratedReplacementMeal;
+    } catch {
+      return null;
     }
   }
 }

@@ -8,6 +8,7 @@ import { validate } from 'class-validator';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
+import { findRestrictionViolation, forbiddenRestrictions } from './meal-restrictions.util';
 import { UnsplashService, resolveWithBoundedConcurrency, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
 import type { PersistedRecipeImage } from '@/modules/unsplash/recipe-image.types';
 import type { RecipeForTracking } from './plans.repository';
@@ -429,10 +430,7 @@ export class PlansService {
       throw new BadRequestException(`Plan must have exactly 7 days`);
     }
 
-    const excluded = Array.isArray(profile.excludedIngredients)
-      ? profile.excludedIngredients
-      : [];
-    const forbidden = excluded.map(String).map(r => r.toLowerCase());
+    const forbidden = forbiddenRestrictions(profile);
 
     for (const day of days) {
       if (!day.meals || day.meals.length === 0) {
@@ -440,22 +438,9 @@ export class PlansService {
       }
 
       for (const meal of day.meals) {
-        // Usamos los nombres de ingredientes estructurados para validar restricciones
-        const ingredientNames = meal.recipe?.ingredients?.map(i => i.name) || [];
-        const textParts = [
-          meal.title,
-          meal.nutritionalValues?.Description || '',
-          ...ingredientNames
-        ];
-
-        const textToCheck = textParts.join(' ').toLowerCase();
-
-        for (const restriction of forbidden) {
-          // Check for exact word matches or close substrings
-          const regex = new RegExp(`\\b${restriction}\\b`, 'i');
-          if (regex.test(textToCheck) || textToCheck.includes(restriction)) {
-            throw new BadRequestException(`Meal '${meal.title}' contains excluded ingredient/concept: ${restriction}`);
-          }
+        const restriction = findRestrictionViolation(meal, forbidden);
+        if (restriction) {
+          throw new BadRequestException(`Meal '${meal.title}' contains excluded ingredient/concept: ${restriction}`);
         }
       }
     }

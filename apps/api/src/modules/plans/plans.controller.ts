@@ -1,12 +1,20 @@
-import { Controller, Post, Get, Put, Delete, Body, Query, Req, UseGuards, HttpCode } from '@nestjs/common';
+import { Controller, Post, Get, Put, Delete, Body, Query, Req, UseGuards, HttpCode, HttpStatus, Param, ParseUUIDPipe, Headers, BadRequestException } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { PlansService } from './plans.service';
-import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto } from './dto';
+import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto, ReplaceMealDto } from './dto';
+import { MealReplacementService } from './meal-replacement.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+
+// Un id que no es UUID no puede existir: 404, como en el resto de los endpoints del proyecto.
+export const uuidOr404 = new ParseUUIDPipe({ errorHttpStatusCode: HttpStatus.NOT_FOUND });
 
 @UseGuards(JwtAuthGuard)
 @Controller('meal-plans')
 export class PlansController {
-  constructor(private readonly plansService: PlansService) {}
+  constructor(
+    private readonly plansService: PlansService,
+    private readonly mealReplacementService: MealReplacementService,
+  ) {}
 
   @Post('generate')
   @HttpCode(201)
@@ -38,5 +46,21 @@ export class PlansController {
   async deletePlan(@Req() req: any, @Query() query: MealPlanQueryDto){
     const userId = req.user.sub;
     return this.plansService.deletePlan(userId, query.weekStart);
+  }
+
+  // NUT-77: reemplaza una sola comida del plan actual. El body es opcional.
+  @Post(':planId/meals/:plannedMealId/replace')
+  @HttpCode(200)
+  async replaceMeal(
+    @Req() req: any,
+    @Param('planId', uuidOr404) planId: string,
+    @Param('plannedMealId', uuidOr404) plannedMealId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() dto: ReplaceMealDto,
+  ) {
+    if (!idempotencyKey || !isUUID(idempotencyKey)) {
+      throw new BadRequestException('Idempotency-Key header must be a UUID');
+    }
+    return this.mealReplacementService.replaceMeal(req.user.sub, planId, plannedMealId, idempotencyKey, dto ?? {});
   }
 }

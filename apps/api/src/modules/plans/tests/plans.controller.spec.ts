@@ -1,12 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PlansController } from '../plans.controller';
+import { PlansController, uuidOr404 } from '../plans.controller';
 import { PlansService } from '../plans.service';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto } from '../dto';
+import { MealReplacementService } from '../meal-replacement.service';
 
 describe('PlansController', () => {
   let controller: PlansController;
   let service: jest.Mocked<PlansService>;
+  let replacementService: { replaceMeal: jest.Mock };
 
   beforeEach(async () => {
     const mockService = {
@@ -24,6 +27,10 @@ describe('PlansController', () => {
           provide: PlansService,
           useValue: mockService,
         },
+        {
+          provide: MealReplacementService,
+          useValue: { replaceMeal: jest.fn() },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -32,6 +39,7 @@ describe('PlansController', () => {
 
     controller = module.get<PlansController>(PlansController);
     service = module.get(PlansService);
+    replacementService = module.get(MealReplacementService);
   });
 
   it('should be defined', () => {
@@ -110,6 +118,39 @@ describe('PlansController', () => {
 
       expect(result).toEqual(expectedPlan);
       expect(service.deletePlan).toHaveBeenCalledWith('user-123', '2026-09-07');
+    });
+  });
+
+  describe('replaceMeal (NUT-77)', () => {
+    const req = { user: { sub: 'user-123' } };
+    const planId = '11111111-1111-4111-8111-111111111111';
+    const mealId = '22222222-2222-4222-8222-222222222222';
+    const key = '33333333-3333-4333-8333-333333333333';
+
+    it('delega en MealReplacementService con el usuario, los ids, la clave y el body', async () => {
+      replacementService.replaceMeal.mockResolvedValue({ planId });
+      const dto = { topic: 'cena liviana', maxPrepMinutes: 30 };
+
+      const result = await controller.replaceMeal(req, planId, mealId, key, dto);
+
+      expect(replacementService.replaceMeal).toHaveBeenCalledWith('user-123', planId, mealId, key, dto);
+      expect(result).toEqual({ planId });
+    });
+
+    it('sin body usa criterios vacíos', async () => {
+      await controller.replaceMeal(req, planId, mealId, key, undefined as any);
+
+      expect(replacementService.replaceMeal).toHaveBeenCalledWith('user-123', planId, mealId, key, {});
+    });
+
+    it('un planId o plannedMealId que no es UUID da 404 (convención del proyecto)', async () => {
+      await expect(uuidOr404.transform('no-es-un-uuid', { type: 'param' } as any)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(uuidOr404.transform(planId, { type: 'param' } as any)).resolves.toBe(planId);
+    });
+
+    it.each([undefined, '', 'no-es-un-uuid'])('responde 400 si Idempotency-Key es %p', async (badKey) => {
+      await expect(controller.replaceMeal(req, planId, mealId, badKey as any, {})).rejects.toBeInstanceOf(BadRequestException);
+      expect(replacementService.replaceMeal).not.toHaveBeenCalled();
     });
   });
 });
