@@ -19,7 +19,8 @@ export type GenerationStatus =
   | 'EXPIRED';
 
 const VALID_TRANSITIONS: Record<GenerationStatus, GenerationStatus[]> = {
-  PENDING: ['READY_FOR_REVIEW', 'SUCCEEDED', 'REJECTED', 'FAILED'],
+  // PENDING -> EXPIRED (NUT-77): un run que quedó colgado más del tiempo permitido libera su clave.
+  PENDING: ['READY_FOR_REVIEW', 'SUCCEEDED', 'REJECTED', 'FAILED', 'EXPIRED'],
   READY_FOR_REVIEW: ['CONFIRMED', 'EXPIRED', 'REJECTED'],
   CONFIRMED: [],
   SUCCEEDED: [],

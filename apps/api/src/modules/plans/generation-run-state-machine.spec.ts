@@ -8,7 +8,7 @@
  *
  * implementing EXACTLY the table in design.md section 7:
  *
- *   PENDING          -> READY_FOR_REVIEW | SUCCEEDED | REJECTED | FAILED
+ *   PENDING          -> READY_FOR_REVIEW | SUCCEEDED | REJECTED | FAILED | EXPIRED
  *   READY_FOR_REVIEW -> CONFIRMED | EXPIRED | REJECTED
  *   CONFIRMED        -> (none, terminal)
  *   SUCCEEDED        -> (none, terminal)
@@ -56,8 +56,12 @@ describe('generation-run-state-machine isValidTransition', () => {
       }
     );
 
-    it.each<GenerationStatus>(['CONFIRMED', 'EXPIRED', 'PENDING'])('rejects PENDING -> %s', (to) => {
+    it.each<GenerationStatus>(['CONFIRMED', 'PENDING'])('rejects PENDING -> %s', (to) => {
       expect(isValidTransition('PENDING', to)).toBe(false);
+    });
+
+    it('allows PENDING -> EXPIRED (NUT-77: run colgado que libera su Idempotency-Key)', () => {
+      expect(isValidTransition('PENDING', 'EXPIRED')).toBe(true);
     });
 
     it('explicitly rejects PENDING -> CONFIRMED directly (design.md AC5 negative case)', () => {

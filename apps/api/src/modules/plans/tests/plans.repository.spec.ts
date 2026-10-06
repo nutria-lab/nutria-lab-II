@@ -238,7 +238,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const p2002Error = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
       mockPrisma.generationRun = {
         create: jest.fn().mockRejectedValue(p2002Error),
-        findFirst: jest.fn().mockResolvedValue(existingRun),
+        findMany: jest.fn().mockResolvedValue([existingRun]),
       };
 
       const result = await (repository as any).createOrRecoverGenerationRun(
@@ -253,10 +253,59 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
         args.idempotencyKeyHash,
       );
 
-      expect(mockPrisma.generationRun.findFirst).toHaveBeenCalledWith({
-        where: { userId: args.userId, kind: args.kind, idempotencyKeyHash: args.idempotencyKeyHash },
+      expect(mockPrisma.generationRun.findMany).toHaveBeenCalledWith({
+        where: {
+          userId: args.userId,
+          kind: args.kind,
+          idempotencyKeyHash: args.idempotencyKeyHash,
+          status: { in: ['PENDING', 'READY_FOR_REVIEW', 'CONFIRMED', 'SUCCEEDED'] },
+        },
       });
       expect(result).toEqual({ run: existingRun, wasCreated: false });
+    });
+
+    // Tabla en memoria que respeta el filtro de estado, como lo haría Postgres.
+    function fakeRunsTable(rows: any[]) {
+      return jest.fn(async ({ where }: any) => rows.filter(row =>
+        row.userId === where.userId && row.kind === where.kind &&
+        row.idempotencyKeyHash === where.idempotencyKeyHash && where.status.in.includes(row.status)));
+    }
+    const recover = () => (repository as any).createOrRecoverGenerationRun(
+      args.userId, args.kind, args.provider, args.model, args.promptVersion, args.schemaVersion,
+      args.requestSnapshot, args.profileSnapshot, args.idempotencyKeyHash,
+    );
+
+    it('con un FAILED anterior y un SUCCEEDED posterior con el mismo hash, devuelve el SUCCEEDED', async () => {
+      const p2002Error = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      const rows = [
+        { id: 'run-failed', ...args, status: 'FAILED' },
+        { id: 'run-succeeded', ...args, status: 'SUCCEEDED' },
+      ];
+      mockPrisma.generationRun = { create: jest.fn().mockRejectedValue(p2002Error), findMany: fakeRunsTable(rows) };
+
+      const result = await recover();
+
+      expect(result).toEqual({ run: rows[1], wasCreated: false });
+    });
+
+    it('si el run activo ya no existe al leerlo (terminó mal), reintenta crear una sola vez', async () => {
+      const p2002Error = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      const createdRun = { id: 'run-new', ...args, status: 'PENDING' };
+      mockPrisma.generationRun = {
+        create: jest.fn().mockRejectedValueOnce(p2002Error).mockResolvedValueOnce(createdRun),
+        findMany: jest.fn().mockResolvedValue([]),
+      };
+
+      await expect(recover()).resolves.toEqual({ run: createdRun, wasCreated: true });
+      expect(mockPrisma.generationRun.create).toHaveBeenCalledTimes(2);
+    });
+
+    it('si vuelve a chocar después del reintento, propaga el error', async () => {
+      const p2002Error = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+      mockPrisma.generationRun = { create: jest.fn().mockRejectedValue(p2002Error), findMany: jest.fn().mockResolvedValue([]) };
+
+      await expect(recover()).rejects.toBe(p2002Error);
+      expect(mockPrisma.generationRun.create).toHaveBeenCalledTimes(2);
     });
   });
 

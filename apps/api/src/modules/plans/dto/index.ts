@@ -5,3 +5,4 @@ export * from './meal-plan-day.dto';
 export * from './meal.dto';
 export * from './nutritional-values.dto';
 export * from './recipe.dto';
+export * from './replace-meal.dto';
