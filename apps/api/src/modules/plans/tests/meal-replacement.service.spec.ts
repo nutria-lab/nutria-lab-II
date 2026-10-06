@@ -11,6 +11,7 @@ import { MealReplacementService } from '../meal-replacement.service';
 import { MealReplacementConflictError } from '../plans.repository';
 import { AiProviderUnavailableError } from '../gemini/gemini.service';
 import { InsufficientCoverageProfileError } from '../../recipe/recipe-coverage.types';
+import { pendingPersistedImage } from '../../unsplash/unsplash-search.fixture';
 
 const USER = 'user-1';
 const PLAN = 'plan-1';
@@ -78,11 +79,20 @@ function setup(): any {
     })),
     transitionGenerationRun: jest.fn().mockResolvedValue(1),
     findRecipeById: jest.fn(),
+    updateRecipeImageTracking: jest.fn().mockResolvedValue(undefined),
   };
   const gemini = { generateReplacementMeal: jest.fn().mockResolvedValue(generatedMeal()) };
   const coverage = { evaluate: jest.fn().mockResolvedValue({ result: { compatibleRecipes: [] } }) };
   const config = { get: jest.fn().mockReturnValue(undefined) };
-  const service = new MealReplacementService(repository as any, gemini as any, coverage as any, config as any);
+  // NUT-83: por defecto Unsplash no encuentra foto; los tests de imágenes lo cambian.
+  const unsplash = {
+    searchAndSelectCandidate: jest.fn().mockResolvedValue(null),
+    trackDownload: jest.fn(async (image: any) => ({
+      ...image,
+      tracking: { ...image.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-06T12:00:00.000Z' },
+    })),
+  };
+  const service = new MealReplacementService(repository as any, gemini as any, coverage as any, config as any, unsplash as any);
   const replace = (dto: Record<string, unknown> = {}, key = KEY) => service.replaceMeal(USER, PLAN, MEAL, key, dto);
   const catalogReturns = (...recipes: any[]) =>
     coverage.evaluate.mockResolvedValueOnce({ result: { compatibleRecipes: recipes.map(recipe => ({ recipe })) } });
@@ -92,7 +102,7 @@ function setup(): any {
     await probe.replace(dto);
     return probe.repository.createOrRecoverGenerationRun.mock.calls[0][6];
   };
-  return { plan, repository, gemini, coverage, config, replace, catalogReturns, snapshotFor };
+  return { plan, repository, gemini, coverage, config, unsplash, replace, catalogReturns, snapshotFor };
 }
 
 describe('MealReplacementService - plan y comida del usuario', () => {
@@ -451,5 +461,98 @@ describe('MealReplacementService - runs colgados y errores inesperados', () => {
     await replace();
 
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-stale', USER, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
+  });
+});
+
+describe('MealReplacementService - imágenes de NUT-83', () => {
+  const PUBLIC_IMAGE_KEYS = ['alt', 'imageUrl', 'photographer', 'photographerUrl', 'provider', 'providerPhotoId', 'query', 'retrievedAt', 'sourceUrl'];
+
+  it('una receta del catálogo con foto se devuelve sin la metadata privada de tracking', async () => {
+    const { repository, catalogReturns, replace } = setup();
+    catalogReturns(catalogRecipe('recipe-cat'));
+    repository.replaceMealTransaction.mockResolvedValue({
+      recipe: { ...catalogRecipe('recipe-cat'), image: pendingPersistedImage({ tracking: { status: 'SUCCEEDED' } }) },
+      plannedMeal: { id: MEAL, mealType: 'DINNER', title: 'Receta recipe-cat' },
+    });
+
+    const response: any = await replace();
+
+    expect(Object.keys(response.plannedMeal.recipe.image).sort()).toEqual([...PUBLIC_IMAGE_KEYS].sort());
+    expect(JSON.stringify(response)).not.toContain('tracking');
+  });
+
+  it('al repetir con la misma clave también se filtra la metadata privada', async () => {
+    const { repository, catalogReturns, replace, snapshotFor } = setup();
+    const snapshot = await snapshotFor();
+    catalogReturns(catalogRecipe('recipe-cat'));
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: { id: 'run-1', status: 'SUCCEEDED', requestSnapshot: snapshot, outputSnapshot: { recipeId: 'recipe-cat', title: 'Receta' } },
+      wasCreated: false,
+    });
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-cat'), image: pendingPersistedImage() });
+
+    const response: any = await replace();
+
+    expect(response.plannedMeal.recipe.image).not.toHaveProperty('tracking');
+    expect(JSON.stringify(response)).not.toContain('/download');
+  });
+
+  it('la receta de la IA busca foto antes de guardar, se guarda PENDING y el uso se registra después del commit', async () => {
+    const { repository, unsplash, replace } = setup();
+    const callOrder: string[] = [];
+    const image = pendingPersistedImage();
+    unsplash.searchAndSelectCandidate.mockImplementation(async (title: string) => {
+      callOrder.push(`search:${title}`);
+      return image;
+    });
+    repository.replaceMealTransaction.mockImplementation(async (input: any) => {
+      callOrder.push(`tx:image=${input.newRecipe.image.tracking.status}`);
+      return { recipe: { id: 'recipe-new', ...input.newRecipe }, plannedMeal: { id: MEAL, mealType: 'DINNER', title: input.title } };
+    });
+    unsplash.trackDownload.mockImplementation(async (persisted: any) => {
+      callOrder.push('trackDownload');
+      return { ...persisted, tracking: { ...persisted.tracking, status: 'SUCCEEDED', lastAttemptAt: 'x' } };
+    });
+
+    const response: any = await replace();
+
+    expect(callOrder).toEqual(['search:Wok de verduras', 'tx:image=PENDING', 'trackDownload']);
+    expect(repository.updateRecipeImageTracking).toHaveBeenCalledWith('recipe-new', expect.objectContaining({
+      tracking: expect.objectContaining({ status: 'SUCCEEDED' }),
+    }));
+    expect(Object.keys(response.plannedMeal.recipe.image).sort()).toEqual([...PUBLIC_IMAGE_KEYS].sort());
+  });
+
+  it('si Unsplash no encuentra foto (o falla), la receta de la IA se guarda sin imagen y no se registra uso', async () => {
+    const { repository, unsplash, replace } = setup();
+    unsplash.searchAndSelectCandidate.mockRejectedValue(new Error('bug'));
+
+    const response: any = await replace();
+
+    expect(repository.replaceMealTransaction.mock.calls[0][0].newRecipe).not.toHaveProperty('image');
+    expect(unsplash.trackDownload).not.toHaveBeenCalled();
+    expect(response.plannedMeal.recipe.image).toBeNull();
+  });
+
+  it('si guardar el resultado del tracking falla, el reemplazo igual responde 200 (queda PENDING para recuperación)', async () => {
+    const { repository, unsplash, replace } = setup();
+    unsplash.searchAndSelectCandidate.mockResolvedValue(pendingPersistedImage());
+    repository.updateRecipeImageTracking.mockRejectedValue(new Error('db down'));
+
+    const response: any = await replace();
+
+    expect(response.plannedMeal.recipeId).toBe('recipe-new');
+    expect(response.plannedMeal.recipe.image).not.toBeNull();
+    expect(repository.transitionGenerationRun).not.toHaveBeenCalled();
+  });
+
+  it('una receta reutilizada del catálogo nunca busca ni registra foto de nuevo', async () => {
+    const { unsplash, catalogReturns, replace } = setup();
+    catalogReturns(catalogRecipe('recipe-cat'));
+
+    await replace();
+
+    expect(unsplash.searchAndSelectCandidate).not.toHaveBeenCalled();
+    expect(unsplash.trackDownload).not.toHaveBeenCalled();
   });
 });

@@ -21,6 +21,8 @@
 | `findCatalogRecipe` | 199 | D4 |
 | `generateRecipe`, `recipeTags`, `meetsCriteria` | 233, 287, 296 | D5 |
 
+Integración con NUT-83 (design D9): `MealReplacementService` recibe `UnsplashService`; `findImage` y `trackNewRecipeImage` manejan la foto de la receta generada por la IA (`repository.updateRecipeImageTracking`, de NUT-83), y `buildResponse` filtra la imagen con `toPublicRecipeImage`. Tests en `tests/meal-replacement.service.spec.ts` ("imágenes de NUT-83").
+
 ## 3. Repositorio (`src/modules/plans/plans.repository.ts`)
 
 - `:7` `ACTIVE_RUN_STATUSES`; `:353` `createOrRecoverGenerationRun`: recupera sólo runs activos priorizando el terminado y reintenta crear una vez (compartido con el plan semanal).

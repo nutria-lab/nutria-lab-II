@@ -45,6 +45,8 @@ Un run `FAILED`/`REJECTED`/`EXPIRED` libera la clave, así que el cliente puede 
 
 **D8 — Llamadas externas fuera de la transacción.** NUT-72 y Gemini se llaman antes; la transacción sólo bloquea el plan, crea la receta nueva si la hay, actualiza la comida y marca el run `SUCCEEDED`. Si algo falla adentro, Prisma revierte todo y el run se marca `FAILED` en una operación aparte.
 
+**D9 — Imágenes (integración con NUT-83, ya en `main`).** La respuesta, incluida la repetición con la misma clave, pasa la imagen de la receta por `toPublicRecipeImage`: nunca sale la metadata privada de tracking. Una receta reutilizada del catálogo conserva su imagen y no vuelve a buscar ni a registrar uso. La receta que genera la IA es una receta nueva: busca su foto antes de la transacción, se guarda con el tracking en `PENDING`, y el uso se registra en Unsplash después del commit (fuera del manejo de errores del run). Si la búsqueda falla, se guarda sin imagen; si falla guardar el resultado del tracking, queda `PENDING` para el script de recuperación y el reemplazo responde 200 igual.
+
 **Alternativas descartadas:** nueva versión del plan (D1); columna `clientIdempotencyKey` (D3); reintentar la generación con IA (el ticket pide exactamente una); agregar `mealType` a `Recipe`/NUT-72 (amplía NUT-72, queda para un ticket futuro).
 
 ## 3. Contrato

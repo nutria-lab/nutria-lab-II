@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -21,6 +22,8 @@ import { REPLACEMENT_PROMPT_VERSION } from './gemini/prompts';
 import { buildProfileSnapshot } from './generation-run-snapshot';
 import { findRestrictionViolation, forbiddenRestrictions } from './meal-restrictions.util';
 import { MealReplacementConflictError, PlansRepository } from './plans.repository';
+import { UnsplashService, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
+import type { PersistedRecipeImage, RecipeImage } from '@/modules/unsplash/recipe-image.types';
 
 const KIND = 'MEAL_REPLACEMENT';
 // Cuántas recetas del catálogo pedir a NUT-72: si la mejor no pasa las restricciones, se prueba la siguiente.
@@ -38,7 +41,13 @@ export interface MealReplacementResponse {
   planId: string;
   version: number;
   dayId: string;
-  plannedMeal: { id: string; mealType: MealType; title: string; recipeId: string; recipe: Recipe };
+  plannedMeal: {
+    id: string;
+    mealType: MealType;
+    title: string;
+    recipeId: string;
+    recipe: Omit<Recipe, 'image'> & { image: RecipeImage | null };
+  };
   generationRunId: string;
 }
 
@@ -46,11 +55,14 @@ export interface MealReplacementResponse {
 // Orden: dueño/plan → idempotencia → catálogo (NUT-72) → si no hay, IA (una sola) → transacción corta.
 @Injectable()
 export class MealReplacementService {
+  private readonly logger = new Logger(MealReplacementService.name);
+
   constructor(
     private readonly repository: PlansRepository,
     private readonly gemini: GeminiService,
     private readonly coverage: RecipeCoverageService,
     private readonly config: ConfigService,
+    private readonly unsplash: UnsplashService,
   ) {}
 
   async replaceMeal(
@@ -141,8 +153,9 @@ export class MealReplacementService {
       : await this.generateRecipe(userId, runId, profile, meal.mealType, criteria, forbidden);
 
     // 4. Guardar, sólo la comida objetivo, en una transacción corta.
+    let saved: { recipe: any; plannedMeal: any };
     try {
-      const { recipe, plannedMeal } = await this.repository.replaceMealTransaction({
+      saved = await this.repository.replaceMealTransaction({
         userId,
         planId: plan.id,
         expectedPlanUpdatedAt: plan.updatedAt,
@@ -150,13 +163,38 @@ export class MealReplacementService {
         generationRunId: runId,
         ...write,
       });
-      return this.buildResponse(plan, dayId, plannedMeal, recipe, runId);
     } catch (error) {
       // La transacción se revirtió entera: se marca el run con el motivo concreto.
       const conflict = error instanceof MealReplacementConflictError;
       await this.failRun(runId, userId, 'FAILED', conflict ? 'CONCURRENT_CONFLICT' : 'PERSISTENCE_FAILED');
       if (conflict) throw new ConflictException('The meal plan changed during the replacement; retry');
       throw error;
+    }
+
+    // 5. Foto nueva de la IA: el uso se registra en Unsplash recién ahora, con la receta ya guardada (NUT-83).
+    const recipe = 'newRecipe' in write && write.newRecipe.image ? await this.trackNewRecipeImage(saved.recipe) : saved.recipe;
+    return this.buildResponse(plan, dayId, saved.plannedMeal, recipe, runId);
+  }
+
+  // NUT-83: busca la foto de una receta nueva. Si falla, la receta se guarda igual sin imagen.
+  private async findImage(title: string): Promise<PersistedRecipeImage | null> {
+    try {
+      return await this.unsplash.searchAndSelectCandidate(title);
+    } catch {
+      return null;
+    }
+  }
+
+  // NUT-83: registra el uso de la foto y guarda el resultado. Si guardarlo falla, queda PENDING
+  // para el script de recuperación; el reemplazo ya está hecho y se responde igual.
+  private async trackNewRecipeImage(recipe: any) {
+    const tracked = await this.unsplash.trackDownload(recipe.image as PersistedRecipeImage);
+    try {
+      await this.repository.updateRecipeImageTracking(recipe.id, tracked as any);
+      return { ...recipe, image: tracked };
+    } catch {
+      this.logger.warn(`Could not save Unsplash tracking status for recipeId=${recipe.id}; it stays PENDING for recovery`);
+      return recipe;
     }
   }
 
@@ -265,8 +303,10 @@ export class MealReplacementService {
     }
 
     const { recipe } = meal;
+    const image = await this.findImage(recipe.title);
     return {
       newRecipe: {
+        ...(image ? { image } : {}),
         title: recipe.title,
         description: recipe.description,
         prepMinutes: recipe.prepMinutes,
@@ -320,7 +360,9 @@ export class MealReplacementService {
     }
   }
 
+  // La imagen pasa por toPublicRecipeImage: la metadata privada de tracking nunca sale (NUT-83).
   private buildResponse(plan: any, dayId: string, plannedMeal: any, recipe: Recipe, generationRunId: string) {
+    const image = toPublicRecipeImage(((recipe as { image?: unknown }).image ?? null) as PersistedRecipeImage | null);
     return {
       planId: plan.id,
       version: plan.version,
@@ -330,7 +372,7 @@ export class MealReplacementService {
         mealType: plannedMeal.mealType,
         title: plannedMeal.title,
         recipeId: recipe.id,
-        recipe,
+        recipe: { ...recipe, image },
       },
       generationRunId,
     };
