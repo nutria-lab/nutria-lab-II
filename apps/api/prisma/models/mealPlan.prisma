@@ -14,8 +14,18 @@ model MealPlan {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  generationRunId String?
+  generationRun   GenerationRun? @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  version         Int            @default(1)
+  isCurrent       Boolean        @default(true)
+  supersedesId    String?
+  supersedes      MealPlan?      @relation("MealPlanVersions", fields: [supersedesId], references: [id], onDelete: SetNull)
+  supersededBy    MealPlan[]     @relation("MealPlanVersions")
+
   days MealPlanDay[]
 
-  @@unique([userId, startDate])
+  @@index([userId, startDate])
+  @@index([generationRunId])
+  @@index([supersedesId])
   @@map("meal_plans")
 }

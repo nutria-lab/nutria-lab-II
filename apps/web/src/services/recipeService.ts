@@ -53,6 +53,21 @@ export type CreateRecipeRequest = {
 
 export type UpdateRecipeRequest = Partial<CreateRecipeRequest>;
 
+export type RecipeSearchParams = {
+  q?: string;
+  properties?: string[];
+  maxPrepMinutes?: number;
+  page: number;
+  pageSize?: number;
+};
+
+export type RecipeSearchResponse = {
+  items: Recipe[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
 export type RecipeErrorKind = 'notFound' | 'validation' | 'conflict' | 'timeout' | 'network' | 'unexpected';
 
 const RECIPE_REQUEST_TIMEOUT_MS = 10_000;
@@ -109,13 +124,116 @@ function rethrow(error: unknown): never {
   throw new RecipeRequestError(recipeErrorKind(error));
 }
 
+export function adaptRecipesSearchLocally(
+  recipes: Recipe[],
+  params: RecipeSearchParams,
+): RecipeSearchResponse {
+  const pageSize = params.pageSize ?? 12;
+  const page = Math.max(1, params.page);
+  const normalizedQuery = params.q?.trim().toLowerCase();
+  const filterProperties = (params.properties ?? []).map((p) => p.trim().toLowerCase()).filter(Boolean);
+
+  const filtered = recipes.filter((recipe) => {
+    if (normalizedQuery) {
+      const matchTitle = recipe.title.toLowerCase().includes(normalizedQuery);
+      const matchDesc = (recipe.description ?? '').toLowerCase().includes(normalizedQuery);
+      const matchIngredient = (recipe.ingredients ?? []).some((ing) =>
+        ing.name.toLowerCase().includes(normalizedQuery),
+      );
+      const matchProperty = (recipe.properties ?? []).some((prop) =>
+        prop.toLowerCase().includes(normalizedQuery),
+      );
+      if (!matchTitle && !matchDesc && !matchIngredient && !matchProperty) {
+        return false;
+      }
+    }
+
+    if (filterProperties.length > 0) {
+      const recipeProps = (recipe.properties ?? []).map((p) => p.toLowerCase());
+      const hasAllProps = filterProperties.every((p) => recipeProps.includes(p));
+      if (!hasAllProps) {
+        return false;
+      }
+    }
+
+    if (params.maxPrepMinutes != null && params.maxPrepMinutes > 0) {
+      if (recipe.prepMinutes > params.maxPrepMinutes) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const total = filtered.length;
+  const startIndex = (page - 1) * pageSize;
+  const items = filtered.slice(startIndex, startIndex + pageSize);
+
+  return {
+    items,
+    page,
+    pageSize,
+    total,
+  };
+}
+
 export const recipeService = {
   async list(signal: AbortSignal = new AbortController().signal): Promise<Recipe[]> {
     try {
-      const response = await apiClient.get<Recipe[]>('/recipes', {
+      const response = await apiClient.get<Recipe[] | RecipeSearchResponse>('/recipes', {
         timeout: RECIPE_REQUEST_TIMEOUT_MS,
         signal,
       });
+
+      if (Array.isArray(response.data)) {
+        return response.data;
+      }
+
+      if (response.data && Array.isArray((response.data as RecipeSearchResponse).items)) {
+        return (response.data as RecipeSearchResponse).items;
+      }
+
+      return [];
+    } catch (error) {
+      return rethrow(error);
+    }
+  },
+
+  async search(
+    params: RecipeSearchParams,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<RecipeSearchResponse> {
+    try {
+      const queryParams: Record<string, string | number> = {
+        page: params.page,
+      };
+
+      if (params.pageSize !== undefined) {
+        queryParams.pageSize = params.pageSize;
+      }
+
+      if (params.q?.trim()) {
+        queryParams.q = params.q.trim();
+      }
+
+      if (params.properties && params.properties.length > 0) {
+        queryParams.properties = params.properties.join(',');
+      }
+
+      if (params.maxPrepMinutes != null && params.maxPrepMinutes > 0) {
+        queryParams.maxPrepMinutes = params.maxPrepMinutes;
+      }
+
+      const response = await apiClient.get<RecipeSearchResponse | Recipe[]>('/recipes', {
+        params: queryParams,
+        timeout: RECIPE_REQUEST_TIMEOUT_MS,
+        signal,
+      });
+
+      if (Array.isArray(response.data)) {
+        return adaptRecipesSearchLocally(response.data, params);
+      }
+
       return response.data;
     } catch (error) {
       return rethrow(error);
@@ -176,3 +294,4 @@ export const recipeService = {
     }
   },
 };
+

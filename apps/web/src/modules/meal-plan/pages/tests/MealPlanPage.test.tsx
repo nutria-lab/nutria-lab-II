@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,6 +83,60 @@ const REAL_MEAL_PLAN = {
           cookMinutes: 15,
           ingredients: [{ name: 'Quinoa', quantity: 1, unit: 'taza' }],
           instructions: ['Cocinar la quinoa'],
+        },
+      },
+    ]),
+  ],
+};
+
+const REAL_7_DAY_MEAL_PLAN = {
+  id: 'plan-7days',
+  userId: 'user-1',
+  startDate: '2026-08-24T00:00:00.000Z',
+  endDate: '2026-08-30T00:00:00.000Z',
+  createdAt: '2026-08-20T00:00:00.000Z',
+  updatedAt: '2026-08-20T00:00:00.000Z',
+  days: [
+    buildDay('MONDAY', '2026-08-24', [
+      {
+        id: 'meal-1',
+        dayId: 'day-2026-08-24',
+        mealType: 'BREAKFAST',
+        title: 'Avena con frutos rojos',
+        nutritionalValues: { Protein: 12, Fiber: 5, Calories: 320, Description: 'Rica en fibra' },
+        recipeId: 'recipe-1',
+        recipe: {
+          id: 'recipe-1',
+          title: 'Avena con frutos rojos',
+          description: 'Desayuno rápido',
+          prepMinutes: 5,
+          cookMinutes: 0,
+          ingredients: [{ name: 'Avena', quantity: 1, unit: 'taza' }],
+          instructions: ['Mezclar todo'],
+        },
+      },
+    ]),
+    buildDay('TUESDAY', '2026-08-25', []),
+    buildDay('WEDNESDAY', '2026-08-26', []),
+    buildDay('THURSDAY', '2026-08-27', []),
+    buildDay('FRIDAY', '2026-08-28', []),
+    buildDay('SATURDAY', '2026-08-29', []),
+    buildDay('SUNDAY', '2026-08-30', [
+      {
+        id: 'meal-sunday',
+        dayId: 'day-2026-08-30',
+        mealType: 'DINNER',
+        title: 'Cena de domingo',
+        nutritionalValues: { Protein: 25, Fiber: 4, Calories: 500, Description: 'Cena dominical' },
+        recipeId: 'recipe-sunday',
+        recipe: {
+          id: 'recipe-sunday',
+          title: 'Cena de domingo',
+          description: 'Cena especial',
+          prepMinutes: 15,
+          cookMinutes: 20,
+          ingredients: [{ name: 'Pollo', quantity: 200, unit: 'g' }],
+          instructions: ['Cocinar'],
         },
       },
     ]),
@@ -211,5 +265,73 @@ describe('MealPlanPage', () => {
 
     await waitFor(() => expect(mealPlanService.generateMealPlan).toHaveBeenCalled());
     expect(await screen.findByText('Tu plan semanal')).toBeInTheDocument();
+  });
+
+  it('unshackles desktop container from rigid max-w-lg', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_7_DAY_MEAL_PLAN as never);
+
+    renderMealPlanPage();
+    await screen.findByText('Tu plan semanal');
+
+    const mainElement = screen.getByRole('main');
+    expect(mainElement.className).toContain('xl:max-w-7xl');
+  });
+
+  it('renders 7-day weekly grid on desktop', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_7_DAY_MEAL_PLAN as never);
+
+    renderMealPlanPage();
+    await screen.findByText('Tu plan semanal');
+
+    expect(screen.getByTestId('weekly-grid')).toBeInTheDocument();
+    const columns = screen.getAllByTestId('day-column');
+    expect(columns).toHaveLength(7);
+    const singleDayView =
+      screen.queryByTestId('single-day-view') ?? screen.getByRole('tablist').closest('.space-y-6');
+    expect(singleDayView).toHaveClass('xl:hidden');
+  });
+
+  it('renders Sunday in the 7th column with Sunday planned meals', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_7_DAY_MEAL_PLAN as never);
+
+    renderMealPlanPage();
+    await screen.findByText('Tu plan semanal');
+
+    const columns = screen.getAllByTestId('day-column');
+    const sundayColumn = columns[6];
+    expect(sundayColumn).toHaveTextContent(/domingo/i);
+    expect(sundayColumn).toHaveTextContent(/30 AGO/i);
+    expect(within(sundayColumn).getByText('Cena de domingo')).toBeInTheDocument();
+  });
+
+  it('renders day selector and meal cards on desktop viewports without blanking when days.length !== 7', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_MEAL_PLAN as never);
+
+    renderMealPlanPage();
+    await screen.findByText('Tu plan semanal');
+
+    expect(screen.queryByTestId('weekly-grid')).not.toBeInTheDocument();
+
+    const singleDayView =
+      screen.queryByTestId('single-day-view') ?? screen.getByRole('tablist').closest('.space-y-6');
+    expect(singleDayView).not.toHaveClass('xl:hidden');
+    expect(screen.getByRole('tablist')).toBeInTheDocument();
+    expect(screen.getByText('Avena con frutos rojos')).toBeInTheDocument();
+  });
+
+  it('shows empty state when mealPlan has no days (days: [])', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue({
+      id: 'plan-empty-days',
+      userId: 'user-1',
+      startDate: '2026-08-24T00:00:00.000Z',
+      endDate: '2026-08-30T00:00:00.000Z',
+      createdAt: '2026-08-20T00:00:00.000Z',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+      days: [],
+    } as never);
+
+    renderMealPlanPage();
+
+    expect(await screen.findByText('Todavía no tenés un plan para esta semana')).toBeInTheDocument();
   });
 });

@@ -3,12 +3,18 @@ import { Banner } from '../../../common/components/Banner';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
-import { formatFullDate, formatLocalDateKey, formatWeekRange } from '../utils';
+import {
+  formatDayName,
+  formatFullDate,
+  formatLocalDateKey,
+  formatShortDate,
+  formatWeekRange,
+} from '../utils';
 
 function LoadingSkeleton() {
   return (
     <div
-      className="mx-auto max-w-lg animate-pulse space-y-6 px-4 py-6"
+      className="w-full max-w-lg xl:max-w-7xl mx-auto animate-pulse space-y-6 px-4 sm:px-6 lg:px-8 py-6"
       aria-busy="true"
       aria-live="polite"
     >
@@ -75,11 +81,11 @@ export function MealPlanPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const dayParam = searchParams.get('day');
+  const todayKey = formatLocalDateKey(new Date());
   const defaultDate = (() => {
     if (!mealPlan) return null;
-    const today = formatLocalDateKey(new Date());
-    const matchesToday = mealPlan.days.some((day) => day.date === today);
-    return matchesToday ? today : (mealPlan.days[0]?.date ?? null);
+    const matchesToday = mealPlan.days.some((day) => day.date === todayKey);
+    return matchesToday ? todayKey : (mealPlan.days[0]?.date ?? null);
   })();
   const selectedDate =
     mealPlan && dayParam && mealPlan.days.some((day) => day.date === dayParam)
@@ -95,14 +101,16 @@ export function MealPlanPage() {
   }
 
   if (status === 'loading' && !mealPlan) return <LoadingSkeleton />;
-  if (status === 'empty') return <EmptyState onGenerate={() => generate?.()} />;
+  if (status === 'empty' || (mealPlan && mealPlan.days.length === 0)) {
+    return <EmptyState onGenerate={() => generate?.()} />;
+  }
   if (status === 'error' && !mealPlan) return <ErrorState message={errorMessage ?? 'No pudimos cargar tu plan.'} onRetry={retry} />;
   if (!mealPlan || !selectedDate) return null;
 
   const selectedDay = mealPlan.days.find((day) => day.date === selectedDate);
 
   return (
-    <main className="mx-auto max-w-lg space-y-6 px-4 py-6">
+    <main className="w-full max-w-lg xl:max-w-7xl mx-auto space-y-6 px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
@@ -116,34 +124,77 @@ export function MealPlanPage() {
           <button
             type="button"
             title="Preferencias"
+            aria-label="Preferencias"
             className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-container text-brand-green transition-colors hover:bg-primary-fixed/30"
           >
-            <span className="material-symbols-outlined">tune</span>
+            <span aria-hidden="true" className="material-symbols-outlined">tune</span>
           </button>
           <button
             type="button"
             title="Regenerar plan"
+            aria-label="Regenerar plan"
             onClick={() => generate?.()}
             className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90"
           >
-            <span className="material-symbols-outlined">autorenew</span>
+            <span aria-hidden="true" className="material-symbols-outlined">autorenew</span>
           </button>
         </div>
       </div>
 
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
-      <WeekSelector days={mealPlan.days} selectedDate={selectedDate} onSelectDate={handleSelectDate} />
+      {/* Mobile / Compact view (<1280px or fallback when not 7 days) */}
+      <div className={mealPlan.days.length === 7 ? 'xl:hidden space-y-6' : 'space-y-6'}>
+        <WeekSelector days={mealPlan.days} selectedDate={selectedDate} onSelectDate={handleSelectDate} />
 
-      <h2 className="font-headline text-lg font-semibold text-on-surface">
-        {formatFullDate(selectedDate)}
-      </h2>
+        <h2 className="font-headline text-lg font-semibold text-on-surface">
+          {formatFullDate(selectedDate)}
+        </h2>
 
-      <div className="space-y-4">
-        {selectedDay?.meals.map((meal, index) => (
-          <MealCard key={`${meal.mealType}-${index}`} meal={meal} />
-        ))}
+        <div className="space-y-4">
+          {selectedDay?.meals.map((meal, index) => (
+            <MealCard key={`${meal.mealType}-${index}`} meal={meal} />
+          ))}
+          {selectedDay?.meals.length === 0 && (
+            <p className="py-8 text-center text-sm text-on-surface-variant">
+              No tenés comidas programadas para este día.
+            </p>
+          )}
+        </div>
       </div>
+
+      {/* Desktop 7-Day Grid View (>=1280px) */}
+      {mealPlan.days.length === 7 && (
+        <div data-testid="weekly-grid" className="hidden xl:grid xl:grid-cols-7 gap-4 items-start">
+          {mealPlan.days.map((day) => {
+            const isToday = day.date === todayKey;
+            return (
+              <div
+                key={day.date}
+                data-testid="day-column"
+                className="flex flex-col gap-3 rounded-2xl bg-surface-container-low/50 p-3 border border-outline-variant/30 min-h-[480px]"
+              >
+                <div className={`pb-2 border-b-2 ${isToday ? 'border-brand-green' : 'border-outline-variant/40'}`}>
+                  <h3 className="font-headline text-sm font-bold text-on-surface">
+                    {formatDayName(day.date)}
+                  </h3>
+                  <span className="text-[11px] font-semibold tracking-wider text-secondary uppercase">
+                    {formatShortDate(day.date)}
+                  </span>
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  {day.meals.map((meal, idx) => (
+                    <MealCard key={`${meal.mealType}-${idx}`} meal={meal} compact />
+                  ))}
+                  {day.meals.length === 0 && (
+                    <p className="py-6 text-center text-xs text-on-surface-variant">Sin comidas</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </main>
   );
 }

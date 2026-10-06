@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatDayAbbreviation,
+  formatDayName,
   formatDayNumber,
   formatFullDate,
+  formatIngredient,
+  formatShortDate,
   formatWeekRange,
   parseLocalDate,
 } from '@/modules/meal-plan/utils';
@@ -78,6 +81,30 @@ describe('formatDayAbbreviation', () => {
   });
 });
 
+describe('formatDayName', () => {
+  it('returns the full day name capitalized for plain YYYY-MM-DD form', () => {
+    expect(formatDayName('2026-08-24')).toBe('Lunes');
+    expect(formatDayName('2026-08-30')).toBe('Domingo');
+  });
+
+  it('formats a full ISO datetime string without throwing and with the same result as the plain form', () => {
+    expect(() => formatDayName('2026-08-30T00:00:00.000Z')).not.toThrow();
+    expect(formatDayName('2026-08-30T00:00:00.000Z')).toBe('Domingo');
+  });
+});
+
+describe('formatShortDate', () => {
+  it('returns the short date badge for plain YYYY-MM-DD form', () => {
+    expect(formatShortDate('2026-08-24')).toBe('24 AGO');
+    expect(formatShortDate('2026-08-30')).toBe('30 AGO');
+  });
+
+  it('formats a full ISO datetime string without throwing and with the same result as the plain form', () => {
+    expect(() => formatShortDate('2026-08-30T00:00:00.000Z')).not.toThrow();
+    expect(formatShortDate('2026-08-30T00:00:00.000Z')).toBe('30 AGO');
+  });
+});
+
 describe('formatWeekRange', () => {
   it('formats the range for days using the plain YYYY-MM-DD form (non-regression)', () => {
     const days = [buildDay('2026-09-14'), buildDay('2026-09-20')];
@@ -93,6 +120,24 @@ describe('formatWeekRange', () => {
     expect(result).not.toContain('NaN');
     expect(result).not.toContain('undefined');
     expect(result).toBe('14 – 20 de septiembre, 2026');
+  });
+});
+
+describe('formatIngredient', () => {
+  it('formats ingredient with name only (without quantity and without unit)', () => {
+    expect(formatIngredient({ name: 'Sal' })).toBe('Sal');
+  });
+
+  it('formats ingredient with quantity but without unit', () => {
+    expect(formatIngredient({ name: 'Huevos', quantity: 2 })).toBe('2 Huevos');
+  });
+
+  it('formats ingredient with quantity, unit and name', () => {
+    expect(formatIngredient({ name: 'Avena', quantity: 1, unit: 'taza' })).toBe('1 taza Avena');
+  });
+
+  it('formats ingredient with unit but without quantity', () => {
+    expect(formatIngredient({ name: 'Aceite', unit: 'cda' })).toBe('cda Aceite');
   });
 });
 
@@ -144,6 +189,26 @@ describe('invalid date handling (NUT-10 hallazgo A, séptima iteración)', () =>
   it('formatDayNumber returns an empty string for a malformed (non-date) string, without throwing', () => {
     expect(() => formatDayNumber('no-es-una-fecha')).not.toThrow();
     expect(formatDayNumber('no-es-una-fecha')).toBe('');
+  });
+
+  it('formatDayName returns an empty string for an empty date string, without throwing', () => {
+    expect(() => formatDayName('')).not.toThrow();
+    expect(formatDayName('')).toBe('');
+  });
+
+  it('formatDayName returns an empty string for a malformed (non-date) string, without throwing', () => {
+    expect(() => formatDayName('no-es-una-fecha')).not.toThrow();
+    expect(formatDayName('no-es-una-fecha')).toBe('');
+  });
+
+  it('formatShortDate returns an empty string for an empty date string, without throwing', () => {
+    expect(() => formatShortDate('')).not.toThrow();
+    expect(formatShortDate('')).toBe('');
+  });
+
+  it('formatShortDate returns an empty string for a malformed (non-date) string, without throwing', () => {
+    expect(() => formatShortDate('no-es-una-fecha')).not.toThrow();
+    expect(formatShortDate('no-es-una-fecha')).toBe('');
   });
 
   it('formatWeekRange returns an empty string (not a string containing NaN/undefined) when the FIRST day has an invalid date, without throwing', () => {

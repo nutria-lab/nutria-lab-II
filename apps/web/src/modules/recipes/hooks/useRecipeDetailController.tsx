@@ -20,7 +20,7 @@ const DELETE_CONFLICT_ERROR =
 const DELETE_CONNECTIVITY_ERROR = 'No pudimos conectar. Revisá tu conexión e intentá de nuevo.';
 const DELETE_UNEXPECTED_ERROR = 'Ocurrió un error inesperado. Intentá de nuevo.';
 
-const DESKTOP_MEDIA_QUERY = '(min-width: 768px)';
+const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 
 function deleteErrorMessage(error: unknown): string {
   if (error instanceof RecipeRequestError) {

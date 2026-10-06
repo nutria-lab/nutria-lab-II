@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Meal } from '../../../services/mealPlanService';
-import { MEAL_TYPE_LABELS } from '../utils';
+import { MEAL_TYPE_LABELS, formatIngredient } from '../utils';
 
 const MEAL_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
   BREAKFAST: { bg: 'bg-tertiary-fixed/40', text: 'text-on-tertiary-container' },
@@ -22,11 +22,59 @@ function MealTypeBadge({ mealType }: { mealType: string }) {
 
 type MealCardProps = {
   meal: Meal;
+  compact?: boolean;
+  onSwap?: (meal: Meal) => void;
 };
 
-export function MealCard({ meal }: MealCardProps) {
+export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const { recipe } = meal;
+
+  const totalMinutes = recipe
+    ? (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0) || null
+    : null;
+  const calories = meal.nutritionalValues?.Calories;
+  const protein = meal.nutritionalValues?.Protein;
+
+  if (compact) {
+    return (
+      <article className="flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all">
+        <div className="flex items-center justify-between">
+          <MealTypeBadge mealType={meal.mealType} />
+          <button
+            type="button"
+            aria-label={`Cambiar comida ${recipe?.title ?? ''}`.trim()}
+            onClick={() => onSwap?.(meal)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-sm">sync</span>
+          </button>
+        </div>
+        <div className="h-20 w-full overflow-hidden rounded-lg bg-surface-container">
+          {/* Image thumbnail placeholder */}
+        </div>
+        <h4 className="font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">
+          {recipe ? recipe.title : 'Receta no disponible'}
+        </h4>
+        {recipe && (
+          <div className="mt-auto flex items-center gap-2 text-[10px] font-semibold text-on-surface-variant">
+            {totalMinutes != null && (
+              <span className="flex items-center gap-0.5">
+                <span aria-hidden="true" className="material-symbols-outlined text-xs">schedule</span>
+                {totalMinutes}m
+              </span>
+            )}
+            {calories != null && (
+              <span className="flex items-center gap-0.5 text-brand-green">
+                <span aria-hidden="true" className="material-symbols-outlined text-xs">local_fire_department</span>
+                {calories} kcal
+              </span>
+            )}
+          </div>
+        )}
+      </article>
+    );
+  }
 
   if (!recipe) {
     return (
@@ -42,10 +90,6 @@ export function MealCard({ meal }: MealCardProps) {
     );
   }
 
-  const totalMinutes =
-    (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0) || null;
-  const calories = meal.nutritionalValues?.Calories;
-  const protein = meal.nutritionalValues?.Protein;
   const ingredients = recipe.ingredients ?? [];
   const instructions = recipe.instructions ?? [];
 
@@ -66,9 +110,9 @@ export function MealCard({ meal }: MealCardProps) {
         {/* Content */}
         <div className="min-w-0 flex-1">
           <MealTypeBadge mealType={meal.mealType} />
-          <h3 className="mt-1 font-headline text-base font-bold text-on-surface leading-snug line-clamp-2">
+          <span className="block mt-1 font-headline text-base font-bold text-on-surface leading-snug line-clamp-2">
             {recipe.title}
-          </h3>
+          </span>
 
           {/* Meta row */}
           <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
@@ -106,7 +150,7 @@ export function MealCard({ meal }: MealCardProps) {
             {ingredients.length > 0 ? (
               <ul className="space-y-1 text-sm text-on-surface">
                 {ingredients.map((ingredient, index) => (
-                  <li key={index}>{`${ingredient.quantity} ${ingredient.unit} ${ingredient.name}`}</li>
+                  <li key={index}>{formatIngredient(ingredient)}</li>
                 ))}
               </ul>
             ) : (

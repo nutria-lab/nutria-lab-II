@@ -1,0 +1,47 @@
+enum GenerationKind {
+  RECIPE_SINGLE
+  RECIPE_BATCH
+  MEAL_PLAN_INITIAL
+  MEAL_PLAN_REGENERATION
+  MEAL_REPLACEMENT
+}
+
+enum GenerationStatus {
+  PENDING
+  READY_FOR_REVIEW
+  CONFIRMED
+  SUCCEEDED
+  REJECTED
+  FAILED
+  EXPIRED
+}
+
+model GenerationRun {
+  id                 String           @id @default(uuid())
+  userId             String
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind               GenerationKind
+  status             GenerationStatus @default(PENDING)
+  provider           String
+  model              String
+  promptVersion      String
+  schemaVersion      String
+  idempotencyKeyHash String?
+  requestSnapshot    Json
+  profileSnapshot    Json
+  outputSnapshot     Json?
+  validationSnapshot Json?
+  errorCode          String?
+  expiresAt          DateTime?
+  startedAt          DateTime         @default(now())
+  completedAt        DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  recipes   Recipe[]
+  mealPlans MealPlan[]
+
+  @@index([userId, createdAt])
+  @@index([userId, kind, idempotencyKeyHash])
+  @@map("generation_runs")
+}

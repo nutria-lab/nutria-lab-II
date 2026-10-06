@@ -4,6 +4,15 @@ import { ConfigService } from '@nestjs/config';
 import { NutritionProfile, DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { CURRENT_PROMPT_VERSION } from './prompts';
 
+/**
+ * `provider`/`model` de `GenerationRun` (design.md sección 3/6). Se declaran acá, junto al
+ * único adaptador de IA real que existe hoy, en vez de hardcodearlos como literales sueltos en
+ * `plans.service.ts`. Nota de discrepancia documentada en design.md sección 1: el código real
+ * usa Gemini (`@google/generative-ai`), no OpenAI.
+ */
+export const GEMINI_PROVIDER = 'google-generative-ai';
+export const GEMINI_MODEL_NAME = 'gemini-1.5-flash';
+
 export interface GeneratedMealPlanDay {
   day: DayOfWeek;
   date: string;
@@ -41,7 +50,7 @@ export class GeminiService {
     this.logger.log(`Generating meal plan with prompt version: ${promptConfig.version}`);
 
     const model = this.genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: GEMINI_MODEL_NAME,
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: promptConfig.getSchema(),
