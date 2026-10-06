@@ -162,7 +162,7 @@ export function RecipeForm({
     initialValues && initialValues.ingredients.length > 0
       ? initialValues.ingredients.map((item) => ({
           name: item.name,
-          quantity: String(item.quantity),
+          quantity: item.quantity == null ? '' : String(item.quantity),
           unit: item.unit,
         }))
       : [emptyRow()],

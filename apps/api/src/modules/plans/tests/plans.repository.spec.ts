@@ -195,7 +195,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       userId,
       kind: 'MEAL_PLAN_INITIAL',
       provider: 'google-generative-ai',
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.5-flash',
       promptVersion: '1.0.0',
       schemaVersion: '1.0.0',
       requestSnapshot: { kind: 'MEAL_PLAN_INITIAL', weekStart: '2026-09-14' },
@@ -317,6 +317,54 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
 
       await expect(recover()).rejects.toBe(p2002Error);
       expect(mockPrisma.generationRun.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('createPlanTransaction (NUT-74)', () => {
+    const txFor = () => ({
+      mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-new-1' }) },
+      mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+      plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+      recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-new' }) },
+      generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    });
+
+    it('una comida con reuseRecipeId apunta a esa receta y no crea otra', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const { recipe, ...mealWithoutRecipe } = newDays[0].meals[0];
+      const days = [{ ...newDays[0], meals: [{ ...mealWithoutRecipe, reuseRecipeId: 'recipe-cat' }] }] as any;
+
+      await repository.createPlanTransaction(userId, weekStart, days, 'run-1');
+
+      expect(tx.recipe.create).not.toHaveBeenCalled();
+      expect(tx.plannedMeal.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ recipeId: 'recipe-cat', title: 'Ensalada de Quinoa' }),
+      });
+    });
+
+    it('guarda el resumen de validación recibido al pasar el run a SUCCEEDED', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const summary = { stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] };
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1', undefined, summary);
+
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'SUCCEEDED', validationSnapshot: summary }),
+      }));
+    });
+
+    it('sin resumen conserva el snapshot anterior', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ validationSnapshot: { restrictionsChecked: true } }),
+      }));
+      expect(tx.recipe.create).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -1,7 +1,7 @@
-import { Injectable, InternalServerErrorException, RequestTimeoutException, Logger } from '@nestjs/common';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { Injectable, Logger } from '@nestjs/common';
+import { GoogleGenerativeAI, Schema } from '@google/generative-ai';
 import { ConfigService } from '@nestjs/config';
-import { NutritionProfile, DayOfWeek, MealType } from '../../../generated/prisma/client';
+import { NutritionProfile, MealType } from '../../../generated/prisma/client';
 import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCriteria } from './prompts';
 
 /**
@@ -11,33 +11,11 @@ import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCr
  * usa Gemini (`@google/generative-ai`), no OpenAI.
  */
 export const GEMINI_PROVIDER = 'google-generative-ai';
-export const GEMINI_MODEL_NAME = 'gemini-1.5-flash';
+export const GEMINI_MODEL_NAME = 'gemini-3.5-flash';
 
-export interface GeneratedMealPlanDay {
-  day: DayOfWeek;
-  date: string;
-  meals: Array<{
-    mealType: MealType;
-    title: string;
-    nutritionalValues: { Protein: number; Fiber: number; Calories: number; Description: string };
-    recipe?: {
-      title: string;
-      description: string;
-      prepMinutes: number;
-      cookMinutes: number;
-      ingredients: Array<{ name: string; quantity: number | string; unit: string }>;
-      instructions: string[];
-    };
-  }>;
-}
+const TIMEOUT_MS = 15000;
 
-// Comida generada para reemplazar otra: como una comida del plan, sin mealType y con la receta clasificada.
-type GeneratedPlanMeal = GeneratedMealPlanDay['meals'][number];
-export type GeneratedReplacementMeal = Omit<GeneratedPlanMeal, 'mealType' | 'recipe'> & {
-  recipe?: NonNullable<GeneratedPlanMeal['recipe']> & { categories?: string[]; properties?: string[] };
-};
-
-// Gemini no respondió a tiempo o falló: el reemplazo de una comida lo traduce a 503.
+// Gemini no respondió a tiempo o falló: los servicios lo traducen a 503.
 export class AiProviderUnavailableError extends Error {
   constructor(readonly reason: 'AI_TIMEOUT' | 'AI_PROVIDER_ERROR') {
     super(`AI provider unavailable: ${reason}`);
@@ -45,6 +23,9 @@ export class AiProviderUnavailableError extends Error {
   }
 }
 
+// Adaptador de Gemini. Devuelve el texto crudo y nunca lo parsea: la respuesta es output no
+// confiable hasta que la valida el servidor (NUT-74). Las fallas del proveedor siempre son
+// AiProviderUnavailableError.
 @Injectable()
 export class GeminiService {
   private genAI: GoogleGenerativeAI;
@@ -58,83 +39,46 @@ export class GeminiService {
     this.genAI = new GoogleGenerativeAI(apiKey);
   }
 
-  async generateMealPlan(profile: NutritionProfile, startDate: Date): Promise<GeneratedMealPlanDay[]> {
+  async generateMealPlan(profile: NutritionProfile, startDate: Date): Promise<string> {
     const promptConfig = CURRENT_PROMPT_VERSION;
-    
     this.logger.log(`Generating meal plan with prompt version: ${promptConfig.version}`);
 
-    const model = this.genAI.getGenerativeModel({
-      model: GEMINI_MODEL_NAME,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: promptConfig.getSchema(),
-      }
-    });
-
     const prompt = promptConfig.getPrompt(profile, startDate.toISOString().split('T')[0]);
-
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      abortController.abort();
-    }, 15000);
-
-    try {
-      const result = await model.generateContent(
-        { contents: [{ role: 'user', parts: [{ text: prompt }] }] }, 
-        { requestOptions: { signal: abortController.signal } } as any
-      );
-      
-      clearTimeout(timeoutId);
-      const text = result.response.text();
-      const parsed = JSON.parse(text);
-      
-      return parsed.days as GeneratedMealPlanDay[];
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-        throw new RequestTimeoutException('AI generation timed out');
-      }
-      throw new InternalServerErrorException('Error generating AI plan');
-    }
+    return this.generateText(promptConfig.getSchema(), prompt);
   }
 
-  // Genera UNA comida para reemplazar otra del plan. El timeout cubre toda la respuesta: la
-  // promesa del SDK recién se resuelve con el body completo. Si Gemini falla o no responde lanza
-  // AiProviderUnavailableError; si responde algo que no es JSON devuelve null (lo rechaza el servicio).
+  // Genera UNA comida para reemplazar otra del plan (NUT-77).
   async generateReplacementMeal(
     profile: NutritionProfile,
     mealType: MealType,
     criteria: ReplacementPromptCriteria,
-  ): Promise<GeneratedReplacementMeal | null> {
+  ): Promise<string> {
+    const prompt = REPLACEMENT_PROMPT_VERSION.getPrompt(profile, mealType, criteria);
+    return this.generateText(REPLACEMENT_PROMPT_VERSION.getSchema(), prompt);
+  }
+
+  // El timeout cubre toda la respuesta: la promesa del SDK recién se resuelve con el body completo.
+  private async generateText(responseSchema: Schema, prompt: string): Promise<string> {
     const model = this.genAI.getGenerativeModel({
       model: GEMINI_MODEL_NAME,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: REPLACEMENT_PROMPT_VERSION.getSchema(),
-      },
+      generationConfig: { responseMimeType: 'application/json', responseSchema },
     });
-    const prompt = REPLACEMENT_PROMPT_VERSION.getPrompt(profile, mealType, criteria);
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 15000);
+    const timeoutId = setTimeout(() => abortController.abort(), TIMEOUT_MS);
 
-    let text: string;
     try {
+      // El SDK lee `signal` en el primer nivel de las opciones (SingleRequestOptions).
       const result = await model.generateContent(
         { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-        { requestOptions: { signal: abortController.signal } } as any,
+        { signal: abortController.signal },
       );
-      text = result.response.text();
-    } catch (error: any) {
-      throw new AiProviderUnavailableError(error?.name === 'AbortError' ? 'AI_TIMEOUT' : 'AI_PROVIDER_ERROR');
+      return result.response.text();
+    } catch {
+      // Al abortar, el SDK lanza GoogleGenerativeAIAbortError (su name no es 'AbortError'): se mira la señal.
+      throw new AiProviderUnavailableError(abortController.signal.aborted ? 'AI_TIMEOUT' : 'AI_PROVIDER_ERROR');
     } finally {
       clearTimeout(timeoutId);
-    }
-
-    try {
-      return JSON.parse(text) as GeneratedReplacementMeal;
-    } catch {
-      return null;
     }
   }
 }

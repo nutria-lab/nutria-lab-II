@@ -8,6 +8,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { MealReplacementService } from '../meal-replacement.service';
+import { RecipeValidationService } from '../recipe-validation.service';
 import { MealReplacementConflictError } from '../plans.repository';
 import { AiProviderUnavailableError } from '../gemini/gemini.service';
 import { InsufficientCoverageProfileError } from '../../recipe/recipe-coverage.types';
@@ -81,7 +82,8 @@ function setup(): any {
     findRecipeById: jest.fn(),
     updateRecipeImageTracking: jest.fn().mockResolvedValue(undefined),
   };
-  const gemini = { generateReplacementMeal: jest.fn().mockResolvedValue(generatedMeal()) };
+  // Gemini devuelve texto crudo (NUT-74): el servicio lo parsea y valida.
+  const gemini = { generateReplacementMeal: jest.fn().mockResolvedValue(JSON.stringify(generatedMeal())) };
   const coverage = { evaluate: jest.fn().mockResolvedValue({ result: { compatibleRecipes: [] } }) };
   const config = { get: jest.fn().mockReturnValue(undefined) };
   // NUT-83: por defecto Unsplash no encuentra foto; los tests de imágenes lo cambian.
@@ -92,7 +94,10 @@ function setup(): any {
       tracking: { ...image.tracking, status: 'SUCCEEDED', lastAttemptAt: '2026-10-06T12:00:00.000Z' },
     })),
   };
-  const service = new MealReplacementService(repository as any, gemini as any, coverage as any, config as any, unsplash as any);
+  // Validador real de NUT-74; sólo la búsqueda de duplicados en el catálogo está mockeada.
+  const recipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
+  const validation = new RecipeValidationService(recipes as any, repository as any);
+  const service = new MealReplacementService(repository as any, gemini as any, coverage as any, config as any, unsplash as any, validation);
   const replace = (dto: Record<string, unknown> = {}, key = KEY) => service.replaceMeal(USER, PLAN, MEAL, key, dto);
   const catalogReturns = (...recipes: any[]) =>
     coverage.evaluate.mockResolvedValueOnce({ result: { compatibleRecipes: recipes.map(recipe => ({ recipe })) } });
@@ -102,7 +107,7 @@ function setup(): any {
     await probe.replace(dto);
     return probe.repository.createOrRecoverGenerationRun.mock.calls[0][6];
   };
-  return { plan, repository, gemini, coverage, config, unsplash, replace, catalogReturns, snapshotFor };
+  return { plan, repository, gemini, coverage, config, unsplash, recipes, replace, catalogReturns, snapshotFor };
 }
 
 describe('MealReplacementService - plan y comida del usuario', () => {
@@ -196,6 +201,15 @@ describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () =>
     expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-used');
   });
 
+  it('el filtro de restricciones del catálogo también revisa los pasos', async () => {
+    const { repository, catalogReturns, replace } = setup();
+    catalogReturns({ ...catalogRecipe('recipe-steps'), instructions: ['Espolvorear maní picado'] }, catalogRecipe('recipe-ok'));
+
+    await replace();
+
+    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-ok');
+  });
+
   it('descarta una receta del catálogo que viola una restricción del perfil y usa la siguiente', async () => {
     const { repository, catalogReturns, replace } = setup();
     catalogReturns(catalogRecipe('recipe-nuts', 'Budín de nueces'), catalogRecipe('recipe-ok'));
@@ -267,23 +281,36 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
   });
 
   it.each([
-    ['una respuesta que no es JSON', null, 'AI_INVALID_SCHEMA'],
-    ['una comida sin receta', generatedMeal({ recipe: undefined }), 'AI_INVALID_SCHEMA'],
-    ['una comida con un ingrediente excluido', generatedMeal({ title: 'Pollo con salsa de maní' }), 'RESTRICTION_VIOLATION'],
-  ])('422 si la IA devuelve %s: el run queda REJECTED y no se toca el plan', async (_label, generated, errorCode) => {
-    const { repository, gemini, replace } = setup();
+    ['una respuesta vacía', '', 'EMPTY_OUTPUT'],
+    ['una respuesta que no es JSON', 'no es json', 'INVALID_JSON'],
+    ['JSON con texto alrededor', 'Tu receta: ' + JSON.stringify(generatedMeal()), 'INVALID_JSON'],
+    ['una comida sin receta', JSON.stringify(generatedMeal({ recipe: undefined })), 'MISSING_FIELD'],
+    ['una comida con un ingrediente excluido', JSON.stringify(generatedMeal({ title: 'Pollo con salsa de maní' })), 'EXCLUDED_INGREDIENT'],
+    ['una categoría fuera del enum', JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, categories: ['PIZZA'] } })), 'UNSUPPORTED_CATEGORY'],
+    ['una categoría que contradicen sus ingredientes', JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, categories: ['VEGAN'], ingredients: [{ name: 'Queso', quantity: 50, unit: 'g' }] },
+    })), 'CONTRADICTORY_PREFERENCE'],
+    ['minutos negativos', JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, prepMinutes: -5 } })), 'INVALID_RANGE'],
+  ])('422 si la IA devuelve %s: el run queda REJECTED con el código de NUT-74 y no se escribe nada', async (_label, generated, errorCode) => {
+    const { repository, gemini, unsplash, replace } = setup();
     gemini.generateReplacementMeal.mockResolvedValue(generated);
 
     await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', { errorCode });
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
+      errorCode,
+      validationSnapshot: expect.objectContaining({ codes: [errorCode] }),
+    });
+    // Cero escrituras de dominio (y ninguna llamada externa) cuando el resultado es inválido.
     expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+    expect(repository.updateRecipeImageTracking).not.toHaveBeenCalled();
+    expect(unsplash.searchAndSelectCandidate).not.toHaveBeenCalled();
   });
 
   it('acepta la receta de la IA si cumple las categorías y propiedades pedidas, y la guarda con ellas', async () => {
     const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(generatedMeal({
-      recipe: { ...generatedMeal().recipe, categories: ['VEGAN', 'VEGETARIAN', 'PIZZA'], properties: ['Sin Gluten', 'Alto en Fibra'] },
-    }));
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, categories: [' vegan ', 'VEGETARIAN', 'VEGAN'], properties: ['Sin Gluten', 'Alto en Fibra', 'sin gluten'] },
+    })));
 
     await replace({ categories: ['VEGETARIAN'], properties: [' sin gluten '] });
 
@@ -298,10 +325,13 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     ['falta una propiedad pedida', { properties: ['Sin Gluten', 'Alto en Fibra'] }, { categories: [], properties: ['Sin Gluten'] }],
   ])('422 si la receta de la IA no cumple el body (%s)', async (_label, body, tags) => {
     const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(generatedMeal({ recipe: { ...generatedMeal().recipe, ...tags } }));
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, ...tags } })));
 
     await expect(replace(body)).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', { errorCode: 'CRITERIA_NOT_MET' });
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
+      errorCode: 'CRITERIA_NOT_MET',
+      validationSnapshot: { stage: 'criteria', codes: ['CRITERIA_NOT_MET'], warnings: [] },
+    });
     expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
   });
 
@@ -309,7 +339,117 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     const { repository, replace } = setup();
 
     await expect(replace({ maxPrepMinutes: 5 })).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', { errorCode: 'CRITERIA_NOT_MET' });
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
+      errorCode: 'CRITERIA_NOT_MET',
+      validationSnapshot: { stage: 'criteria', codes: ['CRITERIA_NOT_MET'], warnings: [] },
+    });
+  });
+});
+
+describe('MealReplacementService - validación determinística (NUT-74)', () => {
+  // Misma huella que generatedMeal(): título + ingredientes normalizados.
+  const duplicateInCatalog = { id: 'recipe-dup', title: 'WOK DE VERDURAS', description: 'Del catálogo', ingredients: [{ name: 'brócoli' }] };
+
+  it('guarda la receta normalizada y el resumen de validación en el run', async () => {
+    const { repository, gemini, replace } = setup();
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, title: '  Wok de   verduras ', ingredients: [{ name: 'Brócoli', quantity: '1/2', unit: 'GR' }], extra: 'x' },
+    })));
+
+    await replace();
+
+    const write = repository.replaceMealTransaction.mock.calls[0][0];
+    expect(write.newRecipe).toEqual(expect.objectContaining({
+      title: 'Wok de verduras',
+      ingredients: [{ name: 'Brócoli', quantity: 0.5, unit: 'g' }],
+    }));
+    expect(write.newRecipe).not.toHaveProperty('extra');
+    expect(write.validationSnapshot).toEqual({ stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] });
+  });
+
+  it('busca duplicados sólo por el título de la receta generada', async () => {
+    const { recipes, replace } = setup();
+
+    await replace();
+
+    expect(recipes.findByNormalizedTitles).toHaveBeenCalledWith(['wok de verduras']);
+  });
+
+  it('un duplicado exacto del catálogo reutiliza esa receta: no crea otra, no busca foto y no responde 422', async () => {
+    const { repository, recipes, unsplash, replace } = setup();
+    recipes.findByNormalizedTitles.mockResolvedValue([duplicateInCatalog]);
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-dup', 'Wok de verduras'), prepMinutes: 15 });
+
+    const response = await replace();
+
+    const write = repository.replaceMealTransaction.mock.calls[0][0];
+    expect(write).not.toHaveProperty('newRecipe');
+    expect(write).toEqual(expect.objectContaining({
+      existingRecipeId: 'recipe-dup',
+      title: 'Wok de verduras',
+      nutritionalValues: { Protein: 18, Fiber: 7, Calories: 420, Description: 'Cena liviana' },
+      outputSnapshot: { path: 'REUSED_DUPLICATE_RECIPE' },
+      validationSnapshot: { stage: 'duplicates', codes: ['DUPLICATE_RECIPE'], warnings: [] },
+    }));
+    expect(unsplash.searchAndSelectCandidate).not.toHaveBeenCalled();
+    expect(response.plannedMeal.recipeId).toBe('recipe-dup');
+  });
+
+  it('reutiliza el duplicado aunque la receta cruda no pase el DTO ("al gusto" sin unidad): se valida la normalizada', async () => {
+    const { repository, recipes, gemini, replace } = setup();
+    recipes.findByNormalizedTitles.mockResolvedValue([{ ...duplicateInCatalog, ingredients: [{ name: 'brócoli' }, { name: 'Sal' }] }]);
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-dup', 'Wok de verduras'), prepMinutes: 15 });
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, ingredients: [{ name: 'Brócoli', quantity: 200, unit: 'g' }, { name: 'Sal', quantity: 'al gusto', unit: '' }] },
+    })));
+
+    await replace();
+
+    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-dup');
+  });
+
+  it('si el duplicado es la misma receta que ya tiene la comida, no hay reemplazo: 422 CRITERIA_NOT_MET', async () => {
+    const { repository, recipes, replace } = setup();
+    recipes.findByNormalizedTitles.mockResolvedValue([{ ...duplicateInCatalog, id: 'recipe-old' }]);
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-old', 'Wok de verduras'), prepMinutes: 15 });
+
+    await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', expect.objectContaining({
+      errorCode: 'CRITERIA_NOT_MET',
+    }));
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+  });
+
+  it('un rechazo por el envoltorio de la comida (AI_INVALID_SCHEMA) también guarda snapshot', async () => {
+    const { repository, gemini, replace } = setup();
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: '' , nutritionalValues: { Protein: 18, Calories: 420 } })));
+
+    await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
+      errorCode: 'AI_INVALID_SCHEMA',
+      validationSnapshot: { stage: 'schema', codes: ['AI_INVALID_SCHEMA'], warnings: [] },
+    });
+  });
+
+  it('la receta reutilizada también tiene que cumplir los criterios del body', async () => {
+    const { repository, recipes, replace } = setup();
+    recipes.findByNormalizedTitles.mockResolvedValue([duplicateInCatalog]);
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-dup', 'Wok de verduras'), categories: [] });
+
+    await expect(replace({ categories: ['VEGETARIAN'] })).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
+      errorCode: 'CRITERIA_NOT_MET',
+      validationSnapshot: { stage: 'criteria', codes: ['CRITERIA_NOT_MET'], warnings: [] },
+    });
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+  });
+
+  it('nunca le pide a la IA que juzgue su propio output (una sola llamada)', async () => {
+    const { gemini, replace } = setup();
+    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: 'Budín de nueces' })));
+
+    await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(gemini.generateReplacementMeal).toHaveBeenCalledTimes(1);
   });
 });
 

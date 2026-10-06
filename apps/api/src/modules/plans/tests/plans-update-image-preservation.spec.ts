@@ -109,7 +109,7 @@ function setup(existingImage: unknown = pendingPersistedImage({ tracking: { stat
   repository.createPlanTransaction = persistWithRealContract;
 
   const configService = { get: jest.fn((key: string) => (key === 'UNSPLASH_ACCESS_KEY' ? MOCK_API_KEY : undefined)) } as unknown as ConfigService;
-  const service = new PlansService(repository, {} as any, new UnsplashService(configService));
+  const service = new PlansService(repository, {} as any, new UnsplashService(configService), {} as any, {} as any);
 
   const searchCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/search/photos'));
   const trackingCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/download'));

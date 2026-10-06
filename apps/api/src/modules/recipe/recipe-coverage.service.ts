@@ -10,6 +10,7 @@ import {
 } from '@/generated/prisma/client';
 import { NutritionProfileRepository } from '@/modules/nutrition-profile/nutrition-profile.repository';
 import { normalizeProperties } from '@/utils/normalize-properties.util';
+import { normalizeRecipeText, recipeFingerprint } from './recipe-fingerprint.util';
 import { RecipeRepository } from './recipe.repository';
 import {
   InsufficientCoverageProfileError,
@@ -144,9 +145,9 @@ export class RecipeCoverageService {
     if (recipe.topic === true) {
       reasons.push('topic:catalog');
     } else if (criteria.topic) {
-      const topic = this.normalizedText(criteria.topic);
-      if (this.normalizedText(recipe.title).includes(topic)) reasons.push('topic:title');
-      else if (this.normalizedText(recipe.description).includes(topic)) reasons.push('topic:description');
+      const topic = normalizeRecipeText(criteria.topic);
+      if (normalizeRecipeText(recipe.title).includes(topic)) reasons.push('topic:title');
+      else if (normalizeRecipeText(recipe.description).includes(topic)) reasons.push('topic:description');
     }
     if (criteria.maxPrepMinutes !== undefined) reasons.push(`prep-minutes:${recipe.prepMinutes}`);
     return reasons;
@@ -157,42 +158,15 @@ export class RecipeCoverageService {
     // The bounded SQL query is authoritative whenever its projection is present.
     // The fallback only supports direct unit callers that provide a plain Recipe.
     if (typeof recipe.topic === 'boolean') return recipe.topic;
-    const normalizedTopic = this.normalizedText(topic);
-    return this.normalizedText(recipe.title).includes(normalizedTopic) ||
-      this.normalizedText(recipe.description).includes(normalizedTopic);
-  }
-
-  private normalizedText(value: string): string {
-    // PostgreSQL's unaccent expands common ligatures as well as stripping combining marks.
-    // Keep the small explicit expansion set here so the defensive in-memory ordering does
-    // not undo the repository's SQL order before applying the requested limit.
-    return value
-      .replace(/[ÆæŒœßŁłØøĐđÞþ]/g, character => ({
-        Æ: 'AE', æ: 'ae', Œ: 'OE', œ: 'oe', ß: 'ss',
-        Ł: 'L', ł: 'l', Ø: 'O', ø: 'o', Đ: 'D', đ: 'd', Þ: 'TH', þ: 'th',
-      })[character] ?? character)
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase();
-  }
-
-  private fingerprint(recipe: Recipe): string {
-    const normalize = (value: string) => this.normalizedText(value)
-      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
-    const names = ingredients
-      .map(ingredient => typeof ingredient === 'object' && ingredient !== null && 'name' in ingredient && typeof ingredient.name === 'string'
-        ? normalize(ingredient.name) : '')
-      .filter(Boolean);
-    return [normalize(recipe.title), ...[...new Set(names)].sort()].join('|');
+    const normalizedTopic = normalizeRecipeText(topic);
+    return normalizeRecipeText(recipe.title).includes(normalizedTopic) ||
+      normalizeRecipeText(recipe.description).includes(normalizedTopic);
   }
 
   private potentialDuplicateWarnings(recipes: Recipe[]): PotentialDuplicateWarning[] {
     const groups = new Map<string, string[]>();
     for (const recipe of recipes) {
-      const fingerprint = this.fingerprint(recipe);
+      const fingerprint = recipeFingerprint(recipe);
       groups.set(fingerprint, [...(groups.get(fingerprint) ?? []), recipe.id]);
     }
     return [...groups.entries()]

@@ -142,3 +142,34 @@ describe('RecipeRepository.findCoverageCandidates', () => {
     expect(call).toContain(3);
   });
 });
+
+describe('RecipeRepository.findByNormalizedTitles (NUT-74, duplicados)', () => {
+  const queryRaw = jest.fn();
+  const repository = new RecipeRepository({ $queryRaw: queryRaw } as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queryRaw.mockResolvedValue([]);
+  });
+
+  it('busca sólo las recetas con esos títulos normalizados, en una consulta parametrizada y acotada', async () => {
+    await repository.findByNormalizedTitles(['ensalada de quinoa', "x' OR 1=1 --", 'ensalada de quinoa']);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const [template, ...values] = queryRaw.mock.calls[0];
+    const sql = (template as TemplateStringsArray).join('?');
+
+    expect(sql).toContain('SELECT "id", "title", "description", "ingredients", "instructions"');
+    // unaccent primero: el resultado es ASCII antes de lower(), sin depender del locale de la base.
+    expect(sql).toContain('lower(unaccent("title"))');
+    expect(sql).toContain('= ANY(?::text[])');
+    expect(sql).toContain('LIMIT ?');
+    expect(sql).not.toContain('OR 1=1');
+    expect(values[0]).toEqual(['ensalada de quinoa', "x' OR 1=1 --"]);
+  });
+
+  it('sin títulos no consulta la base', async () => {
+    await expect(repository.findByNormalizedTitles([])).resolves.toEqual([]);
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+});

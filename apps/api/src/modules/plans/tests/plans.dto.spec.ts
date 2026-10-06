@@ -82,6 +82,18 @@ describe('RecipeDto', () => {
     expect(errors.some(e => e.property === 'ingredients')).toBe(true);
   });
 
+  it('acepta un ingrediente sin cantidad (null, "al gusto" de NUT-74) para que un PUT pueda reenviarlo', async () => {
+    const errors = await validate(plainToInstance(RecipeDto, { ...validRecipe, ingredients: [{ name: 'Sal', quantity: null, unit: 'al gusto' }] }));
+    expect(errors).toHaveLength(0);
+  });
+
+  it('sigue rechazando una cantidad vacía o ausente', async () => {
+    for (const quantity of ['', undefined]) {
+      const errors = await validate(plainToInstance(RecipeDto, { ...validRecipe, ingredients: [{ name: 'Sal', quantity, unit: 'g' }] }));
+      expect(errors.length).toBeGreaterThan(0);
+    }
+  });
+
   it('normaliza instructions si viene como string a un array de strings', async () => {
     const dto = plainToInstance(RecipeDto, { ...validRecipe, instructions: 'Un único paso' });
     const errors = await validate(dto);
