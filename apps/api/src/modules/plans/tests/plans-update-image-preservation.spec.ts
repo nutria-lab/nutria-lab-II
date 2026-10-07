@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
+import { RecipeImagesService } from '../recipe-images.service';
 import { CreateMealPlanDto } from '../dto';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { UnsplashService } from '../../unsplash/unsplash.service';
@@ -109,7 +110,7 @@ function setup(existingImage: unknown = pendingPersistedImage({ tracking: { stat
   repository.createPlanTransaction = persistWithRealContract;
 
   const configService = { get: jest.fn((key: string) => (key === 'UNSPLASH_ACCESS_KEY' ? MOCK_API_KEY : undefined)) } as unknown as ConfigService;
-  const service = new PlansService(repository, {} as any, new UnsplashService(configService));
+  const service = new PlansService(repository, new RecipeImagesService(repository, new UnsplashService(configService)), {} as any, {} as any);
 
   const searchCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/search/photos'));
   const trackingCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).includes('/download'));

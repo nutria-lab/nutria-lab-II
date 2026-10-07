@@ -5,11 +5,13 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto } from '../dto';
 import { MealReplacementService } from '../meal-replacement.service';
+import { MealPlanRegenerationService } from '../meal-plan-regeneration.service';
 
 describe('PlansController', () => {
   let controller: PlansController;
   let service: jest.Mocked<PlansService>;
   let replacementService: { replaceMeal: jest.Mock };
+  let regenerationService: { regenerate: jest.Mock };
 
   beforeEach(async () => {
     const mockService = {
@@ -31,6 +33,10 @@ describe('PlansController', () => {
           provide: MealReplacementService,
           useValue: { replaceMeal: jest.fn() },
         },
+        {
+          provide: MealPlanRegenerationService,
+          useValue: { regenerate: jest.fn() },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -40,6 +46,7 @@ describe('PlansController', () => {
     controller = module.get<PlansController>(PlansController);
     service = module.get(PlansService);
     replacementService = module.get(MealReplacementService);
+    regenerationService = module.get(MealPlanRegenerationService);
   });
 
   it('should be defined', () => {
@@ -151,6 +158,37 @@ describe('PlansController', () => {
     it.each([undefined, '', 'no-es-un-uuid'])('responde 400 si Idempotency-Key es %p', async (badKey) => {
       await expect(controller.replaceMeal(req, planId, mealId, badKey as any, {})).rejects.toBeInstanceOf(BadRequestException);
       expect(replacementService.replaceMeal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('regeneratePlan (NUT-78)', () => {
+    const req = { user: { sub: 'user-123' } };
+    const planId = '11111111-1111-4111-8111-111111111111';
+    const key = '33333333-3333-4333-8333-333333333333';
+    const dto = { reason: 'USER_REQUESTED' } as any;
+
+    it('delega en MealPlanRegenerationService con el usuario, el plan, la clave y el body', async () => {
+      regenerationService.regenerate.mockResolvedValue({ id: 'plan-2' });
+
+      const result = await controller.regeneratePlan(req, planId, key, dto);
+
+      expect(regenerationService.regenerate).toHaveBeenCalledWith('user-123', planId, key, dto);
+      expect(result).toEqual({ id: 'plan-2' });
+    });
+
+    it('responde 201', () => {
+      expect(Reflect.getMetadata('__httpCode__', PlansController.prototype.regeneratePlan)).toBe(201);
+    });
+
+    it('un planId que no es UUID da 404 (usa uuidOr404, convención del proyecto)', () => {
+      const args = Reflect.getMetadata('__routeArguments__', PlansController, 'regeneratePlan') as Record<string, { data?: string; pipes?: unknown[] }>;
+      const planIdArg = Object.values(args).find(arg => arg.data === 'planId');
+      expect(planIdArg?.pipes).toContain(uuidOr404);
+    });
+
+    it.each([undefined, '', 'no-es-un-uuid'])('responde 400 si Idempotency-Key es %p', async (badKey) => {
+      await expect(controller.regeneratePlan(req, planId, badKey as any, dto)).rejects.toBeInstanceOf(BadRequestException);
+      expect(regenerationService.regenerate).not.toHaveBeenCalled();
     });
   });
 });

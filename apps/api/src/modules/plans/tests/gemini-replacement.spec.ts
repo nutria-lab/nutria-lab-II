@@ -1,3 +1,4 @@
+import { GoogleGenerativeAIAbortError } from '@google/generative-ai';
 import { AiProviderUnavailableError, GeminiService } from '../gemini/gemini.service';
 
 const profile = { diet: 'VEGETARIAN', goal: 'MAINTAIN', excludedIngredients: ['NUTS'], cookTimePreference: 'QUICK' } as any;
@@ -14,12 +15,12 @@ function setup(generateContent: jest.Mock) {
 describe('GeminiService.generateReplacementMeal (NUT-77)', () => {
   afterEach(() => jest.useRealTimers());
 
-  it('devuelve la comida parseada y manda en el prompt el tipo de comida, el perfil y los criterios', async () => {
-    const meal = { title: 'Wok', nutritionalValues: {}, recipe: {} };
-    const generateContent = jest.fn().mockResolvedValue({ response: { text: () => JSON.stringify(meal) } });
+  it('devuelve el texto crudo de Gemini y manda en el prompt el tipo de comida, el perfil y los criterios', async () => {
+    const raw = JSON.stringify({ title: 'Wok', nutritionalValues: {}, recipe: {} });
+    const generateContent = jest.fn().mockResolvedValue({ response: { text: () => raw } });
     const { service } = setup(generateContent);
 
-    await expect(service.generateReplacementMeal(profile, 'DINNER' as any, criteria)).resolves.toEqual(meal);
+    await expect(service.generateReplacementMeal(profile, 'DINNER' as any, criteria)).resolves.toBe(raw);
 
     const prompt = generateContent.mock.calls[0][0].contents[0].parts[0].text;
     expect(prompt).toContain('DINNER');
@@ -39,11 +40,11 @@ describe('GeminiService.generateReplacementMeal (NUT-77)', () => {
     expect(schema.properties.recipe.properties.properties.type).toBe('array');
   });
 
-  it('devuelve null si la respuesta no es JSON (el servicio lo rechaza con 422)', async () => {
+  it('no parsea: una respuesta que no es JSON vuelve tal cual (la rechaza el validador de NUT-74 con 422)', async () => {
     const generateContent = jest.fn().mockResolvedValue({ response: { text: () => 'no es json' } });
     const { service } = setup(generateContent);
 
-    await expect(service.generateReplacementMeal(profile, 'DINNER' as any, criteria)).resolves.toBeNull();
+    await expect(service.generateReplacementMeal(profile, 'DINNER' as any, criteria)).resolves.toBe('no es json');
   });
 
   it('lanza AiProviderUnavailableError(AI_PROVIDER_ERROR) si el SDK falla', async () => {
@@ -58,11 +59,9 @@ describe('GeminiService.generateReplacementMeal (NUT-77)', () => {
   it('aborta a los 15 s y lanza AiProviderUnavailableError(AI_TIMEOUT)', async () => {
     jest.useFakeTimers();
     const generateContent = jest.fn((_request: unknown, options: any) => new Promise((_resolve, reject) => {
-      options.requestOptions.signal.addEventListener('abort', () => {
-        const error = new Error('aborted');
-        error.name = 'AbortError';
-        reject(error);
-      });
+      // Como el SDK real (0.24.1): lee `signal` en el primer nivel de las opciones y, al abortar,
+      // rechaza con GoogleGenerativeAIAbortError, cuyo name NO es 'AbortError'.
+      options.signal.addEventListener('abort', () => reject(new GoogleGenerativeAIAbortError('Request aborted')));
     }));
     const { service } = setup(generateContent);
 

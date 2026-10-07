@@ -1,17 +1,25 @@
-import { Injectable, BadRequestException, NotFoundException, InternalServerErrorException, ConflictException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  HttpException,
+  NotFoundException,
+  ConflictException,
+  Logger,
+} from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
-import { GeminiService, GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
+import { GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
 import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
 import { CreateMealPlanDto, MealPlanDayDto } from './dto';
-import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
-import { findRestrictionViolation, forbiddenRestrictions } from './meal-restrictions.util';
-import { UnsplashService, resolveWithBoundedConcurrency, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
-import type { PersistedRecipeImage } from '@/modules/unsplash/recipe-image.types';
+import { ConfigService } from '@nestjs/config';
+import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
+import { isStalePendingRun } from './generation-run-ttl';
+import { RecipeImagesService } from './recipe-images.service';
+import { WeeklyProposalComposer } from './weekly-proposal.composer';
 import type { RecipeForTracking } from './plans.repository';
+import { toPublicMealPlan } from './meal-plan-response';
 
 @Injectable()
 export class PlansService {
@@ -19,8 +27,10 @@ export class PlansService {
 
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService,
-    private readonly unsplash: UnsplashService
+    private readonly images: RecipeImagesService,
+    private readonly config: ConfigService,
+    // Composición de la propuesta semanal (hoy, Gemini + NUT-74; NUT-76 puede reemplazarla).
+    private readonly composer: WeeklyProposalComposer,
   ) {}
 
   // Prepara las recetas antes de buscar imágenes:
@@ -62,38 +72,6 @@ export class PlansService {
     }));
 
     return { days: preparedDays, preservedImages };
-  }
-
-  // Busca las imágenes del plan. Si algo falla de forma inesperada, el plan se guarda sin imágenes.
-  private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
-    try {
-      return await this.unsplash.searchAndSelectImages(days);
-    } catch (error: any) {
-      this.logger.error(
-        `Image search failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
-        error?.stack
-      );
-      return days;
-    }
-  }
-
-  // Después de guardar el plan: registra el uso de cada foto nueva (un evento por foto, de a 3 en
-  // paralelo) y guarda el resultado en cada receta.
-  private async trackNewRecipeImages(recipesForTracking: RecipeForTracking[]): Promise<void> {
-    const recipesByTrackingUrl = new Map<string, RecipeForTracking[]>();
-    for (const item of recipesForTracking) {
-      const group = recipesByTrackingUrl.get(item.image.tracking.trackingUrl) ?? [];
-      group.push(item);
-      recipesByTrackingUrl.set(item.image.tracking.trackingUrl, group);
-    }
-
-    await resolveWithBoundedConcurrency(Array.from(recipesByTrackingUrl.values()), async (group) => {
-      // El repositorio no conoce el tipo de Unsplash (ver plans-transaction-no-network.spec.ts).
-      const { tracking } = await this.unsplash.trackDownload(group[0].image as unknown as PersistedRecipeImage);
-      for (const item of group) {
-        await this.repository.updateRecipeImageTracking(item.recipeId, { ...item.image, tracking });
-      }
-    });
   }
 
   private parseDateString(dateStr: string): Date {
@@ -166,7 +144,7 @@ export class PlansService {
 
     // Flujo A paso 5 (design.md): el GenerationRun se crea/recupera ANTES de invocar al
     // proveedor de IA, para que quede registro del intento aunque el proveedor nunca responda.
-    const { run, wasCreated } = await this.repository.createOrRecoverGenerationRun(
+    const createOrRecoverRun = () => this.repository.createOrRecoverGenerationRun(
       userId,
       kind,
       GEMINI_PROVIDER,
@@ -177,6 +155,14 @@ export class PlansService {
       profileSnapshot,
       idempotencyKeyHash
     );
+    let { run, wasCreated } = await createOrRecoverRun();
+
+    // NUT-74: un intento anterior quedó colgado (mismo TTL que NUT-77): se lo marca EXPIRED, lo que
+    // libera la clave, y se genera de cero. Sin esto, la semana quedaría bloqueada con un 409.
+    if (!wasCreated && isStalePendingRun(run, this.config)) {
+      await this.repository.transitionGenerationRun(run.id, userId, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
+      ({ run, wasCreated } = await createOrRecoverRun());
+    }
 
     if (!wasCreated) {
       // AC3: misma solicitud (mismo idempotencyKeyHash) ya produjo un GenerationRun. No se
@@ -186,32 +172,21 @@ export class PlansService {
       return this.getPlanByWeek(userId, weekStartStr);
     }
 
-    let generatedDays;
+    // Desde acá, un error inesperado deja el run FAILED (nunca PENDING). Los HttpException ya
+    // registraron su propio resultado (REJECTED, FAILED por proveedor, etc.).
     try {
-      generatedDays = await this.gemini.generateMealPlan(user.nutritionProfile, weekStart);
+      return await this.generateForRun(userId, weekStartStr, weekStart, user.nutritionProfile, run.id);
     } catch (error) {
-      await this.repository.transitionGenerationRun(run.id, userId, ['PENDING'], 'FAILED', {
-        errorCode: 'AI_TIMEOUT'
-      });
+      if (!(error instanceof HttpException)) {
+        await this.failRun(run.id, userId, 'FAILED', 'UNEXPECTED_ERROR');
+      }
       throw error;
     }
+  }
 
-    // Wrap in CreateMealPlanDto and validate full structure
-    const dto = plainToInstance(CreateMealPlanDto, {
-      weekStart: weekStartStr,
-      days: generatedDays
-    });
-
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      await this.repository.transitionGenerationRun(run.id, userId, ['PENDING'], 'FAILED', {
-        errorCode: 'AI_INVALID_SCHEMA'
-      });
-      // Documented recoverable failure
-      throw new InternalServerErrorException('AI generated an invalid plan structure that failed domain validation');
-    }
-
-    return this.validateAndPersistPlan(userId, dto, run.id);
+  private async generateForRun(userId: string, weekStartStr: string, weekStart: Date, profile: NutritionProfile, runId: string) {
+    const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr });
+    return this.validateAndPersistPlan(userId, proposal.dto, runId, { ...proposal.summary });
   }
 
   /**
@@ -219,8 +194,14 @@ export class PlansService {
    * `generateAndPersistPlan` (camino de generación IA real). El camino directo
    * `POST /meal-plans` (creación manual, sin proveedor de IA de por medio) queda fuera de
    * alcance de AC1-11 (design.md sección 8 / plan.md sección 6): no crea ningún GenerationRun.
+   * `validationSnapshot` es el resumen de NUT-74, que se guarda al confirmar el run.
    */
-  async validateAndPersistPlan(userId: string, dto: CreateMealPlanDto, generationRunId?: string) {
+  async validateAndPersistPlan(
+    userId: string,
+    dto: CreateMealPlanDto,
+    generationRunId?: string,
+    validationSnapshot?: Record<string, unknown>,
+  ) {
     const weekStart = this.parseDateString(dto.weekStart);
 
     const user = await this.repository.getUserWithProfile(userId);
@@ -253,20 +234,20 @@ export class PlansService {
       this.validateRestrictions(dto.days, user.nutritionProfile);
     } catch (error) {
       if (generationRunId) {
-        await this.repository.transitionGenerationRun(generationRunId, userId, ['PENDING'], 'REJECTED', {
-          errorCode: 'RESTRICTION_VIOLATION'
-        });
+        await this.failRun(generationRunId, userId, 'REJECTED', 'RESTRICTION_VIOLATION');
       }
       throw error;
     }
 
     // Imágenes: se buscan ANTES de la transacción (nunca hay llamadas externas dentro de ella).
     const { days: preparedDays } = this.prepareRecipeImages(dto.days);
-    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+    const daysForPersistence = await this.images.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
-      const persisted = await this.repository.createPlanTransaction(userId, weekStart, daysForPersistence, generationRunId);
+      const persisted = await this.repository.createPlanTransaction(
+        userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot,
+      );
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el
@@ -288,33 +269,21 @@ export class PlansService {
     }
 
     // Fuera del try/catch: un fallo de tracking no debe marcar el GenerationRun como FAILED.
-    await this.trackNewRecipeImages(recipesForTracking);
+    await this.images.trackNewRecipeImages(recipesForTracking);
 
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
   async deletePlan(userId: string, weekStartStr: string){
-    const weekStart = this.parseDateString(weekStartStr);
     const plan = await this.getPlanByWeek(userId, weekStartStr);
-
-    const recipeIds: string[] = [];
-    for (const day of plan.days || []) {
-      for (const meal of day.meals || []) {
-        if (meal.recipeId) {
-          recipeIds.push(meal.recipeId);
-        }
-      }
-    }
-
-    return this.repository.deletePlanTransaction(plan.id, recipeIds);
+    return this.repository.deletePlanTransaction(plan.id, userId);
   }
 
   /**
-   * Flujo D (supersede, design.md). Mapea a `GenerationKind.MEAL_PLAN_REGENERATION`. Este
-   * caller no invoca hoy al proveedor de IA (persiste `dto.days` ya armado por el cliente,
-   * ver plan.md sección 1), así que no hay pasos de invocación a proveedor ni `FAILED` por
-   * timeout — sólo creación/recuperación del GenerationRun, validación de dominio y
-   * confirmación transaccional (supersede).
+   * Edición manual del PUT (Flujo D de NUT-75, supersede). Persiste `dto.days` ya armado por el
+   * cliente, sin IA: sólo creación/recuperación del GenerationRun, validación de dominio y
+   * confirmación transaccional. Comparte `kind = MEAL_PLAN_REGENERATION` con la regeneración con IA
+   * (NUT-78, MealPlanRegenerationService) hasta el ticket de `MEAL_PLAN_EDIT`.
    */
   async updatePlan(userId: string, dto: CreateMealPlanDto) {
     const weekStart = this.parseDateString(dto.weekStart);
@@ -356,7 +325,7 @@ export class PlansService {
     );
 
     if (!wasCreated) {
-      // AC3, aplicado a regeneración: misma solicitud ya procesada, no repetir el supersede.
+      // AC3 de NUT-75, aplicado a esta edición: misma solicitud ya procesada, no repetir el supersede.
       // Gap 2: sólo si ese run terminó en éxito — de lo contrario, error honesto.
       this.assertRecoveredRunIsUsable(run);
       return this.getPlanByWeek(userId, dto.weekStart);
@@ -365,19 +334,20 @@ export class PlansService {
     try {
       this.validateRestrictions(dto.days, user.nutritionProfile);
     } catch (error) {
-      await this.repository.transitionGenerationRun(run.id, userId, ['PENDING'], 'REJECTED', {
-        errorCode: 'RESTRICTION_VIOLATION'
-      });
+      await this.failRun(run.id, userId, 'REJECTED', 'RESTRICTION_VIOLATION');
       throw error;
     }
 
     // Imágenes: las recetas que ya existían en el plan conservan la suya; sólo se buscan las nuevas.
     const { days: preparedDays, preservedImages } = this.prepareRecipeImages(dto.days, plan);
-    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+    const daysForPersistence = await this.images.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
-      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
+      // Sólo la versión que se leyó: si otra (por ejemplo una regeneración) la reemplazó entretanto, 409.
+      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id, {
+        expectedPlanId: plan.id,
+      });
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto): mismo criterio que en validateAndPersistPlan — transicionar a FAILED
@@ -393,7 +363,7 @@ export class PlansService {
     }
 
     // Registro de uso sólo para las imágenes nuevas, fuera del try/catch (igual que al crear).
-    await this.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
+    await this.images.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
 
     return this.getPlanByWeek(userId, dto.weekStart);
   }
@@ -404,25 +374,16 @@ export class PlansService {
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
 
-    return {
-      ...plan,
-      days: (plan.days ?? []).map((day: any) => ({
-        ...day,
-        meals: (day.meals ?? []).map((meal: any) => {
-          if (!meal.recipe) {
-            return meal;
-          }
-          return {
-            ...meal,
-            recipe: {
-              ...meal.recipe,
-              // Se quita la metadata privada de tracking antes de devolver el plan.
-              image: toPublicRecipeImage(meal.recipe.image as PersistedRecipeImage | null),
-            },
-          };
-        }),
-      })),
-    };
+    return toPublicMealPlan(plan);
+  }
+
+  // Si no se puede marcar el run, se prioriza devolver el error original (el TTL de PENDING lo libera después).
+  private async failRun(runId: string, userId: string, status: 'FAILED' | 'REJECTED', errorCode: string) {
+    try {
+      await this.repository.transitionGenerationRun(runId, userId, ['PENDING'], status, { errorCode });
+    } catch {
+      this.logger.warn(`Could not mark GenerationRun ${runId} as ${status} (${errorCode})`);
+    }
   }
 
   private validateRestrictions(days: MealPlanDayDto[], profile: NutritionProfile) {
@@ -438,7 +399,15 @@ export class PlansService {
       }
 
       for (const meal of day.meals) {
-        const restriction = findRestrictionViolation(meal, forbidden);
+        // Mismo diccionario y mismos textos que el validador de NUT-74 (pasos incluidos).
+        const restriction = findExcludedIngredient(restrictionTexts({
+          mealTitle: meal.title,
+          nutritionDescription: meal.nutritionalValues?.Description,
+          title: meal.recipe?.title,
+          description: meal.recipe?.description,
+          ingredients: meal.recipe?.ingredients,
+          instructions: meal.recipe?.instructions,
+        }), forbidden);
         if (restriction) {
           throw new BadRequestException(`Meal '${meal.title}' contains excluded ingredient/concept: ${restriction}`);
         }

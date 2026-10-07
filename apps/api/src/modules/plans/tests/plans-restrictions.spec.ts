@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { PlansService } from '../plans.service';
+import { RecipeImagesService } from '../recipe-images.service';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 
 // El plan semanal usa la misma validación de restricciones que el reemplazo de una comida.
@@ -41,7 +42,7 @@ function setup(excludedIngredients: string[]) {
   };
   // Unsplash sin efectos: devuelve los días tal cual (NUT-83 no es parte de esta prueba).
   const unsplash: any = { searchAndSelectImages: jest.fn(async (days: unknown) => days), trackDownload: jest.fn() };
-  return { repository, service: new PlansService(repository, {} as any, unsplash) };
+  return { repository, service: new PlansService(repository, new RecipeImagesService(repository, unsplash), {} as any, {} as any) };
 }
 
 describe('Plan semanal - restricciones con ingredientes en español', () => {
@@ -72,5 +73,14 @@ describe('Plan semanal - restricciones con ingredientes en español', () => {
     await service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days: week('Ensalada de quinoa') } as any);
 
     expect(repository.createPlanTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('revisa también el título de la receta y los pasos (mismos textos que el validador)', async () => {
+    const { service } = setup(['NUTS']);
+    const days = week('Ensalada verde');
+    days[0].meals[0].recipe.instructions = ['Mezclar', 'Agregar maní picado'];
+
+    await expect(service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days } as any))
+      .rejects.toThrow('contains excluded ingredient/concept: nuts');
   });
 });
