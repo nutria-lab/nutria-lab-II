@@ -19,12 +19,19 @@ export interface ValidatedRun {
   model: string;
 }
 
-// Rechazos que no vienen del validador puro: el envoltorio de la comida/plan y los criterios del body.
-type CallerRejectionCode = 'AI_INVALID_SCHEMA' | 'CRITERIA_NOT_MET';
+// Rechazos que no vienen del validador puro: el envoltorio de la comida/plan, los criterios del body
+// (NUT-77) y la regeneración que no logra una propuesta distinta (NUT-78).
+type CallerRejectionCode = 'AI_INVALID_SCHEMA' | 'CRITERIA_NOT_MET' | 'NO_DIFFERENT_PROPOSAL';
+
+const STAGE_BY_CALLER_CODE: Record<CallerRejectionCode, RunValidationSummary['stage']> = {
+  AI_INVALID_SCHEMA: 'schema',
+  CRITERIA_NOT_MET: 'criteria',
+  NO_DIFFERENT_PROPOSAL: 'difference',
+};
 
 // validationSnapshot de un run rechazado (NUT-75).
 export interface RunValidationSummary {
-  stage: ValidationStage | 'passed' | 'criteria';
+  stage: ValidationStage | 'passed' | 'criteria' | 'difference';
   codes: Array<ValidationErrorCode | CallerRejectionCode>;
   warnings: ValidationWarningCode[];
 }
@@ -83,9 +90,9 @@ export class RecipeValidationService {
     }
   }
 
-  // Rechazo del envoltorio (AI_INVALID_SCHEMA) o de los criterios del body (CRITERIA_NOT_MET).
+  // Rechazos que no vienen del validador (envoltorio, criterios del body, propuesta igual a la anterior).
   rejectWithCode(run: ValidatedRun, code: CallerRejectionCode): Promise<void> {
-    return this.reject(run, { stage: code === 'AI_INVALID_SCHEMA' ? 'schema' : 'criteria', codes: [code], warnings: [] });
+    return this.reject(run, { stage: STAGE_BY_CALLER_CODE[code], codes: [code], warnings: [] });
   }
 
   // Sólo las recetas del catálogo con el mismo título normalizado que algún draft, y nunca una que

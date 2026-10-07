@@ -5,28 +5,21 @@ import {
   NotFoundException,
   ConflictException,
   Logger,
-  ServiceUnavailableException,
-  UnprocessableEntityException,
 } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
-import { AiProviderUnavailableError, GeminiService, GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
-import { parseJsonOutput } from '../recipe/validation/parse-generated-output';
+import { GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
 import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
-import { CreateMealPlanDto, MealDto, MealPlanDayDto } from './dto';
-import { plainToInstance } from 'class-transformer';
-import { validate } from 'class-validator';
+import { CreateMealPlanDto, MealPlanDayDto } from './dto';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
 import { ConfigService } from '@nestjs/config';
 import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
-import { reusableDuplicate, reusableRecipeId, summarizeParseFailure, summarizeResults } from '../recipe/validation/validate-recipe';
-import type { RecipeDraft, ValidationResult, ValidationSummary } from '../recipe/validation/recipe-validation.types';
 import { isStalePendingRun } from './generation-run-ttl';
-import { RecipeValidationService, mealToDraftInput, type ValidatedRun } from './recipe-validation.service';
-import { UnsplashService, resolveWithBoundedConcurrency, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
-import type { PersistedRecipeImage } from '@/modules/unsplash/recipe-image.types';
+import { RecipeImagesService } from './recipe-images.service';
+import { WeeklyProposalComposer } from './weekly-proposal.composer';
 import type { RecipeForTracking } from './plans.repository';
+import { toPublicMealPlan } from './meal-plan-response';
 
 @Injectable()
 export class PlansService {
@@ -34,10 +27,10 @@ export class PlansService {
 
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService,
-    private readonly unsplash: UnsplashService,
-    private readonly validation: RecipeValidationService,
+    private readonly images: RecipeImagesService,
     private readonly config: ConfigService,
+    // Composición de la propuesta semanal (hoy, Gemini + NUT-74; NUT-76 puede reemplazarla).
+    private readonly composer: WeeklyProposalComposer,
   ) {}
 
   // Prepara las recetas antes de buscar imágenes:
@@ -79,38 +72,6 @@ export class PlansService {
     }));
 
     return { days: preparedDays, preservedImages };
-  }
-
-  // Busca las imágenes del plan. Si algo falla de forma inesperada, el plan se guarda sin imágenes.
-  private async resolveImagesOrDegrade(days: MealPlanDayDto[]): Promise<MealPlanDayDto[]> {
-    try {
-      return await this.unsplash.searchAndSelectImages(days);
-    } catch (error: any) {
-      this.logger.error(
-        `Image search failed unexpectedly (bug, not a routine provider failure); continuing without resolved images: ${error?.message ?? 'unknown error'}`,
-        error?.stack
-      );
-      return days;
-    }
-  }
-
-  // Después de guardar el plan: registra el uso de cada foto nueva (un evento por foto, de a 3 en
-  // paralelo) y guarda el resultado en cada receta.
-  private async trackNewRecipeImages(recipesForTracking: RecipeForTracking[]): Promise<void> {
-    const recipesByTrackingUrl = new Map<string, RecipeForTracking[]>();
-    for (const item of recipesForTracking) {
-      const group = recipesByTrackingUrl.get(item.image.tracking.trackingUrl) ?? [];
-      group.push(item);
-      recipesByTrackingUrl.set(item.image.tracking.trackingUrl, group);
-    }
-
-    await resolveWithBoundedConcurrency(Array.from(recipesByTrackingUrl.values()), async (group) => {
-      // El repositorio no conoce el tipo de Unsplash (ver plans-transaction-no-network.spec.ts).
-      const { tracking } = await this.unsplash.trackDownload(group[0].image as unknown as PersistedRecipeImage);
-      for (const item of group) {
-        await this.repository.updateRecipeImageTracking(item.recipeId, { ...item.image, tracking });
-      }
-    });
   }
 
   private parseDateString(dateStr: string): Date {
@@ -224,88 +185,8 @@ export class PlansService {
   }
 
   private async generateForRun(userId: string, weekStartStr: string, weekStart: Date, profile: NutritionProfile, runId: string) {
-    let raw: string;
-    try {
-      raw = await this.gemini.generateMealPlan(profile, weekStart);
-    } catch (error) {
-      // NUT-74: proveedor caído o timeout → 503; cualquier otro error es un bug y sigue de largo.
-      if (error instanceof AiProviderUnavailableError) {
-        await this.failRun(runId, userId, 'FAILED', error.reason);
-        throw new ServiceUnavailableException('The AI provider is not available; retry later');
-      }
-      throw error;
-    }
-
-    const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
-    const { days, results, summary } = await this.validateGeneratedDays(raw, profile, run);
-
-    // Envoltorio del plan (7 días, fechas, mealType, macros de la comida) con las recetas ya
-    // normalizadas, también las de los duplicados que se van a reutilizar.
-    const dto = plainToInstance(CreateMealPlanDto, {
-      weekStart: weekStartStr,
-      days: mapMeals(days, (meal, index) => {
-        const recipe = normalizedRecipeOf(results[index]);
-        return recipe ? { ...(meal as object), recipe: recipeFields(recipe) } : meal;
-      }),
-    });
-
-    const errors = await validate(dto);
-    if (errors.length > 0) {
-      await this.validation.rejectWithCode(run, 'AI_INVALID_SCHEMA');
-      throw new UnprocessableEntityException('The generated meal plan did not pass validation (AI_INVALID_SCHEMA)');
-    }
-
-    // Duplicado exacto del catálogo: la comida apunta a esa receta (no se crea otra ni se busca su foto).
-    dto.days = mapMeals(dto.days, (meal, index) => {
-      const reuseRecipeId = reusableRecipeId(results[index]);
-      if (!reuseRecipeId) return meal;
-      const { recipe, ...mealWithoutRecipe } = meal as MealDto;
-      return { ...mealWithoutRecipe, reuseRecipeId };
-    }) as MealPlanDayDto[];
-
-    return this.validateAndPersistPlan(userId, dto, runId, { ...summary });
-  }
-
-  /**
-   * NUT-74: el servidor valida cada comida generada; la IA nunca es la autoridad final. Si el
-   * output no se puede leer o alguna comida es inválida, se rechaza el plan entero (no hay todavía
-   * una forma de cubrir el hueco de una comida descartada, ver design.md §3): run REJECTED y 422,
-   * sin escribir dominio. Un duplicado exacto del catálogo no es un rechazo: se reutiliza.
-   */
-  private async validateGeneratedDays(
-    raw: string,
-    profile: NutritionProfile,
-    run: ValidatedRun,
-  ): Promise<{ days: unknown[]; results: ValidationResult[]; summary: ValidationSummary }> {
-    const parsed = parseJsonOutput(raw);
-    if (!parsed.ok) {
-      await this.validation.reject(run, summarizeParseFailure(parsed.errors));
-      throw new UnprocessableEntityException(`The generated meal plan did not pass validation (${parsed.errors[0].code})`);
-    }
-
-    const days = (parsed.value as { days?: unknown }).days;
-    if (!Array.isArray(days)) {
-      const missingDays: ValidationResult = { valid: false, errors: [{ code: 'MISSING_FIELD', field: 'days', message: 'The plan has no days' }] };
-      await this.validation.reject(run, summarizeResults([missingDays]));
-      throw new UnprocessableEntityException('The generated meal plan did not pass validation (MISSING_FIELD)');
-    }
-    // Una semana son 7 días: otra cantidad rechaza el lote entero (como en parseGeneratedOutput).
-    if (days.length !== 7) {
-      await this.validation.reject(run, summarizeParseFailure([
-        { code: 'COUNT_MISMATCH', field: 'days', message: `Expected 7 days but the AI returned ${days.length}` },
-      ]));
-      throw new UnprocessableEntityException('The generated meal plan did not pass validation (COUNT_MISMATCH)');
-    }
-
-    const results = await this.validation.validateDrafts(flattenMeals(days).map(mealToDraftInput), profile);
-
-    const rejected = results.filter(result => !result.valid && !reusableRecipeId(result));
-    if (rejected.length > 0) {
-      const rejection = summarizeResults(rejected);
-      await this.validation.reject(run, rejection);
-      throw new UnprocessableEntityException(`The generated meal plan did not pass validation (${rejection.codes[0]})`);
-    }
-    return { days, results, summary: summarizeResults(results) };
+    const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr });
+    return this.validateAndPersistPlan(userId, proposal.dto, runId, { ...proposal.summary });
   }
 
   /**
@@ -360,7 +241,7 @@ export class PlansService {
 
     // Imágenes: se buscan ANTES de la transacción (nunca hay llamadas externas dentro de ella).
     const { days: preparedDays } = this.prepareRecipeImages(dto.days);
-    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+    const daysForPersistence = await this.images.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
@@ -388,33 +269,21 @@ export class PlansService {
     }
 
     // Fuera del try/catch: un fallo de tracking no debe marcar el GenerationRun como FAILED.
-    await this.trackNewRecipeImages(recipesForTracking);
+    await this.images.trackNewRecipeImages(recipesForTracking);
 
     return this.getPlanByWeek(userId, dto.weekStart);
   }
 
   async deletePlan(userId: string, weekStartStr: string){
-    const weekStart = this.parseDateString(weekStartStr);
     const plan = await this.getPlanByWeek(userId, weekStartStr);
-
-    const recipeIds: string[] = [];
-    for (const day of plan.days || []) {
-      for (const meal of day.meals || []) {
-        if (meal.recipeId) {
-          recipeIds.push(meal.recipeId);
-        }
-      }
-    }
-
-    return this.repository.deletePlanTransaction(plan.id, recipeIds);
+    return this.repository.deletePlanTransaction(plan.id, userId);
   }
 
   /**
-   * Flujo D (supersede, design.md). Mapea a `GenerationKind.MEAL_PLAN_REGENERATION`. Este
-   * caller no invoca hoy al proveedor de IA (persiste `dto.days` ya armado por el cliente,
-   * ver plan.md sección 1), así que no hay pasos de invocación a proveedor ni `FAILED` por
-   * timeout — sólo creación/recuperación del GenerationRun, validación de dominio y
-   * confirmación transaccional (supersede).
+   * Edición manual del PUT (Flujo D de NUT-75, supersede). Persiste `dto.days` ya armado por el
+   * cliente, sin IA: sólo creación/recuperación del GenerationRun, validación de dominio y
+   * confirmación transaccional. Comparte `kind = MEAL_PLAN_REGENERATION` con la regeneración con IA
+   * (NUT-78, MealPlanRegenerationService) hasta el ticket de `MEAL_PLAN_EDIT`.
    */
   async updatePlan(userId: string, dto: CreateMealPlanDto) {
     const weekStart = this.parseDateString(dto.weekStart);
@@ -456,7 +325,7 @@ export class PlansService {
     );
 
     if (!wasCreated) {
-      // AC3, aplicado a regeneración: misma solicitud ya procesada, no repetir el supersede.
+      // AC3 de NUT-75, aplicado a esta edición: misma solicitud ya procesada, no repetir el supersede.
       // Gap 2: sólo si ese run terminó en éxito — de lo contrario, error honesto.
       this.assertRecoveredRunIsUsable(run);
       return this.getPlanByWeek(userId, dto.weekStart);
@@ -471,11 +340,14 @@ export class PlansService {
 
     // Imágenes: las recetas que ya existían en el plan conservan la suya; sólo se buscan las nuevas.
     const { days: preparedDays, preservedImages } = this.prepareRecipeImages(dto.days, plan);
-    const daysForPersistence = await this.resolveImagesOrDegrade(preparedDays);
+    const daysForPersistence = await this.images.resolveImagesOrDegrade(preparedDays);
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
-      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id);
+      // Sólo la versión que se leyó: si otra (por ejemplo una regeneración) la reemplazó entretanto, 409.
+      const persisted = await this.repository.updatePlanTransaction(userId, weekStart, daysForPersistence, run.id, {
+        expectedPlanId: plan.id,
+      });
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto): mismo criterio que en validateAndPersistPlan — transicionar a FAILED
@@ -491,7 +363,7 @@ export class PlansService {
     }
 
     // Registro de uso sólo para las imágenes nuevas, fuera del try/catch (igual que al crear).
-    await this.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
+    await this.images.trackNewRecipeImages(recipesForTracking.filter((item) => !preservedImages.has(item.image)));
 
     return this.getPlanByWeek(userId, dto.weekStart);
   }
@@ -502,25 +374,7 @@ export class PlansService {
 
     if (!plan) throw new NotFoundException('Plan not found for this week');
 
-    return {
-      ...plan,
-      days: (plan.days ?? []).map((day: any) => ({
-        ...day,
-        meals: (day.meals ?? []).map((meal: any) => {
-          if (!meal.recipe) {
-            return meal;
-          }
-          return {
-            ...meal,
-            recipe: {
-              ...meal.recipe,
-              // Se quita la metadata privada de tracking antes de devolver el plan.
-              image: toPublicRecipeImage(meal.recipe.image as PersistedRecipeImage | null),
-            },
-          };
-        }),
-      })),
-    };
+    return toPublicMealPlan(plan);
   }
 
   // Si no se puede marcar el run, se prioriza devolver el error original (el TTL de PENDING lo libera después).
@@ -560,34 +414,4 @@ export class PlansService {
       }
     }
   }
-}
-
-// Recorre las comidas de los días en orden (los días o comidas mal formados se saltean; el
-// envoltorio del plan los rechaza después). El índice coincide con el de flattenMeals.
-function mapMeals(days: unknown[], fn: (meal: unknown, index: number) => unknown): unknown[] {
-  let index = 0;
-  return days.map(day => {
-    if (typeof day !== 'object' || day === null || !Array.isArray((day as { meals?: unknown }).meals)) return day;
-    return { ...day, meals: (day as { meals: unknown[] }).meals.map(meal => fn(meal, index++)) };
-  });
-}
-
-function flattenMeals(days: unknown[]): unknown[] {
-  const meals: unknown[] = [];
-  for (const day of days) {
-    const dayMeals = typeof day === 'object' && day !== null ? (day as { meals?: unknown }).meals : undefined;
-    if (Array.isArray(dayMeals)) meals.push(...dayMeals);
-  }
-  return meals;
-}
-
-// Receta normalizada de un resultado válido o de un duplicado reutilizable.
-function normalizedRecipeOf(result: ValidationResult): RecipeDraft | null {
-  return result.valid ? result.normalizedRecipe : reusableDuplicate(result)?.normalizedRecipe ?? null;
-}
-
-// Los campos de receta que persiste el plan semanal (como antes de NUT-74), ya normalizados.
-function recipeFields(recipe: RecipeDraft) {
-  const { title, description, prepMinutes, cookMinutes, ingredients, instructions } = recipe;
-  return { title, description, prepMinutes, cookMinutes, ingredients, instructions };
 }

@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { BadRequestException } from '@nestjs/common';
 import { PlansService } from '../plans.service';
+import { RecipeImagesService } from '../recipe-images.service';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 
 // El plan semanal usa la misma validación de restricciones que el reemplazo de una comida.
@@ -41,7 +42,7 @@ function setup(excludedIngredients: string[]) {
   };
   // Unsplash sin efectos: devuelve los días tal cual (NUT-83 no es parte de esta prueba).
   const unsplash: any = { searchAndSelectImages: jest.fn(async (days: unknown) => days), trackDownload: jest.fn() };
-  return { repository, service: new PlansService(repository, {} as any, unsplash, {} as any, {} as any) };
+  return { repository, service: new PlansService(repository, new RecipeImagesService(repository, unsplash), {} as any, {} as any) };
 }
 
 describe('Plan semanal - restricciones con ingredientes en español', () => {

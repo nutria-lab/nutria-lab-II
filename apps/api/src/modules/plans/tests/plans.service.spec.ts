@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
 import { AiProviderUnavailableError } from '../gemini/gemini.service';
 import { RecipeValidationService } from '../recipe-validation.service';
+import { RecipeImagesService } from '../recipe-images.service';
+import { GeminiWeeklyProposalComposer } from '../weekly-proposal.composer';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { UnsplashService } from '../../unsplash/unsplash.service';
 import { pendingPersistedImage, unsplashPhoto, unsplashResponse, unsplashSearchBody } from '../../unsplash/unsplash-search.fixture';
@@ -133,7 +135,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     // Validador real de NUT-74; sólo la búsqueda de duplicados en el catálogo está mockeada.
     mockRecipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
     mockConfig = { get: jest.fn().mockReturnValue(undefined) };
-    service = new PlansService(mockRepository, mockGemini, mockUnsplash, new RecipeValidationService(mockRecipes, mockRepository), mockConfig);
+    const validation = new RecipeValidationService(mockRecipes, mockRepository);
+    service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, mockUnsplash), mockConfig, new GeminiWeeklyProposalComposer(mockRepository, mockGemini, validation));
   });
 
   describe('AC3 - misma solicitud no duplica ejecución', () => {
@@ -529,6 +532,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         expect.any(Date),
         dtoSecond.days,
         expect.any(String),
+        { expectedPlanId: 'plan-1' },
       );
     });
   });
@@ -1035,7 +1039,7 @@ describe('PlansService - NUT-83: búsqueda y registro de uso con UnsplashService
       findPlanByWeek: jest.fn().mockResolvedValue({ id: 'plan-real-1', userId, days: [] }),
     };
 
-    const service = new PlansService(mockRepository, {} as any, realUnsplash, {} as any, {} as any);
+    const service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, realUnsplash), {} as any, {} as any);
 
     const dto = { weekStart: weekStartStr, days: sevenValidDays } as any;
     await service.validateAndPersistPlan(userId, dto);

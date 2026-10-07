@@ -135,6 +135,7 @@ describe('RecipeValidationService.reject / record (GenerationRun de NUT-75)', ()
   it.each([
     ['AI_INVALID_SCHEMA', 'schema'],
     ['CRITERIA_NOT_MET', 'criteria'],
+    ['NO_DIFFERENT_PROPOSAL', 'difference'],
   ] as const)('rejectWithCode(%s) registra snapshot y log como cualquier otro rechazo', async (code, stage) => {
     const { plans, service } = setup();
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
