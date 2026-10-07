@@ -9,20 +9,20 @@ export type IngredientGroup = 'nuts' | 'dairy' | 'gluten' | 'shellfish' | 'soy' 
 const GROUP_KEYWORDS: Record<IngredientGroup, string[]> = {
   nuts: [
     'nuts', 'nut', 'nuez', 'nueces', 'almendra', 'avellana', 'mani', 'manies', 'cacahuate', 'cacahuete',
-    'pistacho', 'castana', 'anacardo', 'pecana', 'macadamia', 'praline', 'frutos secos', 'turron', 'mazapan',
+    'pistacho', 'castana', 'anacardo', 'pecana', 'macadamia', 'praline', 'frutos secos', 'turron', 'mazapan', 'pinon',
     'nutella', 'almond', 'hazelnut', 'peanut', 'walnut', 'pistachio', 'cashew', 'pecan',
   ],
   dairy: [
     'dairy', 'leche', 'queso', 'manteca', 'mantequilla', 'crema', 'yogur', 'yogurt', 'ricota', 'ricotta',
     'mozzarella', 'parmesano', 'cheddar', 'provolone', 'requeson', 'nata', 'kefir', 'helado', 'flan', 'ghee',
-    'suero', 'milk', 'cheese', 'butter', 'cream',
+    'suero', 'lacteo', 'lactosa', 'milk', 'cheese', 'butter', 'cream',
   ],
   gluten: [
     'gluten', 'trigo', 'harina', 'pan', 'fideo', 'fideos', 'pasta', 'cebada', 'centeno', 'avena', 'semola',
     'seitan', 'cuscus', 'panqueque', 'galleta', 'galletita', 'tostada', 'empanada', 'pizza', 'tarta', 'torta',
     'bizcocho', 'bizcochuelo', 'medialuna', 'croissant', 'milanesa', 'rebozado', 'apanado', 'noquis', 'ravioles',
     'lasana', 'espagueti', 'spaghetti', 'cerveza', 'wheat', 'flour', 'bread', 'barley', 'rye', 'oat', 'oatmeal',
-    'couscous', 'pancake',
+    'bulgur', 'espelta', 'malta', 'salvado', 'couscous', 'pancake',
   ],
   shellfish: [
     'shellfish', 'marisco', 'crustaceo', 'molusco', 'camaron', 'camarones', 'langostino', 'gamba', 'cangrejo',
@@ -30,7 +30,7 @@ const GROUP_KEYWORDS: Record<IngredientGroup, string[]> = {
     'almeja', 'calamar', 'calamares', 'pulpo', 'vieira', 'ostra', 'shrimp', 'prawn', 'crab', 'lobster', 'mussel',
     'clam', 'squid', 'octopus', 'scallop', 'oyster',
   ],
-  soy: ['soy', 'soja', 'soya', 'tofu', 'tempeh', 'miso', 'edamame'],
+  soy: ['soy', 'soja', 'soya', 'tofu', 'tempeh', 'miso', 'edamame', 'shoyu'],
   meat: [
     'carne', 'pollo', 'cerdo', 'ternera', 'vacuno', 'cordero', 'jamon', 'panceta', 'tocino', 'chorizo',
     'salchicha', 'morcilla', 'pavo', 'pato', 'conejo', 'bife', 'chuleta', 'bondiola', 'matambre', 'hamburguesa',

@@ -163,6 +163,8 @@ describe('validateRecipe - normalización', () => {
     ['1 1/2', 1.5],
     ['1/3', 0.33],
     ['0.125', 0.13],
+    ['0,125', 0.13],
+    ['1,5', 1.5],
     [2 / 3, 0.67],
   ])('cantidad "%s" → %p (redondeada a 2 decimales)', (quantity, expected) => {
     const recipeOut = normalized(validateRecipe(generatedRecipe({ ingredients: [{ name: 'Quinoa', quantity, unit: 'g' }] }), NO_RESTRICTIONS));
@@ -215,6 +217,8 @@ describe('validateRecipe - INVALID_RANGE (etapa ranges)', () => {
     ['cantidad NaN', { ingredients: [{ name: 'Quinoa', quantity: Number.NaN, unit: 'g' }] }, 'ingredients[0].quantity'],
     ['cantidad ambigua "1.000" (¿mil o uno?)', { ingredients: [{ name: 'Harina de arroz', quantity: '1.000', unit: 'g' }] }, 'ingredients[0].quantity'],
     ['cantidad ambigua "2.500"', { ingredients: [{ name: 'Quinoa', quantity: '2.500', unit: 'g' }] }, 'ingredients[0].quantity'],
+    ['cantidad ambigua "1,000" (coma + 3 dígitos)', { ingredients: [{ name: 'Quinoa', quantity: '1,000', unit: 'g' }] }, 'ingredients[0].quantity'],
+    ['cantidad ambigua "2,500"', { ingredients: [{ name: 'Quinoa', quantity: '2,500', unit: 'g' }] }, 'ingredients[0].quantity'],
     ['proteína negativa', { nutritionalValues: { calories: 410, protein: -1, carbs: 62, fat: 12 } }, 'nutritionalValues.protein'],
     ['calorías Infinity', { nutritionalValues: { calories: Number.POSITIVE_INFINITY, protein: 14 } }, 'nutritionalValues.calories'],
     ['fibra NaN', { nutritionalValues: { calories: 410, protein: 14, fiber: Number.NaN } }, 'nutritionalValues.fiber'],

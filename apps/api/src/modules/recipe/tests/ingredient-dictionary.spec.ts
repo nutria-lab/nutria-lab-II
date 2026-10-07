@@ -38,6 +38,31 @@ describe('findExcludedIngredient - restricción directa y derivados', () => {
     }
   });
 
+  it.each([
+    ['Postre lácteo', 'dairy'],
+    ['Leche sin lactosa', 'dairy'],
+    ['Piñones tostados', 'nuts'],
+    ['Ensalada de bulgur', 'gluten'],
+    ['Pan de espelta', 'gluten'],
+    ['Extracto de malta', 'gluten'],
+    ['Galletas con salvado', 'gluten'],
+    ['Salsa shoyu', 'soy'],
+    // Sólo detectables por la palabra nueva (sin "pan", "galleta", "leche", etc.).
+    ['Espelta cocida', 'gluten'],
+    ['Salvado tostado', 'gluten'],
+    ['Lactosa en polvo', 'dairy'],
+  ])('palabras agregadas en la revisión: "%s" viola %s', (text, restriction) => {
+    expect(excluded(text, only(restriction))).toBe(restriction);
+  });
+
+  it('"Yogur sin lactosa" sigue siendo DAIRY por "yogur" (la negación sólo borra "sin lactosa")', () => {
+    expect(excluded('Yogur sin lactosa', only('dairy'))).toBe('dairy');
+  });
+
+  it('"sin lactosa" sola no es DAIRY', () => {
+    expect(excluded('Bebida sin lactosa', only('dairy'))).toBeNull();
+  });
+
   it('acepta la restricción en cualquier capitalización (como viene del perfil)', () => {
     expect(excluded('Almendras', ['NUTS'])).toBe('nuts');
   });
@@ -78,6 +103,9 @@ describe('findExcludedIngredient - sin falsos positivos', () => {
     // Palabra parcial: "pan" dentro de otra palabra no es gluten, "nut" dentro de "nutmeg" no es nuts.
     ['Panceta crocante', 'gluten'],
     ['Pancita a la parrilla', 'gluten'],
+    // Palabras nuevas de la revisión: no dan falso positivo dentro de otra palabra.
+    ['Arroz salvadoreño', 'gluten'],
+    ['Licuado tipo maltada de frutilla', 'gluten'],
     ['Nutmeg spiced squash', 'nuts'],
   ])('"%s" no viola %s', (text, restriction) => {
     expect(excluded(text, only(restriction))).toBeNull();

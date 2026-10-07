@@ -289,6 +289,13 @@ export class PlansService {
       await this.validation.reject(run, summarizeResults([missingDays]));
       throw new UnprocessableEntityException('The generated meal plan did not pass validation (MISSING_FIELD)');
     }
+    // Una semana son 7 días: otra cantidad rechaza el lote entero (como en parseGeneratedOutput).
+    if (days.length !== 7) {
+      await this.validation.reject(run, summarizeParseFailure([
+        { code: 'COUNT_MISMATCH', field: 'days', message: `Expected 7 days but the AI returned ${days.length}` },
+      ]));
+      throw new UnprocessableEntityException('The generated meal plan did not pass validation (COUNT_MISMATCH)');
+    }
 
     const results = await this.validation.validateDrafts(flattenMeals(days).map(mealToDraftInput), profile);
 

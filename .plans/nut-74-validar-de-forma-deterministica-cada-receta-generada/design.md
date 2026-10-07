@@ -23,14 +23,15 @@ Todos los valores numéricos y las tablas están en un solo archivo de configura
 | Decisión | Valor | Estado |
 |---|---|---|
 | D4 Calorías | `4·P + 4·C + 9·G`; ≤15 % OK, 15–35 % warning, >35 % (o macros en 0 con kcal > 0) `INVALID_RANGE` | **Aprobada por el TL** |
-| D4b Calorías sin C/G | No se aplica la regla; warning `CALORIE_CHECK_SKIPPED` | Aprobada (decisión de la dev, 2026-10-06) |
+| D4b Calorías sin C/G | No se aplica la regla; warning `CALORIE_CHECK_SKIPPED` | **PENDIENTE DE CONFIRMAR CON EL TL** (propuesta de la dev, 2026-10-06) |
 | D6 Lotes | Una receta inválida se rechaza sola; `EMPTY_OUTPUT`/`INVALID_JSON`/`COUNT_MISMATCH` rechazan el lote | **Aprobada por el TL** |
 | D7 Duplicado exacto | Se reutiliza la receta existente (`DUPLICATE_RECIPE` con `existingRecipeId`) | **Aprobada por el TL** |
 | D7 Duplicado potencial | Warning `POTENTIAL_DUPLICATE` | **Aprobada por el TL** |
 | D8 Preferencia contradictoria | Tabla fija categoría → grupos de ingredientes | **PENDIENTE DE CONFIRMAR CON EL TL** |
-| D5 Cantidades sin número | Lista fija ("al gusto", "a gusto", "c/n", "cantidad necesaria") → sin cantidad + warning | Aprobada (decisión de la dev, 2026-10-06) |
+| D5 Cantidades sin número | Lista fija ("al gusto", "a gusto", "c/n", "cantidad necesaria") → sin cantidad + warning | **PENDIENTE DE CONFIRMAR CON EL TL** (propuesta de la dev, 2026-10-06) |
+| D9b Negaciones | "sin X" / "libre de X" anulan esa mención, incluido "X sin gluten" (que también anula la palabra anterior) | **PENDIENTE DE CONFIRMAR CON EL TL** |
 | D2 JSON con texto extra | Sólo se aceptan fences ```` ```json ```` (sin importar mayúsculas); cualquier otro texto → `INVALID_JSON` | Aprobada (dev) |
-| D5b Cantidad "1.000" | Punto seguido de exactamente 3 dígitos (con parte entera ≠ 0) es ambiguo → `INVALID_RANGE` | Aprobada (dev, revisión) |
+| D5b Cantidad "1.000" / "1,000" | Punto o coma seguido de exactamente 3 dígitos (con parte entera ≠ 0) es ambiguo → `INVALID_RANGE` | Aprobada (dev, revisión) |
 | D12 PENDING colgado en el plan semanal | Mismo TTL que NUT-77 (`MEAL_REPLACEMENT_PENDING_TTL_MINUTES`) → `EXPIRED` | Aprobada (dev, revisión) |
 | D3 Campos de más | Se descartan sin rechazar | Aprobada (dev) |
 | D9 Plan semanal con comida inválida | Se rechaza el plan entero (comportamiento actual) | Aprobada (decisión de la dev, 2026-10-06) |
@@ -67,9 +68,9 @@ Los números que llegan como string numérico ("15") se convierten en `normalize
 **D3 — Campos de más.** Se descartan sin rechazar: el `normalizedRecipe` se arma por lista blanca. Los mensajes de error nunca incluyen el prompt, el texto generado completo ni un stack trace.
 
 **D4 — Calorías (aprobada por el TL).** Si están `protein`, `carbs` y `fat`: `esperado = 4·P + 4·C + 9·G` y `desvío = |kcal − esperado| / esperado`. Hasta 15 % está OK; entre 15 % y 35 % da el warning `CALORIE_MACRO_MISMATCH`; más de 35 % da `INVALID_RANGE`. Si `esperado = 0` y `kcal > 0`, también `INVALID_RANGE`.
-**D4b — Sin carbohidratos o grasas** (hoy, todas las comidas de Gemini): la regla no se aplica y queda el warning `CALORIE_CHECK_SKIPPED` en el snapshot. El validador acepta los macros con las dos formas reales (`Protein`/`protein`…).
+**D4b — Sin carbohidratos o grasas (PENDIENTE DE CONFIRMAR CON EL TL)** (hoy, todas las comidas de Gemini): la regla no se aplica y queda el warning `CALORIE_CHECK_SKIPPED` en el snapshot. El validador acepta los macros con las dos formas reales (`Protein`/`protein`…).
 
-**D5 — Cantidades.** Se aceptan números, strings numéricos ("200", "0,5") y fracciones ("1/2", "1 1/2"). Una lista fija y explícita de expresiones sin cantidad ("al gusto", "a gusto", "c/n", "cantidad necesaria") se guarda con `quantity: null` y el warning `NON_NUMERIC_QUANTITY`. Si en ese caso la unidad viene vacía, la expresión pasa a ser la unidad (por ejemplo `{ name: "Sal", quantity: null, unit: "al gusto" }`). Cualquier otro texto, 0 o un negativo da `INVALID_RANGE`. "1.000" o "2.500" (punto seguido de exactamente 3 dígitos) son ambiguos (¿mil o uno?) y también dan `INVALID_RANGE`; "0.125" no es ambiguo y se acepta. Las cantidades se redondean a 2 decimales ("1/3" → 0.33). Unidades: minúsculas y alias `gr`, `grs` → `g`; `cc` → `ml`.
+**D5 — Cantidades.** (La lista de expresiones sin cantidad está PENDIENTE DE CONFIRMAR CON EL TL.) Se aceptan números, strings numéricos ("200", "0,5") y fracciones ("1/2", "1 1/2"). Una lista fija y explícita de expresiones sin cantidad ("al gusto", "a gusto", "c/n", "cantidad necesaria") se guarda con `quantity: null` y el warning `NON_NUMERIC_QUANTITY`. Si en ese caso la unidad viene vacía, la expresión pasa a ser la unidad (por ejemplo `{ name: "Sal", quantity: null, unit: "al gusto" }`). Cualquier otro texto, 0 o un negativo da `INVALID_RANGE`. "1.000", "2.500", "1,000" o "2,500" (punto o coma seguido de exactamente 3 dígitos, con parte entera distinta de 0) son ambiguos (¿mil o uno?) y también dan `INVALID_RANGE`; "0.125", "0,125" y "1,5" no son ambiguos y se aceptan. Las cantidades se redondean a 2 decimales ("1/3" → 0.33). Unidades: minúsculas y alias `gr`, `grs` → `g`; `cc` → `ml`.
 
 **D6 — Lotes (aprobada por el TL).** El validador devuelve un resultado por receta y el que llama decide qué hacer con las faltantes. Los errores de lote completo cortan todo porque no hay recetas individuales para evaluar.
 
@@ -91,9 +92,9 @@ Los números que llegan como string numérico ("15") se convierten en `normalize
 
 Hoy sólo aplica al reemplazo de una comida, porque el plan semanal no pide categorías a Gemini.
 
-**D9 — Diccionario de ingredientes.** Las palabras clave y excepciones de las restricciones (nuts, dairy, gluten, shellfish, soy) se mueven al validador sin cambios. Se agregan los grupos carne, pescado, huevo y miel, que sólo usa D8. Se busca por palabra completa, sin acentos ni mayúsculas, con plural opcional. Así "panceta" no es "pan", "repollo" no es "pollo" y "nutmeg" no es "nut". El util viejo se borra.
+**D9 — Diccionario de ingredientes.** Las palabras clave y excepciones de las restricciones (nuts, dairy, gluten, shellfish, soy) se mueven al validador sin cambios. Se agregan los grupos carne, pescado, huevo y miel, que sólo usa D8. Palabras agregadas en la revisión final: lácteos "lacteo" y "lactosa"; frutos secos "pinon" ("piñones"); gluten "bulgur", "espelta", "malta" y "salvado"; soja "shoyu". Ninguna da falso positivo dentro de otra palabra ("salvadoreño", "maltada"), y "Yogur sin lactosa" sigue siendo lácteo por "yogur". Se busca por palabra completa, sin acentos ni mayúsculas, con plural opcional. Así "panceta" no es "pan", "repollo" no es "pollo" y "nutmeg" no es "nut". El util viejo se borra.
 - **Qué textos se revisan:** se decide en un solo lugar (`restrictionTexts`): título de la comida y de la receta, descripciones, nombres de ingredientes y **pasos**. Lo usan el validador, el plan manual y editado, y los filtros del catálogo (reemplazo y duplicados).
-- **Negaciones explícitas:** antes de buscar se borran "sin X" y "libre de X" para cada palabra del grupo ("Servir sin maní"), además de las excepciones fijas ("nuez moscada", "leche de almendras"…). Sólo se borra esa mención: "sin queso, con crema" sigue siendo lácteo, y un ingrediente "Maní" se detecta aunque un paso diga "sin maní extra". Antes sólo existían algunas negaciones fijas ("sin gluten", "sin frutos secos", "sin soja"…); "sin maní" o "sin nueces" son nuevas.
+- **Negaciones explícitas (PENDIENTE DE CONFIRMAR CON EL TL):** antes de buscar se borran "sin X" y "libre de X" para cada palabra del grupo ("Servir sin maní"), además de las excepciones fijas ("nuez moscada", "leche de almendras"…). Sólo se borra esa mención: "sin queso, con crema" sigue siendo lácteo, y un ingrediente "Maní" se detecta aunque un paso diga "sin maní extra". Antes sólo existían algunas negaciones fijas ("sin gluten", "sin frutos secos", "sin soja"…); "sin maní" o "sin nueces" son nuevas. Caso especial que también queda a confirmar: "X sin gluten" ("Pan sin gluten") anula además la palabra anterior, así que "pan" no cuenta como gluten en esa frase.
 
 **D10 — Servicio de validación (Nest).** Vive en el módulo de planes, junto al adaptador de IA y al repositorio de `GenerationRun`. NUT-73 también vivirá ahí.
 - `validateDrafts(drafts, profile)`: busca en el catálogo las recetas con los mismos títulos, filtra las inseguras para el perfil y valida cada draft por separado. Sólo lee. (Los duplicados dentro de un lote quedan en la función pura `validateRecipes`, lista para NUT-73.)
@@ -106,7 +107,7 @@ Hoy sólo aplica al reemplazo de una comida, porque el plan semanal no pide cate
 
 **D11 — HTTP.** Contenido inválido → **422**. Proveedor caído o timeout → **503** (`AiProviderUnavailableError`). El adaptador de Gemini devuelve el texto crudo, no parsea, y nunca tira un 500 genérico por fallas del proveedor. El timeout de 15 s se pasa como `signal` en el primer nivel de las opciones, que es donde lo lee el SDK (antes iba anidado y nunca se aplicaba). `AI_TIMEOUT` se decide mirando la señal abortada, porque el SDK lanza `GoogleGenerativeAIAbortError`, no `AbortError`.
 
-**D13 — Modelo de Gemini (2026-10-06).** `gemini-1.5-flash` ya no existe para la API key del proyecto (la API responde 404 NOT_FOUND), así que toda generación real fallaba (500 antes, 503 `AI_PROVIDER_ERROR` con NUT-74). Se cambia a `gemini-3.5-flash` (verificado disponible, con `generateContent`). Pendiente: medir con una generación real si el timeout de 15 s alcanza y evaluar las salidas con el validador (`ai-generation-safety`). El SDK queda en `@google/generative-ai` 0.24.1, declarado como `"latest"` en package.json (conviene fijarlo).
+**D13 — Modelo de Gemini (2026-10-06).** `gemini-1.5-flash` ya no existe para la API key del proyecto (la API responde 404 NOT_FOUND), así que toda generación real fallaba (500 antes, 503 `AI_PROVIDER_ERROR` con NUT-74). Se cambia a `gemini-3.5-flash` (verificado disponible, con `generateContent`). Pendiente: medir con una generación real si el timeout de 15 s alcanza y evaluar las salidas con el validador (`ai-generation-safety`). El SDK queda fijado en `@google/generative-ai` 0.24.1 (package.json y lockfile).
 
 **D12 — Runs PENDING colgados en el plan semanal.** Se reutiliza el mecanismo de NUT-77 (helper compartido, misma variable `MEAL_REPLACEMENT_PENDING_TTL_MINUTES`, 10 min por defecto): un `PENDING` más viejo que el TTL pasa a `EXPIRED` (`PENDING_TIMEOUT`) y la generación arranca de cero. Además, todo error inesperado después de crear el run lo deja `FAILED` (`UNEXPECTED_ERROR`), y las transiciones de error nunca tapan el error original (un 503 no se vuelve 500 si falla la base).
 
@@ -114,7 +115,7 @@ Hoy sólo aplica al reemplazo de una comida, porque el plan semanal no pide cate
 
 **Plan semanal (generación con IA, `MEAL_PLAN_INITIAL`).**
 1. Gemini devuelve texto crudo. Si falla el proveedor → run `FAILED` (`AI_TIMEOUT` o `AI_PROVIDER_ERROR`) y 503.
-2. `parseJsonOutput`. Si falla → run `REJECTED` y 422.
+2. `parseJsonOutput`. Si falla → run `REJECTED` y 422. Si `days` no es una lista → `MISSING_FIELD`; si es una lista con una cantidad distinta de 7 → `COUNT_MISMATCH` (rechaza el lote entero, con snapshot y log como los demás rechazos).
 3. Cada comida se valida con `validateRecipe` (sin duplicados de lote: repetir una comida en la semana es normal). **Si alguna es inválida, se rechaza el plan entero** → run `REJECTED` y 422. Hoy no hay mecanismo para cubrir el hueco (D9 de la tabla); el validador ya devuelve un resultado por receta para cuando exista.
 4. Un duplicado exacto del catálogo no es un rechazo: la comida queda apuntando a la receta existente (no se crea otra ni se busca imagen).
 5. Envoltorio del plan (7 días, fechas, `mealType`, macros de la comida) con los DTOs existentes y las recetas ya normalizadas. Si falla → run `REJECTED` (`AI_INVALID_SCHEMA`) y 422.

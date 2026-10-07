@@ -47,11 +47,12 @@ function noQuantityExpression(value: unknown): string | null {
 }
 
 // Números, strings numéricos ("200", "0,5") y fracciones ("1/2", "1 1/2"). Cualquier otra cosa es NaN.
-// "1.000" (punto seguido de exactamente 3 dígitos) es ambiguo (¿mil o uno?): también es NaN.
+// "1.000" o "1,000" (punto o coma seguido de exactamente 3 dígitos, parte entera ≠ 0) es ambiguo
+// (¿mil o uno?): también es NaN. "0,125" y "1,5" no son ambiguos.
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return value;
   if (typeof value !== 'string') return Number.NaN;
-  if (/^[1-9]\d*\.\d{3}$/.test(value.trim())) return Number.NaN;
+  if (/^[1-9]\d*[.,]\d{3}$/.test(value.trim())) return Number.NaN;
   const text = value.trim().replace(',', '.');
   if (/^\d+(\.\d+)?$/.test(text)) return Number(text);
   const fraction = /^(?:(\d+)\s+)?(\d+)\/(\d+)$/.exec(text);

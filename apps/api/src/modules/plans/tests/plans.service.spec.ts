@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { NotFoundException, ConflictException, BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { Logger, NotFoundException, ConflictException, BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
 import { AiProviderUnavailableError } from '../gemini/gemini.service';
@@ -191,6 +191,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       ['una respuesta vacía', '', 'EMPTY_OUTPUT'],
       ['una respuesta que no es JSON', 'no es json', 'INVALID_JSON'],
       ['JSON sin "days"', JSON.stringify({ semana: [] }), 'MISSING_FIELD'],
+      ['"days" que no es una lista', JSON.stringify({ days: { MONDAY: [] } }), 'MISSING_FIELD'],
       ['una comida con texto como cantidad', weekWith(meal({ ingredients: [{ name: 'Quinoa', quantity: 'mucha', unit: 'g' }] })), 'INVALID_RANGE'],
       ['una comida sin pasos', weekWith(meal({ instructions: [] })), 'MISSING_FIELD'],
       ['una comida sin receta', weekWith({ ...baseMeal(), recipe: undefined }), 'MISSING_FIELD'],
@@ -203,6 +204,21 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         validationSnapshot: expect.objectContaining({ codes: [errorCode] }),
       });
       expectNoDomainWrites();
+    });
+
+    it.each([6, 8])('%p días en vez de 7: COUNT_MISMATCH (422, REJECTED, snapshot y log), no AI_INVALID_SCHEMA', async (count) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const days = Array.from({ length: count }, (_, index) => generatedDays[index % 7]);
+      mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({ days }));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
+        errorCode: 'COUNT_MISMATCH',
+        validationSnapshot: { stage: 'parse', codes: ['COUNT_MISMATCH'], warnings: [] },
+      });
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'recipe_validation_rejected', code: 'COUNT_MISMATCH' }));
+      expectNoDomainWrites();
+      warn.mockRestore();
     });
 
     it('una sola comida con un ingrediente excluido rechaza el plan entero (hoy no hay forma de cubrir el hueco)', async () => {
