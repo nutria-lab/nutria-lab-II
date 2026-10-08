@@ -81,12 +81,19 @@ export class RecipeGenerationRepository {
       if (canonicalJson(existing.requestSnapshot) !== canonicalJson(requestSnapshot)) {
         throw new ConflictException('Idempotency key was already used with another preview request');
       }
-      if (existing.status === 'READY_FOR_REVIEW' && existing.expiresAt && existing.expiresAt <= new Date()) {
+      if ((existing.status === 'READY_FOR_REVIEW' || existing.status === 'PENDING') && existing.expiresAt && existing.expiresAt <= new Date()) {
+        const now = new Date();
         const expired = await this.prisma.generationRun.updateMany({
-          where: { id: existing.id, userId: input.userId, status: 'READY_FOR_REVIEW' },
-          data: { status: 'EXPIRED', completedAt: new Date() },
+          where: { id: existing.id, userId: input.userId, status: existing.status, expiresAt: { lte: now } },
+          data: { status: 'EXPIRED', completedAt: now },
         });
         if (expired.count === 1) return this.createOrRecoverPreviewRun(input);
+        const winner = await this.prisma.generationRun.findFirst({
+          where: { userId: input.userId, kind: input.kind as never, idempotencyKeyHash, status: { in: ['PENDING', 'READY_FOR_REVIEW', 'CONFIRMED'] } as never },
+        });
+        if (winner && canonicalJson(winner.requestSnapshot) === canonicalJson(requestSnapshot)) {
+          return { run: winner as unknown as { id: string; status: string; outputSnapshot: unknown }, wasCreated: false };
+        }
         throw new ConflictException('Recipe preview expiration conflicted');
       }
       return { run: existing as unknown as { id: string; status: string; outputSnapshot: unknown }, wasCreated: false };
