@@ -56,7 +56,7 @@ describe('GeminiService.generateReplacementMeal (NUT-77)', () => {
     });
   });
 
-  it('aborta a los 15 s y lanza AiProviderUnavailableError(AI_TIMEOUT)', async () => {
+  it('aborta a los 90 s y lanza AiProviderUnavailableError(AI_TIMEOUT)', async () => {
     jest.useFakeTimers();
     const generateContent = jest.fn((_request: unknown, options: any) => new Promise((_resolve, reject) => {
       // Como el SDK real (0.24.1): lee `signal` en el primer nivel de las opciones y, al abortar,
@@ -67,7 +67,7 @@ describe('GeminiService.generateReplacementMeal (NUT-77)', () => {
 
     const pending = service.generateReplacementMeal(profile, 'DINNER' as any, criteria);
     const assertion = expect(pending).rejects.toBeInstanceOf(AiProviderUnavailableError);
-    await jest.advanceTimersByTimeAsync(15000);
+    await jest.advanceTimersByTimeAsync(90_000);
 
     await assertion;
     await expect(pending).rejects.toMatchObject({ reason: 'AI_TIMEOUT' });

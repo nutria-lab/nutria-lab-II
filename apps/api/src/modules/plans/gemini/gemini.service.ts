@@ -10,19 +10,10 @@ import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCr
  * `plans.service.ts`. Nota de discrepancia documentada en design.md sección 1: el código real
  * usa Gemini (`@google/generative-ai`), no OpenAI.
  */
-export const GEMINI_PROVIDER = 'google-generative-ai';
-export const GEMINI_MODEL_NAME = 'gemini-3.5-flash';
-
-const TIMEOUT_MS = 15000;
+export { AiProviderUnavailableError, GEMINI_MODEL_NAME, GEMINI_PROVIDER } from './gemini.constants';
+import { AiProviderUnavailableError, GEMINI_MODEL_NAME, GEMINI_REQUEST_TIMEOUT_MS } from './gemini.constants';
 
 // Gemini no respondió a tiempo o falló: los servicios lo traducen a 503.
-export class AiProviderUnavailableError extends Error {
-  constructor(readonly reason: 'AI_TIMEOUT' | 'AI_PROVIDER_ERROR') {
-    super(`AI provider unavailable: ${reason}`);
-    this.name = 'AiProviderUnavailableError';
-  }
-}
-
 // Adaptador de Gemini. Devuelve el texto crudo y nunca lo parsea: la respuesta es output no
 // confiable hasta que la valida el servidor (NUT-74). Las fallas del proveedor siempre son
 // AiProviderUnavailableError.
@@ -65,7 +56,7 @@ export class GeminiService {
     });
 
     const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), TIMEOUT_MS);
+    const timeoutId = setTimeout(() => abortController.abort(), GEMINI_REQUEST_TIMEOUT_MS);
 
     try {
       // El SDK lee `signal` en el primer nivel de las opciones (SingleRequestOptions).
