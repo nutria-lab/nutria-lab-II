@@ -1,6 +1,11 @@
 import type { Recipe } from '../../../../services/recipeService';
 import { RECIPE_CATEGORY_LABELS } from '../../labels';
 
+// "150 g"; sin cantidad ("al gusto", NUT-74) sólo la unidad.
+function formatIngredientAmount(item: Recipe['ingredients'][number]): string {
+  return item.quantity == null ? item.unit : `${item.quantity} ${item.unit}`;
+}
+
 export function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
   const primaryCategoryRaw = (recipe.categories ?? [])[0];
   const primaryCategory = primaryCategoryRaw
@@ -87,7 +92,7 @@ export function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
               className="flex items-center justify-between rounded-xl border border-outline-variant/30 bg-white p-3 shadow-sm"
             >
               <span>{item.name}</span>
-              <span className="font-semibold text-brand-green">{`${item.quantity} ${item.unit}`}</span>
+              <span className="font-semibold text-brand-green">{formatIngredientAmount(item)}</span>
             </li>
           ))}
         </ul>
@@ -217,7 +222,7 @@ export function DesktopIngredientsAndSteps({ recipe }: { recipe: Recipe }) {
               className="flex items-center justify-between p-2 rounded-lg bg-surface-container-low border border-outline-variant/20 transition-colors hover:bg-white"
             >
               <span className="font-medium text-on-surface">• {item.name}</span>
-              <span className="font-bold text-brand-green">{`${item.quantity} ${item.unit}`}</span>
+              <span className="font-bold text-brand-green">{formatIngredientAmount(item)}</span>
             </li>
           ))}
         </ul>

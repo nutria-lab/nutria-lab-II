@@ -18,7 +18,7 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "latest",
+    "@google/generative-ai": "0.24.1",
     "@nestjs/common": "latest",
     "@nestjs/config": "latest",
     "@nestjs/core": "latest",

@@ -19,8 +19,12 @@ import { normalizeProperties } from '../../utils/normalize-properties.util';
 import { MealDto, ReplaceMealDto } from './dto';
 import { AiProviderUnavailableError, GeminiService, GEMINI_MODEL_NAME, GEMINI_PROVIDER } from './gemini/gemini.service';
 import { REPLACEMENT_PROMPT_VERSION } from './gemini/prompts';
+import { parseJsonOutput } from '../recipe/validation/parse-generated-output';
 import { buildProfileSnapshot } from './generation-run-snapshot';
-import { findRestrictionViolation, forbiddenRestrictions } from './meal-restrictions.util';
+import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
+import { reusableDuplicate, summarizeParseFailure, summarizeResults } from '../recipe/validation/validate-recipe';
+import { isStalePendingRun } from './generation-run-ttl';
+import { RecipeValidationService, mealToDraftInput } from './recipe-validation.service';
 import { MealReplacementConflictError, PlansRepository } from './plans.repository';
 import { UnsplashService, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
 import type { PersistedRecipeImage, RecipeImage } from '@/modules/unsplash/recipe-image.types';
@@ -28,7 +32,6 @@ import type { PersistedRecipeImage, RecipeImage } from '@/modules/unsplash/recip
 const KIND = 'MEAL_REPLACEMENT';
 // Cuántas recetas del catálogo pedir a NUT-72: si la mejor no pasa las restricciones, se prueba la siguiente.
 const COVERAGE_CANDIDATES = 5;
-const DEFAULT_PENDING_TTL_MINUTES = 10;
 
 type ReplacementCriteria = {
   topic?: string;
@@ -63,6 +66,7 @@ export class MealReplacementService {
     private readonly coverage: RecipeCoverageService,
     private readonly config: ConfigService,
     private readonly unsplash: UnsplashService,
+    private readonly validation: RecipeValidationService,
   ) {}
 
   async replaceMeal(
@@ -112,7 +116,7 @@ export class MealReplacementService {
     let { run, wasCreated } = await createOrRecoverRun();
 
     // Un intento anterior quedó colgado: se lo marca EXPIRED, lo que libera la clave, y se sigue de cero.
-    if (!wasCreated && this.isStalePending(run)) {
+    if (!wasCreated && isStalePendingRun(run, this.config)) {
       await this.repository.transitionGenerationRun(run.id, userId, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
       ({ run, wasCreated } = await createOrRecoverRun());
     }
@@ -150,7 +154,7 @@ export class MealReplacementService {
           outputSnapshot: { path: 'REUSED_EXISTING_RECIPE' },
           validationSnapshot: { source: 'coverage', restrictionsChecked: true },
         }
-      : await this.generateRecipe(userId, runId, profile, meal.mealType, criteria, forbidden);
+      : await this.generateRecipe(userId, runId, profile, meal.mealType, criteria, meal.recipeId ?? null);
 
     // 4. Guardar, sólo la comida objetivo, en una transacción corta.
     let saved: { recipe: any; plannedMeal: any };
@@ -198,15 +202,6 @@ export class MealReplacementService {
     }
   }
 
-  // PENDING más viejo que MEAL_REPLACEMENT_PENDING_TTL_MINUTES (por defecto 10): el intento se colgó.
-  private isStalePending(run: { status: string; startedAt?: Date | string; createdAt?: Date | string }): boolean {
-    if (run.status !== 'PENDING') return false;
-    const configured = Number(this.config.get<string>('MEAL_REPLACEMENT_PENDING_TTL_MINUTES'));
-    const ttlMinutes = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_PENDING_TTL_MINUTES;
-    const startedAt = new Date(run.startedAt ?? run.createdAt ?? Date.now()).getTime();
-    return Date.now() - startedAt > ttlMinutes * 60_000;
-  }
-
   // Ordenados, sin duplicados y (propiedades) en minúsculas: el mismo pedido escrito distinto da la misma huella.
   private normalizeCriteria(dto: ReplaceMealDto): ReplacementCriteria {
     const topic = dto.topic?.trim();
@@ -246,11 +241,8 @@ export class MealReplacementService {
 
     for (const excludeRecipeIds of exclusions) {
       const found = await this.compatibleCatalogRecipes(userId, criteria, excludeRecipeIds);
-      // Defensa extra: la receta también tiene que pasar la misma validación de restricciones que la IA.
-      const safe = found.find(recipe => !findRestrictionViolation(
-        { title: recipe.title, nutritionalValues: { Description: recipe.description }, recipe: recipe as any },
-        forbidden,
-      ));
+      // Defensa extra: la receta también tiene que pasar el mismo diccionario de restricciones que la IA (NUT-74).
+      const safe = found.find(recipe => !findExcludedIngredient(restrictionTexts(recipe), forbidden));
       if (safe) return safe;
     }
     return null;
@@ -267,18 +259,20 @@ export class MealReplacementService {
     }
   }
 
-  // NUT-73/74: genera exactamente una comida y la valida antes de guardarla.
+  // NUT-73/74: genera exactamente una comida y el servidor la valida antes de guardarla (la IA
+  // nunca juzga su propio output). Inválida → REJECTED y 422, sin escribir nada. Un duplicado
+  // exacto del catálogo no es un rechazo: se reutiliza esa receta.
   private async generateRecipe(
     userId: string,
     runId: string,
     profile: NutritionProfile,
     mealType: MealType,
     criteria: ReplacementCriteria,
-    forbidden: string[],
+    currentRecipeId: string | null,
   ) {
-    let generated: unknown;
+    let raw: string;
     try {
-      generated = await this.gemini.generateReplacementMeal(profile, mealType, criteria);
+      raw = await this.gemini.generateReplacementMeal(profile, mealType, criteria);
     } catch (error) {
       if (error instanceof AiProviderUnavailableError) {
         await this.failRun(runId, userId, 'FAILED', error.reason);
@@ -287,24 +281,52 @@ export class MealReplacementService {
       throw error;
     }
 
-    const meal = plainToInstance(MealDto, { ...(generated as object), mealType });
-    if (!generated || (await validate(meal)).length > 0) {
-      await this.failRun(runId, userId, 'REJECTED', 'AI_INVALID_SCHEMA');
-      throw new UnprocessableEntityException('No compatible replacement was found');
-    }
-    if (findRestrictionViolation(meal, forbidden)) {
-      await this.failRun(runId, userId, 'REJECTED', 'RESTRICTION_VIOLATION');
-      throw new UnprocessableEntityException('No compatible replacement was found');
-    }
-    const tags = this.recipeTags(generated);
-    if (!this.meetsCriteria(meal.recipe.prepMinutes, tags, criteria)) {
-      await this.failRun(runId, userId, 'REJECTED', 'CRITERIA_NOT_MET');
+    const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
+    const parsed = parseJsonOutput(raw);
+    if (!parsed.ok) {
+      await this.validation.reject(run, summarizeParseFailure(parsed.errors));
       throw new UnprocessableEntityException('No compatible replacement was found');
     }
 
-    const { recipe } = meal;
+    const [result] = await this.validation.validateDrafts([mealToDraftInput(parsed.value)], profile);
+    const duplicate = reusableDuplicate(result);
+    if (!result.valid && !duplicate) {
+      await this.validation.reject(run, summarizeResults([result]));
+      throw new UnprocessableEntityException('No compatible replacement was found');
+    }
+    // Receta ya normalizada: la del resultado válido o la del duplicado que se va a reutilizar.
+    const recipe = result.valid ? result.normalizedRecipe : duplicate!.normalizedRecipe;
+
+    // Envoltorio de la comida (título y macros) con la receta ya normalizada.
+    const meal = plainToInstance(MealDto, { ...(parsed.value as Record<string, unknown>), mealType, recipe });
+    if ((await validate(meal)).length > 0) {
+      await this.validation.rejectWithCode(run, 'AI_INVALID_SCHEMA');
+      throw new UnprocessableEntityException('No compatible replacement was found');
+    }
+
+    const mealFields = {
+      title: meal.title,
+      nutritionalValues: { ...meal.nutritionalValues },
+      validationSnapshot: { ...summarizeResults([result]) },
+    };
+    if (duplicate) {
+      // Reutilizar la receta que la comida ya tiene no es un reemplazo.
+      const existing = duplicate.recipeId === currentRecipeId ? null : await this.repository.findRecipeById(duplicate.recipeId);
+      if (!existing || !this.meetsCriteria(existing.prepMinutes, existing, criteria)) {
+        await this.validation.rejectWithCode(run, 'CRITERIA_NOT_MET');
+        throw new UnprocessableEntityException('No compatible replacement was found');
+      }
+      return { ...mealFields, existingRecipeId: duplicate.recipeId, outputSnapshot: { path: 'REUSED_DUPLICATE_RECIPE' } };
+    }
+
+    if (!this.meetsCriteria(recipe.prepMinutes, recipe, criteria)) {
+      await this.validation.rejectWithCode(run, 'CRITERIA_NOT_MET');
+      throw new UnprocessableEntityException('No compatible replacement was found');
+    }
+
     const image = await this.findImage(recipe.title);
     return {
+      ...mealFields,
       newRecipe: {
         ...(image ? { image } : {}),
         title: recipe.title,
@@ -313,23 +335,11 @@ export class MealReplacementService {
         cookMinutes: recipe.cookMinutes,
         ingredients: recipe.ingredients as any,
         instructions: recipe.instructions,
-        categories: tags.categories,
-        properties: tags.properties,
+        categories: recipe.categories,
+        properties: recipe.properties,
       },
-      title: meal.title,
-      nutritionalValues: { ...meal.nutritionalValues },
       outputSnapshot: { path: 'AI_GENERATED' },
-      validationSnapshot: { source: 'ai', restrictionsChecked: true },
     };
-  }
-
-  // Categorías (sólo valores válidos) y propiedades (normalizadas) con las que Gemini clasificó la receta.
-  private recipeTags(generated: unknown): { categories: RecipeCategory[]; properties: string[] } {
-    const recipe = (generated as { recipe?: { categories?: unknown; properties?: unknown } }).recipe ?? {};
-    const valid = new Set<string>(Object.values(RecipeCategory));
-    const categories = Array.isArray(recipe.categories) ? recipe.categories.filter(value => valid.has(value)) : [];
-    const properties = Array.isArray(recipe.properties) ? recipe.properties.filter(value => typeof value === 'string') : [];
-    return { categories: [...new Set(categories)] as RecipeCategory[], properties: normalizeProperties(properties) };
   }
 
   // Misma regla que NUT-72: tiempo máximo, al menos una categoría pedida y todas las propiedades pedidas.

@@ -337,7 +337,7 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
         const tx = {
           mealPlan: {
             findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-            update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
             create: jest.fn().mockResolvedValue({
               ...anteriorPlan,
               id: 'plan-new-ac7',

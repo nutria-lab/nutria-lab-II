@@ -36,6 +36,22 @@ type RecipeImageWithTracking = {
   [key: string]: unknown;
 };
 
+// Comida a persistir. `reuseRecipeId` lo pone sólo el servidor;
+// el ValidationPipe global rechaza esa clave si viene de un cliente.
+export type PersistableMeal = MealPlanDayDto['meals'][number] & { reuseRecipeId?: string };
+
+// Opciones del supersede. El PUT pasa la versión que leyó; la regeneración (NUT-78) además su
+// updatedAt (control optimista), recetas AI y el resumen de validación de NUT-74.
+export interface SupersedeOptions {
+  expectedPlanId?: string;
+  expectedPlanUpdatedAt?: Date;
+  recipeOrigin?: 'MANUAL' | 'AI';
+  validationSnapshot?: Record<string, unknown>;
+}
+
+// Mismo 409 para todo "el plan cambió mientras se procesaba el pedido".
+const PLAN_CHANGED = 'The meal plan changed; retry';
+
 // Recetas creadas con imagen, para que el servicio registre su uso después de la transacción.
 // La imagen es el mismo objeto recibido: así el servicio reconoce las que conservó del plan.
 export type RecipeForTracking = { recipeId: string; image: RecipeImageWithTracking };
@@ -67,6 +83,19 @@ export class PlansRepository {
     });
   }
 
+  // NUT-78: la versión creada por un run (para el replay idempotente), sea o no la current.
+  async findPlanByGenerationRunId(generationRunId: string, userId: string) {
+    return this.prisma.mealPlan.findFirst({
+      where: { generationRunId, userId },
+      include: {
+        days: {
+          orderBy: { date: 'asc' },
+          include: { meals: { include: { recipe: true } } },
+        },
+      },
+    });
+  }
+
   async checkPlanExists(userId: string, weekStart: Date) {
     const plan = await this.prisma.mealPlan.findFirst({
       where: { userId, startDate: weekStart, isCurrent: true },
@@ -75,49 +104,24 @@ export class PlansRepository {
     return !!plan;
   }
 
-  async deletePlanTransaction(planId: string, recipeIds: string[]){
+  // Borra esa versión del plan (días y comidas en cascada) sólo si sigue siendo la current del
+  // usuario; si una regeneración la reemplazó entretanto, 409 en vez de borrar historia. Devuelve
+  // el plan borrado. Las recetas nunca se borran: las comparten otras versiones y otros planes, y el
+  // catálogo es compartido (NUT-78, mínimo de NUT-76).
+  async deletePlanTransaction(planId: string, userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      // 1. Borrar el plan (borra días y comidas en cascada)
-      const deletedPlan = await tx.mealPlan.delete({
-        where: { id: planId }
-      });
-
-      // 2. Borrar las recetas huérfanas pasadas por el servicio
-      if (recipeIds.length > 0) {
-        const inUseRecipes = await tx.plannedMeal.findMany({
-          where: { recipeId: { in: recipeIds } },
-          select: { recipeId: true }
-        });
-        const inUseSet = new Set(inUseRecipes.map(r => r.recipeId));
-        const toDelete = recipeIds.filter(id => id && !inUseSet.has(id)) as string[];
-
-        if (toDelete.length > 0) {
-          await tx.recipe.deleteMany({
-            where: { id: { in: toDelete } }
-          });
-        }
+      try {
+        return await tx.mealPlan.delete({ where: { id: planId, userId, isCurrent: true } });
+      } catch (error: any) {
+        if (error?.code === 'P2025') throw new ConflictException(PLAN_CHANGED);
+        throw error;
       }
-
-      return deletedPlan;
     });
   }
 
   /**
    * Crea las filas de `MealPlanDay`/`PlannedMeal`/`Recipe` para un plan ya creado, dentro de
    * la transacción recibida.
-   *
-   * NUT-75 Bug 1 (bloqueante, revisión externa de PR): `origin` y `generationRunId` son dos
-   * decisiones independientes, nunca derivadas la una de la otra:
-   *  - `generationRunId` (cuando viene definido) sólo controla si se estampa la FK de
-   *    trazabilidad hacia el `GenerationRun` en curso (design.md Flujo C paso 1a).
-   *  - `recipeOrigin` (parámetro explícito, nunca inferido de si `generationRunId` está
-   *    presente) controla el campo `origin`. Si no se pasa, se omite el campo por completo y
-   *    el `@default(MANUAL)` de Prisma aplica sin cambios de comportamiento.
-   *
-   * Antes de este fix, `origin: 'AI'` se estampaba cada vez que `generationRunId` era truthy,
-   * lo cual era incorrecto para `updatePlanTransaction` (`PUT /meal-plans`, edición manual),
-   * que también recibe un `generationRunId` (el de `MEAL_PLAN_REGENERATION`) sin que eso
-   * signifique que las recetas fueron generadas por IA.
    */
   private async createDaysMealsAndRecipes(
     tx: any,
@@ -133,10 +137,13 @@ export class PlansRepository {
         data: { mealPlanId: planId, day: day.day, date: new Date(day.date) }
       });
 
-      for (const meal of day.meals) {
+      for (const meal of day.meals as PersistableMeal[]) {
         let recipeId = null;
 
-        if (meal.recipe) {
+        if (meal.reuseRecipeId) {
+          // Duplicado exacto de una receta del catálogo; se reutiliza, no se crea otra.
+          recipeId = meal.reuseRecipeId;
+        } else if (meal.recipe) {
           const recipeData: any = {
             title: meal.recipe.title,
             description: meal.recipe.description,
@@ -154,7 +161,7 @@ export class PlansRepository {
             recipeData.origin = recipeOrigin;
           }
 
-          // `image` ya viene resuelto desde el servicio: sólo se copia, sin red (D2).
+          // `image` ya viene resuelto desde el servicio: sólo se copia, sin red .
           const recipeImage = (meal.recipe as { image?: unknown }).image;
           if (recipeImage !== undefined) {
             recipeData.image = recipeImage;
@@ -253,6 +260,8 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin: 'MANUAL' | 'AI' | undefined = generationRunId ? 'AI' : undefined,
+    // NUT-74: resumen del validador determinístico; sin él se guarda el snapshot legado { restrictionsChecked: true }.
+    validationSnapshot?: Record<string, unknown>,
   ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       const planData: any = {
@@ -283,7 +292,7 @@ export class PlansRepository {
         // corrió antes de llegar acá.
         await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
           outputSnapshot: this.buildOutputSnapshot(generatedDays),
-          validationSnapshot: { restrictionsChecked: true },
+          validationSnapshot: validationSnapshot ?? { restrictionsChecked: true },
         });
       }
 
@@ -291,16 +300,8 @@ export class PlansRepository {
     });
   }
 
-  /**
-   * NUT-75 Bug 4 (no bloqueante, revisión externa de PR): usado como `outputSnapshot` de la
-   * transición final a `SUCCEEDED`. Antes de este fix sólo se guardaba `{dayCount, mealCount}`,
-   * lo cual no permitía auditar QUÉ se generó (títulos, valores nutricionales, ingredientes,
-   * instrucciones), sólo cuántos días/comidas hubo. Se preserva el contenido real generado
-   * devolviendo los propios `days` ya normalizados que se persisten — no es PII (a diferencia
-   * de `profileSnapshot`/`requestSnapshot`, que sí tienen reglas de lista blanca estrictas por
-   * design.md sección 6; esas reglas no aplican acá).
-   */
-  // NUT-83: los snapshots nunca incluyen la clave `image` (design.md 5.4).
+
+ 
   private buildOutputSnapshot(days: MealPlanDayDto[]): { days: MealPlanDayDto[] } {
     const sanitizedDays = days.map(day => ({
       ...day,
@@ -317,15 +318,17 @@ export class PlansRepository {
   }
 
   /**
-   * Flujo D (supersede): en vez de borrar y recrear, marca la versión actual como no-actual y
-   * crea una nueva versión encadenada, todo dentro de la misma transacción, respetando el
-   * orden UPDATE-antes-que-INSERT (design.md Flujo D, "Nota de orden y concurrencia").
+   * Supersede de la versión current de la semana (PUT y regeneración de NUT-78): en vez de borrar y
+   * recrear, la marca como no-actual y crea una nueva versión encadenada, todo en la misma
+   * transacción y en orden UPDATE-antes-que-INSERT. Si se pasa la versión esperada, cualquier
+   * cambio de la current entre la lectura y la transacción da 409.
    */
   async updatePlanTransaction(
     userId: string,
     weekStart: Date,
     newDays: MealPlanDayDto[],
     generationRunId: string,
+    options: SupersedeOptions = {},
   ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       // 1. Ubicar la versión actual.
@@ -333,23 +336,34 @@ export class PlansRepository {
         where: { userId, startDate: weekStart, isCurrent: true },
       });
 
+      // Con versión esperada, que la current sea otra o ya no exista (se borró) es un conflicto: no se
+      // toca nada. Sin versión esperada se mantiene el error previo.
+      if (options.expectedPlanId && current?.id !== options.expectedPlanId) {
+        throw new ConflictException(PLAN_CHANGED);
+      }
       if (!current) {
         throw new Error('No current plan version found to supersede for this week');
       }
 
-      // 2. Marcar la versión actual como no-actual (debe ocurrir antes del insert siguiente).
-      await tx.mealPlan.update({
-        where: { id: current.id },
+      // 2. Marcar la versión actual como no-actual (debe ocurrir antes del insert siguiente), sólo si
+      // sigue current y, si se pidió, sin cambios desde que se leyó: si no, 0 filas → 409.
+      const superseded = await tx.mealPlan.updateMany({
+        where: {
+          id: current.id,
+          userId,
+          isCurrent: true,
+          ...(options.expectedPlanUpdatedAt ? { updatedAt: options.expectedPlanUpdatedAt } : {}),
+        },
         data: { isCurrent: false },
       });
+      if (superseded.count === 0) {
+        throw new ConflictException(PLAN_CHANGED);
+      }
 
       // 3. Insertar la nueva versión.
       // Gap 4 (alto, AC2): el índice único parcial `meal_plans_user_week_current_key`
       // (`WHERE isCurrent = true`) es lo que impide dos versiones "actuales" simultáneas para
-      // el mismo (userId, startDate). Si ese insert viola la unicidad (P2002 — por ejemplo,
-      // una regeneración concurrente que ya insertó su propia versión actual entre el paso 1 y
-      // este paso), se traduce a un error de dominio manejado (ConflictException) en vez de
-      // dejar que la excepción cruda de Prisma llegue al usuario como 500 genérico.
+      // el mismo (userId, startDate). Si ese insert viola la unicidad 
       let newPlan: any;
       try {
         newPlan = await tx.mealPlan.create({
@@ -365,26 +379,21 @@ export class PlansRepository {
         });
       } catch (error: any) {
         if (error?.code === 'P2002') {
-          throw new ConflictException(
-            'Ya existe una versión actual para esta semana (conflicto de unicidad al crear la nueva versión del plan).'
-          );
+          throw new ConflictException(PLAN_CHANGED);
         }
         throw error;
       }
 
       // 4. Crear días/comidas/recetas nuevas colgando de la nueva versión.
-      // NUT-75 Bug 1: `updatePlanTransaction` es el camino de edición MANUAL (`PUT
-      // /meal-plans`, ver `.ai/meal-plans.md`) — nunca llama a Gemini, aunque siempre recibe un
-      // `generationRunId` (el de `MEAL_PLAN_REGENERATION`). Por eso siempre estampa
-      // `recipeOrigin: 'MANUAL'`, nunca `'AI'`, sin importar que `generationRunId` esté
-      // definido: el origen de la receta y la FK de trazabilidad son decisiones
-      // independientes (ver `createDaysMealsAndRecipes`).
-      const recipesForTracking = await this.createDaysMealsAndRecipes(tx, newPlan.id, newDays, generationRunId, 'MANUAL');
+      // `PUT /meal-plans` es edición manual (MANUAL); la regeneración (NUT-78) pasa 'AI'.
+      const recipesForTracking = await this.createDaysMealsAndRecipes(
+        tx, newPlan.id, newDays, generationRunId, options.recipeOrigin ?? 'MANUAL',
+      );
 
       // 5. Transición del GenerationRun a SUCCEEDED (Gap 6: con outputSnapshot/validationSnapshot).
       await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
         outputSnapshot: this.buildOutputSnapshot(newDays),
-        validationSnapshot: { restrictionsChecked: true },
+        validationSnapshot: options.validationSnapshot ?? { restrictionsChecked: true },
       });
 
       return { planId: newPlan.id, recipesForTracking };
@@ -393,11 +402,7 @@ export class PlansRepository {
 
   /**
    * Crea un `GenerationRun` nuevo; si ya existe uno con el mismo `(userId, kind,
-   * idempotencyKeyHash)` en un estado que sigue participando de la unicidad (violación del
-   * índice único PARCIAL de `migration.sql`, código Prisma `P2002` — ver NUT-75 Bug 2:
-   * `schema.prisma` sólo declara un `@@index` no único; la unicidad real vive en SQL y excluye
-   * `FAILED`/`REJECTED`/`EXPIRED`), recupera y devuelve el existente en vez de lanzar (Flujo A
-   * paso 5, AC3).
+   * idempotencyKeyHash)` en un estado que sigue participando de la unicidad, recupera y devuelve el existente en vez de lanzar
    */
   async createOrRecoverGenerationRun(
     userId: string,
@@ -428,7 +433,7 @@ export class PlansRepository {
       return { run, wasCreated: true };
     } catch (error: any) {
       if (error?.code === 'P2002') {
-        // Sólo los runs activos ocupan la clave (mismo criterio que el índice único parcial);
+        // Sólo los runs activos ocupan la clave
         // un FAILED/REJECTED/EXPIRED viejo con el mismo hash nunca se devuelve.
         const active = await (this.prisma.generationRun.findMany as any)({
           where: { userId, kind, idempotencyKeyHash, status: { in: ACTIVE_RUN_STATUSES } },
@@ -488,11 +493,12 @@ export class PlansRepository {
     return this.prisma.generationRun.findFirst({ where: { id, userId } });
   }
 
-  // NUT-77: busca el plan sólo por id (sin filtrar por usuario) para poder distinguir 403 de 404.
+  // Busca el plan sólo por id (sin filtrar por usuario) para poder distinguir 403 de 404.
   async findPlanWithMeals(planId: string) {
     return this.prisma.mealPlan.findUnique({
       where: { id: planId },
-      include: { days: { include: { meals: true } } },
+      // Con las recetas: la regeneración (NUT-78) compara la propuesta contra la versión anterior.
+      include: { days: { include: { meals: { include: { recipe: true } } } } },
     });
   }
 
@@ -500,7 +506,7 @@ export class PlansRepository {
     return this.prisma.recipe.findUnique({ where: { id } });
   }
 
-  // NUT-77: guarda el reemplazo de UNA comida. Si algo falla, Prisma revierte todo junto.
+  // Guarda el reemplazo de UNA comida. Si algo falla, Prisma revierte todo junto.
   async replaceMealTransaction(input: MealReplacementWrite) {
     return this.prisma.$transaction(async (tx: any) => {
       // Control optimista: sólo sigue si el plan no cambió desde que se leyó y sigue siendo el actual.

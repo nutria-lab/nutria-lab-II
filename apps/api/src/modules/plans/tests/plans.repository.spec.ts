@@ -96,16 +96,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
   });
 
   describe('AC2 - conflicto de unicidad al regenerar (supersede)', () => {
-    // CORREGIDO (Gap 4, detectado por el revisor de fiabilidad): la versión original de este
-    // test afirmaba `.rejects.toMatchObject({ code: 'P2002' })`, es decir, CERTIFICABA que el
-    // error crudo de Prisma se propagaba SIN TRADUCIR — ese es el comportamiento INCORRECTO,
-    // no el deseado, y el test original era en sí mismo un falso positivo (pasaba en verde
-    // documentando un bug). design.md AC2 pide explícitamente: "ese rechazo se traduce en un
-    // error de dominio manejado (no una excepción no controlada que llegue al usuario como
-    // error 500 genérico)". Se corrige la aserción para exigir la traducción a una excepción de
-    // dominio manejable (ConflictException de @nestjs/common), consistente con el resto de
-    // excepciones ya usadas en el módulo (BadRequestException/NotFoundException en
-    // plans.service.ts).
+    
     it('traduce el error P2002 del insert de la nueva versión a una excepción de dominio (ConflictException), no lo propaga crudo', async () => {
       const p2002Error = Object.assign(new Error('Unique constraint failed on the fields: (`userId`,`startDate`)'), {
         code: 'P2002',
@@ -114,7 +105,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockRejectedValue(p2002Error),
         },
         mealPlanDay: { create: jest.fn() },
@@ -147,15 +138,16 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
   });
 
   describe('AC10 - orden UPDATE (isCurrent:false) antes que CREATE (nueva versión)', () => {
-    it('ejecuta tx.mealPlan.update antes que tx.mealPlan.create dentro de la misma transacción', async () => {
+    // La versión anterior se marca con un updateMany condicional (sólo si sigue current).
+    it('ejecuta tx.mealPlan.updateMany condicional antes que tx.mealPlan.create dentro de la misma transacción', async () => {
       const callOrder: string[] = [];
 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockImplementation(async () => {
+          updateMany: jest.fn().mockImplementation(async () => {
             callOrder.push('update');
-            return { ...anteriorPlan, isCurrent: false };
+            return { count: 1 };
           }),
           create: jest.fn().mockImplementation(async (args: any) => {
             callOrder.push('create');
@@ -172,8 +164,8 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       await (repository as any).updatePlanTransaction(userId, weekStart, newDays, 'run-1');
 
       expect(callOrder).toEqual(['update', 'create']);
-      expect(tx.mealPlan.update).toHaveBeenCalledWith({
-        where: { id: anteriorPlan.id },
+      expect(tx.mealPlan.updateMany).toHaveBeenCalledWith({
+        where: { id: anteriorPlan.id, userId, isCurrent: true },
         data: { isCurrent: false },
       });
       expect(tx.mealPlan.create).toHaveBeenCalledWith(
@@ -195,7 +187,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       userId,
       kind: 'MEAL_PLAN_INITIAL',
       provider: 'google-generative-ai',
-      model: 'gemini-1.5-flash',
+      model: 'gemini-3.5-flash',
       promptVersion: '1.0.0',
       schemaVersion: '1.0.0',
       requestSnapshot: { kind: 'MEAL_PLAN_INITIAL', weekStart: '2026-09-14' },
@@ -320,6 +312,256 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
     });
   });
 
+  describe('createPlanTransaction (NUT-74)', () => {
+    const txFor = () => ({
+      mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-new-1' }) },
+      mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+      plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+      recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-new' }) },
+      generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    });
+
+    it('una comida con reuseRecipeId apunta a esa receta y no crea otra', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const { recipe, ...mealWithoutRecipe } = newDays[0].meals[0];
+      const days = [{ ...newDays[0], meals: [{ ...mealWithoutRecipe, reuseRecipeId: 'recipe-cat' }] }] as any;
+
+      await repository.createPlanTransaction(userId, weekStart, days, 'run-1');
+
+      expect(tx.recipe.create).not.toHaveBeenCalled();
+      expect(tx.plannedMeal.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ recipeId: 'recipe-cat', title: 'Ensalada de Quinoa' }),
+      });
+    });
+
+    it('guarda el resumen de validación recibido al pasar el run a SUCCEEDED', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const summary = { stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] };
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1', undefined, summary);
+
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ status: 'SUCCEEDED', validationSnapshot: summary }),
+      }));
+    });
+
+    it('sin resumen conserva el snapshot anterior', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.createPlanTransaction(userId, weekStart, newDays, 'run-1');
+
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ validationSnapshot: { restrictionsChecked: true } }),
+      }));
+      expect(tx.recipe.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('deletePlanTransaction (NUT-78: no borra recetas)', () => {
+    const txFor = (remove: jest.Mock) => ({
+      mealPlan: { delete: remove, update: jest.fn(), updateMany: jest.fn() },
+      plannedMeal: { findMany: jest.fn() },
+      recipe: { deleteMany: jest.fn(), delete: jest.fn() },
+    });
+
+    it('borra sólo esa versión si sigue siendo la current del usuario, devuelve el registro borrado y nunca toca recetas ni otras versiones', async () => {
+      const tx = txFor(jest.fn().mockResolvedValue({ id: 'plan-v2', version: 2 }));
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(repository.deletePlanTransaction('plan-v2', userId)).resolves.toEqual({ id: 'plan-v2', version: 2 });
+
+      expect(tx.mealPlan.delete).toHaveBeenCalledWith({ where: { id: 'plan-v2', userId, isCurrent: true } });
+      expect(tx.recipe.deleteMany).not.toHaveBeenCalled();
+      expect(tx.recipe.delete).not.toHaveBeenCalled();
+      // La versión anterior queda intacta: no se actualiza ningún otro plan.
+      expect(tx.mealPlan.update).not.toHaveBeenCalled();
+      expect(tx.mealPlan.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('si esa versión ya no es la current (una regeneración ganó), 409 y no se borra nada', async () => {
+      const notFound = Object.assign(new Error('Record to delete does not exist'), { code: 'P2025' });
+      const tx = txFor(jest.fn().mockRejectedValue(notFound));
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(repository.deletePlanTransaction('plan-v2', userId)).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('updatePlanTransaction - regeneración (NUT-78)', () => {
+    const txFor = (overrides: Record<string, any> = {}) => ({
+      mealPlan: {
+        findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-v2', ...args.data })),
+        ...overrides,
+      },
+      mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
+      plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-1' }) },
+      recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-1' }) },
+      generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    });
+    const readAt = new Date('2026-09-14T10:00:00.000Z');
+    const regenerate = (options: Record<string, unknown> = {}) => repository.updatePlanTransaction(
+      userId, weekStart, newDays, 'run-regen',
+      {
+        expectedPlanId: anteriorPlan.id,
+        expectedPlanUpdatedAt: readAt,
+        recipeOrigin: 'AI',
+        validationSnapshot: { stage: 'passed', codes: [], warnings: [] },
+        ...options,
+      },
+    );
+
+    it('versión + 1, supersedesId, isCurrent y generationRunId; recetas AI; run SUCCEEDED con el snapshot, todo en la misma transacción', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      const result = await regenerate();
+
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      // Control optimista: sólo si sigue current y no cambió desde que se leyó (por ejemplo, un reemplazo de NUT-77).
+      expect(tx.mealPlan.updateMany).toHaveBeenCalledWith({
+        where: { id: anteriorPlan.id, userId, isCurrent: true, updatedAt: readAt },
+        data: { isCurrent: false },
+      });
+      expect(tx.mealPlan.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+        version: anteriorPlan.version + 1, isCurrent: true, supersedesId: anteriorPlan.id, generationRunId: 'run-regen',
+      }) });
+      expect(tx.recipe.create).toHaveBeenCalledWith({ data: expect.objectContaining({ origin: 'AI', generationRunId: 'run-regen' }) });
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ id: 'run-regen', status: { in: ['PENDING'] } }),
+        data: expect.objectContaining({ status: 'SUCCEEDED', validationSnapshot: { stage: 'passed', codes: [], warnings: [] } }),
+      }));
+      expect(result.planId).toBe('plan-v2');
+    });
+
+    it('si la semana ya no tiene current (se borró durante la regeneración) → 409, no un error genérico', async () => {
+      const tx = txFor({ findFirst: jest.fn().mockResolvedValue(null) });
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(regenerate()).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.mealPlan.create).not.toHaveBeenCalled();
+    });
+
+    it('el PUT sin versión esperada mantiene el error previo si no hay current', async () => {
+      const tx = txFor({ findFirst: jest.fn().mockResolvedValue(null) });
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      const pending = repository.updatePlanTransaction(userId, weekStart, newDays, 'run-put');
+      await expect(pending).rejects.toThrow('No current plan version found');
+      await expect(pending).rejects.not.toBeInstanceOf(ConflictException);
+    });
+
+    it('los tres conflictos (otra current, updateMany con 0 filas, P2002) dan el mismo 409', async () => {
+      const cases = [
+        txFor({ findFirst: jest.fn().mockResolvedValue({ ...anteriorPlan, id: 'otra' }) }),
+        txFor({ updateMany: jest.fn().mockResolvedValue({ count: 0 }) }),
+        txFor({ create: jest.fn().mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' })) }),
+      ];
+      for (const tx of cases) {
+        mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+        await expect(regenerate()).rejects.toThrow(new ConflictException('The meal plan changed; retry'));
+      }
+    });
+
+    it('si la versión anterior ya no está current (updateMany con 0 filas) → 409, sin crear nada', async () => {
+      const tx = txFor({ updateMany: jest.fn().mockResolvedValue({ count: 0 }) });
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(regenerate()).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.mealPlan.create).not.toHaveBeenCalled();
+      expect(tx.generationRun.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('si la current de la semana ya es otra versión (otra regeneración ganó) → 409, sin tocar nada', async () => {
+      const tx = txFor({ findFirst: jest.fn().mockResolvedValue({ ...anteriorPlan, id: 'plan-de-otra-regeneracion', version: 2 }) });
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(regenerate()).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.mealPlan.updateMany).not.toHaveBeenCalled();
+      expect(tx.mealPlan.create).not.toHaveBeenCalled();
+    });
+
+    it('P2002 del índice parcial al crear la versión nueva → 409', async () => {
+      const tx = txFor({ create: jest.fn().mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' })) });
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(regenerate()).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('si falla un paso (crear una comida), la promesa rechaza y el run no pasa a SUCCEEDED (Prisma revierte todo)', async () => {
+      const tx = txFor();
+      tx.plannedMeal.create.mockRejectedValue(new Error('db down'));
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await expect(regenerate()).rejects.toThrow('db down');
+      expect(tx.generationRun.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('el PUT (sin opciones) sigue igual: recetas MANUAL y el snapshot legado', async () => {
+      const tx = txFor();
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+
+      await repository.updatePlanTransaction(userId, weekStart, newDays, 'run-put');
+
+      expect(tx.recipe.create).toHaveBeenCalledWith({ data: expect.objectContaining({ origin: 'MANUAL' }) });
+      expect(tx.generationRun.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ validationSnapshot: { restrictionsChecked: true } }),
+      }));
+    });
+  });
+
+  describe('reuso de recetas entre versiones (NUT-78, mínimo de NUT-76)', () => {
+    it('una comida que coincide con una receta de la versión anterior apunta a ese recipeId, sin recipe.create', async () => {
+      const tx = {
+        mealPlan: {
+          findFirst: jest.fn().mockResolvedValue(anteriorPlan),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          create: jest.fn().mockResolvedValue({ id: 'plan-v2' }),
+        },
+        mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-new' }) },
+        plannedMeal: { create: jest.fn().mockResolvedValue({ id: 'meal-new' }) },
+        recipe: { create: jest.fn().mockResolvedValue({ id: 'recipe-created' }) },
+        generationRun: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      };
+      mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
+      const { recipe, ...mealWithoutRecipe } = newDays[0].meals[0];
+      const days = [{ ...newDays[0], meals: [{ ...mealWithoutRecipe, reuseRecipeId: 'recipe-of-v1' }] }] as any;
+
+      await (repository as any).updatePlanTransaction(userId, weekStart, days, 'run-1');
+
+      expect(tx.recipe.create).not.toHaveBeenCalled();
+      expect(tx.plannedMeal.create).toHaveBeenCalledWith({ data: expect.objectContaining({ recipeId: 'recipe-of-v1' }) });
+    });
+  });
+
+  describe('findPlanWithMeals (NUT-78: incluye las recetas para comparar con la versión anterior)', () => {
+    it('trae los días con sus comidas y recetas', async () => {
+      mockPrisma.mealPlan = { findUnique: jest.fn().mockResolvedValue(null) };
+
+      await repository.findPlanWithMeals('plan-1');
+
+      const args = mockPrisma.mealPlan.findUnique.mock.calls[0][0];
+      expect(args.where).toEqual({ id: 'plan-1' });
+      expect(args.include.days.include.meals.include.recipe).toBe(true);
+    });
+  });
+
+  describe('findPlanByGenerationRunId (NUT-78)', () => {
+    it('busca la versión creada por ese run, del usuario, con días, comidas y recetas (sin filtrar por isCurrent)', async () => {
+      mockPrisma.mealPlan = { findFirst: jest.fn().mockResolvedValue(null) };
+
+      await repository.findPlanByGenerationRunId('run-1', userId);
+
+      const args = mockPrisma.mealPlan.findFirst.mock.calls[0][0];
+      expect(args.where).toEqual({ generationRunId: 'run-1', userId });
+      expect(args.include.days.include.meals.include.recipe).toBe(true);
+    });
+  });
+
   describe('transitionGenerationRun', () => {
     it('usa updateMany con where {id, userId, status:{in: fromStatuses}} y devuelve el count afectado', async () => {
       mockPrisma.generationRun = {
@@ -430,7 +672,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
@@ -479,7 +721,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
@@ -563,7 +805,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
@@ -652,7 +894,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
@@ -730,7 +972,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },
@@ -833,7 +1075,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       const tx = {
         mealPlan: {
           findFirst: jest.fn().mockResolvedValue(anteriorPlan),
-          update: jest.fn().mockResolvedValue({ ...anteriorPlan, isCurrent: false }),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           create: jest.fn().mockImplementation(async (args: any) => ({ id: 'plan-new-1', ...args.data })),
         },
         mealPlanDay: { create: jest.fn().mockResolvedValue({ id: 'day-1' }) },

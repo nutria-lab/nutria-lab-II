@@ -1,8 +1,9 @@
 import { Controller, Post, Get, Put, Delete, Body, Query, Req, UseGuards, HttpCode, HttpStatus, Param, ParseUUIDPipe, Headers, BadRequestException } from '@nestjs/common';
 import { isUUID } from 'class-validator';
 import { PlansService } from './plans.service';
-import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto, ReplaceMealDto } from './dto';
+import { GenerateMealPlanDto, CreateMealPlanDto, MealPlanQueryDto, ReplaceMealDto, RegenerateMealPlanDto } from './dto';
 import { MealReplacementService } from './meal-replacement.service';
+import { MealPlanRegenerationService } from './meal-plan-regeneration.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 // Un id que no es UUID no puede existir: 404, como en el resto de los endpoints del proyecto.
@@ -14,6 +15,7 @@ export class PlansController {
   constructor(
     private readonly plansService: PlansService,
     private readonly mealReplacementService: MealReplacementService,
+    private readonly mealPlanRegenerationService: MealPlanRegenerationService,
   ) {}
 
   @Post('generate')
@@ -58,9 +60,26 @@ export class PlansController {
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() dto: ReplaceMealDto,
   ) {
-    if (!idempotencyKey || !isUUID(idempotencyKey)) {
-      throw new BadRequestException('Idempotency-Key header must be a UUID');
-    }
+    assertIdempotencyKey(idempotencyKey);
     return this.mealReplacementService.replaceMeal(req.user.sub, planId, plannedMealId, idempotencyKey, dto ?? {});
+  }
+
+  // NUT-78: regenera la semana como una versión nueva del plan (la anterior se conserva).
+  @Post(':planId/regenerate')
+  @HttpCode(201)
+  async regeneratePlan(
+    @Req() req: any,
+    @Param('planId', uuidOr404) planId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() dto: RegenerateMealPlanDto,
+  ) {
+    assertIdempotencyKey(idempotencyKey);
+    return this.mealPlanRegenerationService.regenerate(req.user.sub, planId, idempotencyKey, dto);
+  }
+}
+
+function assertIdempotencyKey(idempotencyKey: string | undefined): asserts idempotencyKey is string {
+  if (!idempotencyKey || !isUUID(idempotencyKey)) {
+    throw new BadRequestException('Idempotency-Key header must be a UUID');
   }
 }

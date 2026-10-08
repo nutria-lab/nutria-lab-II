@@ -13,7 +13,8 @@ export type RecipeCategory =
 
 export type RecipeIngredientItem = {
   name: string;
-  quantity: number;
+  // null: ingrediente sin cantidad ("al gusto"); la unidad lleva la expresión (NUT-74).
+  quantity: number | null;
   unit: string;
 };
 
@@ -79,8 +80,7 @@ export class RecipeRequestError extends Error {
   }
 }
 
-// Mismo criterio que `registrationErrorKind` (`registerService.ts`): sólo se llama cuando ya
-// se descartó que el error sea un 401/403 (design.md 1.4 — esos se propagan sin envolver,
+// sólo se llama cuando ya se descartó que el error sea un 401/403 (design.md 1.4 — esos se propagan sin envolver,
 // los resuelve el interceptor global de `apiClient`, no esta clase de error de dominio).
 function recipeErrorKind(error: unknown): RecipeErrorKind {
   if (!axios.isAxiosError(error)) {

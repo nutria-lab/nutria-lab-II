@@ -6,3 +6,4 @@ export * from './meal.dto';
 export * from './nutritional-values.dto';
 export * from './recipe.dto';
 export * from './replace-meal.dto';
+export * from './regenerate-meal-plan.dto';

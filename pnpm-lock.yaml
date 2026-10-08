@@ -21,7 +21,7 @@ importers:
   apps/api:
     dependencies:
       '@google/generative-ai':
-        specifier: latest
+        specifier: 0.24.1
         version: 0.24.1
       '@nestjs/common':
         specifier: latest

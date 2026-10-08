@@ -1,7 +1,11 @@
 import 'reflect-metadata';
-import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Logger, NotFoundException, ConflictException, BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
+import { AiProviderUnavailableError } from '../gemini/gemini.service';
+import { RecipeValidationService } from '../recipe-validation.service';
+import { RecipeImagesService } from '../recipe-images.service';
+import { GeminiWeeklyProposalComposer } from '../weekly-proposal.composer';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { UnsplashService } from '../../unsplash/unsplash.service';
 import { pendingPersistedImage, unsplashPhoto, unsplashResponse, unsplashSearchBody } from '../../unsplash/unsplash-search.fixture';
@@ -40,6 +44,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
   let mockRepository: any;
   let mockGemini: any;
   let mockUnsplash: any;
+  let mockRecipes: any;
+  let mockConfig: any;
 
   const userId = 'user-1';
   const weekStartStr = '2026-09-14';
@@ -102,7 +108,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
 
   beforeEach(() => {
     mockGemini = {
-      generateMealPlan: jest.fn().mockResolvedValue(generatedDays),
+      // Gemini devuelve texto crudo (NUT-74).
+      generateMealPlan: jest.fn().mockResolvedValue(JSON.stringify({ days: generatedDays })),
     };
 
     mockRepository = {
@@ -125,7 +132,11 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       })),
     };
 
-    service = new PlansService(mockRepository, mockGemini, mockUnsplash);
+    // Validador real de NUT-74; sólo la búsqueda de duplicados en el catálogo está mockeada.
+    mockRecipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
+    mockConfig = { get: jest.fn().mockReturnValue(undefined) };
+    const validation = new RecipeValidationService(mockRecipes, mockRepository);
+    service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, mockUnsplash), mockConfig, new GeminiWeeklyProposalComposer(mockRepository, mockGemini, validation));
   });
 
   describe('AC3 - misma solicitud no duplica ejecución', () => {
@@ -159,12 +170,249 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       });
       mockGemini.generateMealPlan = jest.fn().mockImplementation(async () => {
         callOrder.push('generateMealPlan');
-        return generatedDays;
+        return JSON.stringify({ days: generatedDays });
       });
 
       await service.generateAndPersistPlan(userId, weekStartStr);
 
       expect(callOrder).toEqual(['createOrRecoverGenerationRun', 'generateMealPlan']);
+    });
+  });
+
+  describe('NUT-74 - validación determinística del plan generado', () => {
+    const baseMeal = () => generatedDays[0].meals[0];
+    const meal = (recipeOverrides: Record<string, unknown> = {}) => ({ ...baseMeal(), recipe: { ...baseMeal().recipe, ...recipeOverrides } });
+    const weekWith = (mondayMeal: unknown) =>
+      JSON.stringify({ days: generatedDays.map((day, index) => (index === 0 ? { ...day, meals: [mondayMeal] } : day)) });
+    const expectNoDomainWrites = () => {
+      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
+      expect(mockUnsplash.searchAndSelectImages).not.toHaveBeenCalled();
+      expect(mockUnsplash.trackDownload).not.toHaveBeenCalled();
+    };
+
+    it.each([
+      ['una respuesta vacía', '', 'EMPTY_OUTPUT'],
+      ['una respuesta que no es JSON', 'no es json', 'INVALID_JSON'],
+      ['JSON sin "days"', JSON.stringify({ semana: [] }), 'MISSING_FIELD'],
+      ['"days" que no es una lista', JSON.stringify({ days: { MONDAY: [] } }), 'MISSING_FIELD'],
+      ['una comida con texto como cantidad', weekWith(meal({ ingredients: [{ name: 'Quinoa', quantity: 'mucha', unit: 'g' }] })), 'INVALID_RANGE'],
+      ['una comida sin pasos', weekWith(meal({ instructions: [] })), 'MISSING_FIELD'],
+      ['una comida sin receta', weekWith({ ...baseMeal(), recipe: undefined }), 'MISSING_FIELD'],
+    ])('%s: 422, el run queda REJECTED con el código y no se escribe ningún plan', async (_label, raw, errorCode) => {
+      mockGemini.generateMealPlan.mockResolvedValue(raw);
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
+        errorCode,
+        validationSnapshot: expect.objectContaining({ codes: [errorCode] }),
+      });
+      expectNoDomainWrites();
+    });
+
+    it.each([6, 8])('%p días en vez de 7: COUNT_MISMATCH (422, REJECTED, snapshot y log), no AI_INVALID_SCHEMA', async (count) => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const days = Array.from({ length: count }, (_, index) => generatedDays[index % 7]);
+      mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({ days }));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
+        errorCode: 'COUNT_MISMATCH',
+        validationSnapshot: { stage: 'parse', codes: ['COUNT_MISMATCH'], warnings: [] },
+      });
+      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'recipe_validation_rejected', code: 'COUNT_MISMATCH' }));
+      expectNoDomainWrites();
+      warn.mockRestore();
+    });
+
+    it('una sola comida con un ingrediente excluido rechaza el plan entero (hoy no hay forma de cubrir el hueco)', async () => {
+      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
+      mockGemini.generateMealPlan.mockResolvedValue(weekWith(meal({ ingredients: [{ name: 'Almendras tostadas', quantity: 30, unit: 'g' }] })));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.objectContaining({
+        errorCode: 'EXCLUDED_INGREDIENT',
+      }));
+      expectNoDomainWrites();
+    });
+
+    it('envoltorio del plan inválido (día fuera del enum): 422 AI_INVALID_SCHEMA, sin escribir', async () => {
+      mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({
+        days: generatedDays.map((day, index) => (index === 0 ? { ...day, day: 'FUNDAY' } : day)),
+      }));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
+        errorCode: 'AI_INVALID_SCHEMA',
+        validationSnapshot: { stage: 'schema', codes: ['AI_INVALID_SCHEMA'], warnings: [] },
+      });
+      expectNoDomainWrites();
+    });
+
+    it('un plan limpio se persiste exactamente igual que antes de NUT-74, con el resumen de validación en el run', async () => {
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      const [, , days, runId, origin, validationSnapshot] = mockRepository.createPlanTransaction.mock.calls[0];
+      expect(days).toEqual(generatedDays);
+      expect(runId).toBe(newRun.id);
+      expect(origin).toBeUndefined();
+      expect(validationSnapshot).toEqual({ stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] });
+    });
+
+    it('persiste las recetas normalizadas (unidades, fracciones y "al gusto")', async () => {
+      mockGemini.generateMealPlan.mockResolvedValue(weekWith(meal({
+        title: '  Ensalada de   Quinoa ',
+        ingredients: [{ name: 'Quinoa', quantity: '1/2', unit: 'gr' }, { name: 'Sal', quantity: 'al gusto', unit: '' }],
+      })));
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      const [, , days, , , validationSnapshot] = mockRepository.createPlanTransaction.mock.calls[0];
+      expect(days[0].meals[0].recipe).toEqual(expect.objectContaining({
+        title: 'Ensalada de Quinoa',
+        ingredients: [{ name: 'Quinoa', quantity: 0.5, unit: 'g' }, { name: 'Sal', quantity: null, unit: 'al gusto' }],
+      }));
+      expect(validationSnapshot.warnings).toEqual(['NON_NUMERIC_QUANTITY', 'CALORIE_CHECK_SKIPPED']);
+    });
+
+    it('una comida idéntica a una receta del catálogo la reutiliza: no crea otra ni busca su foto', async () => {
+      mockRecipes.findByNormalizedTitles.mockResolvedValue([
+        { id: 'recipe-cat', title: 'ENSALADA DE QUINOA', description: 'Del catálogo', ingredients: [{ name: 'quinoa' }] },
+      ]);
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(mockRecipes.findByNormalizedTitles).toHaveBeenCalledWith(['ensalada de quinoa']);
+      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
+      for (const day of days) {
+        expect(day.meals[0].reuseRecipeId).toBe('recipe-cat');
+        expect(day.meals[0].recipe).toBeUndefined();
+        expect(day.meals[0]).toEqual(expect.objectContaining({ title: 'Ensalada de Quinoa', nutritionalValues: baseMeal().nutritionalValues }));
+      }
+      const searched = mockUnsplash.searchAndSelectImages.mock.calls[0][0];
+      expect(searched.flatMap((day: any) => day.meals).every((plannedMeal: any) => plannedMeal.recipe === undefined)).toBe(true);
+    });
+
+    it('reutiliza un duplicado aunque la receta cruda no pase el DTO ("al gusto" sin unidad): se valida la normalizada', async () => {
+      mockRecipes.findByNormalizedTitles.mockResolvedValue([
+        { id: 'recipe-cat', title: 'Ensalada de Quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }, { name: 'Sal' }] },
+      ]);
+      mockGemini.generateMealPlan.mockResolvedValue(weekWith(meal({
+        ingredients: [{ name: 'Quinoa', quantity: 150, unit: 'g' }, { name: 'Sal', quantity: 'al gusto', unit: '' }],
+      })));
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
+      expect(days[0].meals[0].reuseRecipeId).toBe('recipe-cat');
+    });
+
+    it('sólo la comida duplicada reutiliza la receta: los índices de resultados y comidas coinciden', async () => {
+      const wok = { ...baseMeal(), mealType: MealType.DINNER, title: 'Wok de verduras', recipe: { ...baseMeal().recipe, title: 'Wok de verduras', ingredients: [{ name: 'Brócoli', quantity: 200, unit: 'g' }] } };
+      mockRecipes.findByNormalizedTitles.mockResolvedValue([
+        { id: 'recipe-wok', title: 'Wok de verduras', description: 'x', ingredients: [{ name: 'Brócoli' }] },
+      ]);
+      mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({
+        days: generatedDays.map((day, index) => (index === 2 ? { ...day, meals: [baseMeal(), wok] } : day)),
+      }));
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
+      const reused = days.flatMap((day: any, dayIndex: number) =>
+        day.meals.map((plannedMeal: any, mealIndex: number) => (plannedMeal.reuseRecipeId ? `${dayIndex}.${mealIndex}` : null))).filter(Boolean);
+      expect(reused).toEqual(['2.1']);
+      expect(days[2].meals[0].recipe).toEqual(expect.objectContaining({ title: 'Ensalada de Quinoa' }));
+    });
+
+    it('con un duplicado reutilizable y una comida inválida, el errorCode es el de la inválida (nunca DUPLICATE_RECIPE)', async () => {
+      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
+      mockRecipes.findByNormalizedTitles.mockResolvedValue([
+        { id: 'recipe-cat', title: 'Ensalada de Quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }] },
+      ]);
+      const nuts = { ...baseMeal(), title: 'Budín de nueces', recipe: { ...baseMeal().recipe, title: 'Budín de nueces' } };
+      mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({
+        days: generatedDays.map((day, index) => (index === 6 ? { ...day, meals: [nuts] } : day)),
+      }));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.objectContaining({
+        errorCode: 'EXCLUDED_INGREDIENT',
+      }));
+      expectNoDomainWrites();
+    });
+
+    it('si la búsqueda de duplicados falla, el run queda FAILED (nunca PENDING) y el error sigue de largo', async () => {
+      mockRecipes.findByNormalizedTitles.mockRejectedValue(new Error('db down'));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toThrow('db down');
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });
+      expectNoDomainWrites();
+    });
+
+    it('nunca le pide a la IA que juzgue su propio output (una sola llamada)', async () => {
+      mockGemini.generateMealPlan.mockResolvedValue('no es json');
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
+      expect(mockGemini.generateMealPlan).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('NUT-74 - runs PENDING colgados (mismo TTL que NUT-77)', () => {
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+
+    it('un PENDING más viejo que el TTL pasa a EXPIRED y la generación se hace de cero', async () => {
+      mockRepository.createOrRecoverGenerationRun = jest.fn()
+        .mockResolvedValueOnce({ run: { ...newRun, id: 'run-stale', startedAt: minutesAgo(11) }, wasCreated: false })
+        .mockResolvedValueOnce({ run: newRun, wasCreated: true });
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith('run-stale', userId, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
+      expect(mockGemini.generateMealPlan).toHaveBeenCalledTimes(1);
+      expect(mockRepository.createPlanTransaction.mock.calls[0][3]).toBe(newRun.id);
+    });
+
+    it('un PENDING reciente sigue siendo 409 (otra generación en curso)', async () => {
+      mockRepository.createOrRecoverGenerationRun = jest.fn()
+        .mockResolvedValue({ run: { ...newRun, startedAt: minutesAgo(2) }, wasCreated: false });
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(ConflictException);
+      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalled();
+    });
+
+    it('usa MEAL_REPLACEMENT_PENDING_TTL_MINUTES', async () => {
+      mockConfig.get.mockImplementation((key: string) => (key === 'MEAL_REPLACEMENT_PENDING_TTL_MINUTES' ? '1' : undefined));
+      mockRepository.createOrRecoverGenerationRun = jest.fn()
+        .mockResolvedValueOnce({ run: { ...newRun, id: 'run-stale', startedAt: minutesAgo(2) }, wasCreated: false })
+        .mockResolvedValueOnce({ run: newRun, wasCreated: true });
+
+      await service.generateAndPersistPlan(userId, weekStartStr);
+
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith('run-stale', userId, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
+    });
+  });
+
+  describe('NUT-74 - proveedor de IA caído: 503, nunca un 500 genérico', () => {
+    it.each(['AI_TIMEOUT', 'AI_PROVIDER_ERROR'] as const)('%s: el run queda FAILED con ese código y no se escribe ningún plan', async (reason) => {
+      mockGemini.generateMealPlan.mockRejectedValue(new AiProviderUnavailableError(reason));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(ServiceUnavailableException);
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: reason });
+      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
+    });
+
+    it('si además falla marcar el run, el cliente igual recibe 503 (no un 500)', async () => {
+      mockGemini.generateMealPlan.mockRejectedValue(new AiProviderUnavailableError('AI_TIMEOUT'));
+      mockRepository.transitionGenerationRun.mockRejectedValue(new Error('db down'));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    });
+
+    it('un error inesperado (que no es del proveedor) deja el run FAILED y sigue de largo', async () => {
+      mockGemini.generateMealPlan.mockRejectedValue(new TypeError('bug'));
+
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toThrow('bug');
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });
     });
   });
 
@@ -284,6 +532,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         expect.any(Date),
         dtoSecond.days,
         expect.any(String),
+        { expectedPlanId: 'plan-1' },
       );
     });
   });
@@ -484,6 +733,8 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         userId,
         expect.any(Date),
         dto.days,
+        undefined,
+        undefined,
         undefined,
       );
     });
@@ -788,7 +1039,7 @@ describe('PlansService - NUT-83: búsqueda y registro de uso con UnsplashService
       findPlanByWeek: jest.fn().mockResolvedValue({ id: 'plan-real-1', userId, days: [] }),
     };
 
-    const service = new PlansService(mockRepository, {} as any, realUnsplash);
+    const service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, realUnsplash), {} as any, {} as any);
 
     const dto = { weekStart: weekStartStr, days: sevenValidDays } as any;
     await service.validateAndPersistPlan(userId, dto);

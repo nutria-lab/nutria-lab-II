@@ -24,6 +24,11 @@ interface RecipeCount {
   total: bigint | number | string;
 }
 
+export type DuplicateCandidate = Pick<Recipe, 'id' | 'title' | 'description' | 'ingredients' | 'instructions'>;
+
+// Tope de recetas candidatas a duplicado por validación (el catálogo nunca se carga entero).
+const MAX_DUPLICATE_CANDIDATES = 100;
+
 @Injectable()
 export class RecipeRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -190,6 +195,25 @@ export class RecipeRepository {
     return this.prisma.recipe.findFirst({
       where: { title },
     });
+  }
+
+  // NUT-74: recetas cuyo título normalizado (minúsculas, sin acentos ni signos, espacios colapsados,
+  // igual que normalizeRecipeTitle) es alguno de `titles`. Sólo para detectar duplicados de drafts.
+  // unaccent va antes que lower: el texto ya es ASCII y el resultado no depende del locale de la base.
+  async findByNormalizedTitles(titles: string[]): Promise<DuplicateCandidate[]> {
+    const unique = [...new Set(titles)];
+    if (unique.length === 0) return [];
+
+    return this.prisma.$queryRaw<DuplicateCandidate[]>`
+      SELECT "id", "title", "description", "ingredients", "instructions"
+      FROM "recipes"
+      WHERE btrim(regexp_replace(
+        regexp_replace(lower(unaccent("title")), '[^[:alnum:][:space:]]+', ' ', 'g'),
+        '[[:space:]]+', ' ', 'g'
+      )) = ANY(${unique}::text[])
+      ORDER BY "id" ASC
+      LIMIT ${MAX_DUPLICATE_CANDIDATES}
+    `;
   }
 
   async update(id: string, data: UpdateRecipeDto) {
