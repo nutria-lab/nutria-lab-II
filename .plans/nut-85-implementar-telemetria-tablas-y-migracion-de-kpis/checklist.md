@@ -26,17 +26,17 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [ ] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales.
 
 ## E. Ventana temporal
-- [ ] E1 ★ D=2026-10-09 ⇒ start=2026-10-09T03:00:00Z, end=2026-10-10T00:00:00Z (America/Argentina/Buenos_Aires, 00:00–21:00).
-- [ ] E2 ★ Sin fecha explícita se toma el último corte de las 21:00 que ya pasó; un atraso del scheduler no cambia D; se rechaza una fecha futura o un corte que todavía no ocurrió.
+- [x] E1 ★ D=2026-10-09 ⇒ start=2026-10-09T03:00:00Z, end=2026-10-10T00:00:00Z (America/Argentina/Buenos_Aires, 00:00–21:00). → `window/kpi-window.ts`; `tests/kpi-window.spec.ts`
+- [x] E2 ★ Sin fecha explícita se toma el último corte de las 21:00 que ya pasó; un atraso del scheduler no cambia D; se rechaza una fecha futura o un corte que todavía no ocurrió. → `window/kpi-window.ts`; `tests/kpi-window.spec.ts`
 
 ## F. Fórmulas (fixtures exactos del ticket)
-- [ ] F1 ★ 20 duraciones 1..20ms ⇒ p95 = 19 (percentile_disc 0.95).
-- [ ] F2 ★ 1 timeout + 1 server_error sobre 10 operaciones ⇒ error_rate 20, timeout_rate 10; un 4xx no suma errores; los pending no entran.
-- [ ] F3 ★ 2 fallos sobre 8 intentos ⇒ dependency_error_rate 25.
-- [ ] F4 ★ last_success_age_seconds usa un éxito anterior a start; sin éxito conocido ⇒ unavailable.
-- [ ] F5 ★ health_status toma la última muestra por tiempo real; si tiene más de 60 min antes del corte o es unknown ⇒ unavailable.
-- [ ] F6 ★ Dos healthy + una unhealthy ⇒ availability 66.666…; unknown no cuenta; sin muestras válidas ⇒ unavailable.
-- [ ] F7 ★ unavailable ⇒ value null + reason no vacío; un 0 medido queda `observed`; NaN/Infinity lanza error (no se oculta).
+- [x] F1 ★ 20 duraciones 1..20ms ⇒ p95 = 19 (percentile_disc 0.95). → (F1) `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F2 ★ 1 timeout + 1 server_error sobre 10 operaciones ⇒ error_rate 20, timeout_rate 10; un 4xx no suma errores; los pending no entran. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F3 ★ 2 fallos sobre 8 intentos ⇒ dependency_error_rate 25. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F4 ★ last_success_age_seconds usa un éxito anterior a start; sin éxito conocido ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F5 ★ health_status toma la última muestra por tiempo real; si tiene más de 60 min antes del corte o es unknown ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F6 ★ Dos healthy + una unhealthy ⇒ availability 66.666…; unknown no cuenta; sin muestras válidas ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F7 ★ unavailable ⇒ value null + reason no vacío; un 0 medido queda `observed`; NaN/Infinity lanza error (no se oculta). → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
 
 ## G. Snapshots y collect
 - [ ] G1 ★ Los 8 previews se guardan en UNA transacción e idempotentes por corte; los previews de distintos cortes coexisten.
