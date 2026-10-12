@@ -201,7 +201,8 @@ describe('MealPlanPage', () => {
     renderMealPlanPage();
     await screen.findByText('Avena con frutos rojos');
 
-    await user.click(screen.getByRole('button', { name: /Avena con frutos rojos/ }));
+    // aria-expanded distingue el botón del acordeón del botón de reemplazar
+    await user.click(screen.getByRole('button', { expanded: false }));
 
     expect(await screen.findByText('Mezclar todo')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /24/ })).toHaveAttribute('aria-selected', 'true');

@@ -42,7 +42,8 @@ describe('MealCard', () => {
     const user = userEvent.setup();
     render(<MealCard meal={buildMeal() as never} />);
 
-    await user.click(screen.getByRole('button', { name: /Avena con frutos rojos/ }));
+    // aria-expanded distingue el botón del acordeón del botón de reemplazar
+    await user.click(screen.getByRole('button', { expanded: false }));
 
     expect(screen.getByText('1 taza Avena')).toBeInTheDocument();
     expect(screen.getByText('Mezclar todo')).toBeInTheDocument();
@@ -63,7 +64,8 @@ describe('MealCard', () => {
     const user = userEvent.setup();
     render(<MealCard meal={incompleteMeal as never} />);
 
-    await user.click(screen.getByRole('button', { name: /Avena con frutos rojos/ }));
+    // aria-expanded distingue el botón del acordeón del botón de reemplazar
+    await user.click(screen.getByRole('button', { expanded: false }));
 
     expect(screen.getByText('Ingredientes no disponibles todavía.')).toBeInTheDocument();
     expect(screen.getByText('Instrucciones no disponibles todavía.')).toBeInTheDocument();
@@ -99,7 +101,8 @@ describe('MealCard', () => {
     const user = userEvent.setup();
     render(<MealCard meal={mealWithBareIngredients as never} />);
 
-    await user.click(screen.getByRole('button', { name: /Receta con condimentos/ }));
+    // aria-expanded distingue el botón del acordeón del botón de reemplazar
+    await user.click(screen.getByRole('button', { expanded: false }));
 
     expect(screen.getByText('Sal')).toBeInTheDocument();
     expect(screen.getByText('2 Huevos')).toBeInTheDocument();
