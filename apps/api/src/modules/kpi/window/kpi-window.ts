@@ -89,7 +89,8 @@ function splitDate(date: string): [number, number, number] {
   return [y, m, d];
 }
 
-function localDateOf(now: Date): string {
+/** Fecha local (YYYY-MM-DD) del instante en la zona KPI. */
+export function localDateOf(now: Date): string {
   const p = localParts(now.getTime());
   return formatDate(p.year, p.month, p.day);
 }

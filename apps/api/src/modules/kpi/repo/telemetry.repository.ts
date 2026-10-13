@@ -1,12 +1,35 @@
 // NUT-85 — Agregados de telemetría en SQL (design D12, §6.9). Ventana [start, end), filtrada por ambiente.
 // Consultas parametrizadas con $queryRaw (tagged template): nunca se concatena SQL.
 // Tablas sin calificar por schema (resuelven por search_path).
+// Snapshots (D13, D14), muestras de salud (§6.4) y purga por lotes (D16): también SQL parametrizado.
+import { randomUUID } from 'crypto';
 import type { PrismaClient } from '../../../generated/prisma/client';
-import type { KpiEnvironment } from '../kpi-contract';
+import type { KpiEnvironment, KpiId, KpiResult } from '../kpi-contract';
 import type { HealthOutcome, TelemetryAggregates, TelemetryWindow } from '../calc/telemetry-formulas';
+import type { PurgeCutoff, PurgeTable } from '../cli/purge-policy';
+import type { SnapshotCut, SnapshotTx } from '../snapshots/telemetry-snapshot.service';
 
-/** Cliente Prisma o cliente de transacción: sólo se usa $queryRaw. */
-export type KpiQueryClient = Pick<PrismaClient, '$queryRaw'>;
+/** Cliente Prisma o cliente de transacción: sólo SQL crudo parametrizado (tagged template). */
+export type KpiQueryClient = Pick<PrismaClient, '$queryRaw' | '$executeRaw'>;
+
+export interface HealthSampleInput {
+  environment: KpiEnvironment;
+  scheduledFor: Date;
+  measuredAt: Date;
+  apiOk: boolean | null;
+  databaseOk: boolean | null;
+  outcome: HealthOutcome;
+  reason: string | null;
+}
+
+interface FinalRow {
+  kpi_id: KpiId;
+  value: number | null;
+  quality: KpiResult['quality'];
+  reason: string | null;
+  sample_count: string;
+  measured_at: Date;
+}
 
 interface HttpRow {
   success: number;
@@ -44,7 +67,7 @@ interface HealthCountRow {
   unknown: number;
 }
 
-export class TelemetryRepository {
+export class TelemetryRepository implements SnapshotTx {
   constructor(private readonly prisma: KpiQueryClient) {}
 
   async loadAggregates(environment: KpiEnvironment, window: TelemetryWindow): Promise<TelemetryAggregates> {
@@ -133,5 +156,105 @@ export class TelemetryRepository {
         : null,
       health: { healthy: health.healthy, unhealthy: health.unhealthy, unknown: health.unknown },
     };
+  }
+
+  /** Finales del corte (environment, report_date, window_end), ordenados por kpi_id. */
+  async readFinals(cut: SnapshotCut): Promise<KpiResult[]> {
+    const rows = await this.prisma.$queryRaw<FinalRow[]>`
+      SELECT kpi_id, value, quality, reason, sample_count::text AS sample_count, measured_at
+      FROM kpi_snapshot
+      WHERE environment = ${cut.environment}
+        AND report_date = ${cut.date}::date
+        AND window_end = ${cut.end.toISOString()}::timestamptz
+        AND snapshot_kind = 'final'
+      ORDER BY kpi_id`;
+    return rows.map(row => ({
+      kpi_id: row.kpi_id,
+      value: row.value === null ? null : Number(row.value),
+      quality: row.quality,
+      reason: row.reason,
+      sample_count: Number(row.sample_count),
+      measured_at: new Date(row.measured_at).toISOString(),
+    }));
+  }
+
+  /** INSERT plano de los finales (sin ON CONFLICT): un conflicto debe fallar la transacción entera (D14). */
+  async insertFinals(cut: SnapshotCut, results: readonly KpiResult[]): Promise<void> {
+    for (const r of results) {
+      await this.prisma.$executeRaw`
+        INSERT INTO kpi_snapshot (id, environment, report_date, window_start, window_end, snapshot_kind,
+                                  kpi_id, value, quality, reason, sample_count, measured_at)
+        VALUES (${randomUUID()}::uuid, ${cut.environment}, ${cut.date}::date, ${cut.start.toISOString()}::timestamptz,
+                ${cut.end.toISOString()}::timestamptz, 'final', ${r.kpi_id}, ${r.value}::double precision,
+                ${r.quality}, ${r.reason}, ${r.sample_count}::bigint, ${r.measured_at}::timestamptz)`;
+    }
+  }
+
+  /** Upsert de previews por corte (D13); el llamador lo ejecuta dentro de una única transacción. */
+  async upsertPreviews(cut: SnapshotCut, results: readonly KpiResult[]): Promise<void> {
+    for (const r of results) {
+      await this.prisma.$executeRaw`
+        INSERT INTO kpi_snapshot (id, environment, report_date, window_start, window_end, snapshot_kind,
+                                  kpi_id, value, quality, reason, sample_count, measured_at)
+        VALUES (${randomUUID()}::uuid, ${cut.environment}, ${cut.date}::date, ${cut.start.toISOString()}::timestamptz,
+                ${cut.end.toISOString()}::timestamptz, 'preview', ${r.kpi_id}, ${r.value}::double precision,
+                ${r.quality}, ${r.reason}, ${r.sample_count}::bigint, ${r.measured_at}::timestamptz)
+        ON CONFLICT (environment, report_date, window_end, snapshot_kind, kpi_id) DO UPDATE
+           SET window_start = EXCLUDED.window_start,
+               value = EXCLUDED.value,
+               quality = EXCLUDED.quality,
+               reason = EXCLUDED.reason,
+               sample_count = EXCLUDED.sample_count,
+               measured_at = EXCLUDED.measured_at`;
+    }
+  }
+
+  /** Inserta la muestra del bucket; false si el bucket ya estaba registrado (la original no cambia). */
+  async insertHealthSample(sample: HealthSampleInput): Promise<boolean> {
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO kpi_health_sample (id, environment, scheduled_for, measured_at, api_ok, database_ok, outcome, reason)
+      VALUES (${randomUUID()}::uuid, ${sample.environment}, ${sample.scheduledFor.toISOString()}::timestamptz,
+              ${sample.measuredAt.toISOString()}::timestamptz, ${sample.apiOk}::boolean, ${sample.databaseOk}::boolean,
+              ${sample.outcome}, ${sample.reason})
+      ON CONFLICT (environment, scheduled_for) DO NOTHING`;
+    return inserted === 1;
+  }
+
+  /**
+   * Borra un lote (≤ limit) del ambiente, anterior al corte. El nombre de tabla nunca se interpola:
+   * cada tabla de la lista blanca tiene su propia sentencia fija.
+   */
+  async purgeBatch(table: PurgeTable, environment: KpiEnvironment, cutoff: PurgeCutoff, limit: number): Promise<number> {
+    const start = cutoff.start.toISOString();
+    switch (table) {
+      case 'kpi_http_event':
+        return this.prisma.$executeRaw`
+          DELETE FROM kpi_http_event WHERE id IN (
+            SELECT id FROM kpi_http_event
+            WHERE environment = ${environment} AND started_at < ${start}::timestamptz
+            LIMIT ${limit}::int)`;
+      case 'kpi_dependency_event':
+        return this.prisma.$executeRaw`
+          DELETE FROM kpi_dependency_event WHERE id IN (
+            SELECT id FROM kpi_dependency_event
+            WHERE environment = ${environment} AND started_at < ${start}::timestamptz
+            LIMIT ${limit}::int)`;
+      case 'kpi_health_sample':
+        return this.prisma.$executeRaw`
+          DELETE FROM kpi_health_sample WHERE id IN (
+            SELECT id FROM kpi_health_sample
+            WHERE environment = ${environment} AND scheduled_for < ${start}::timestamptz
+            LIMIT ${limit}::int)`;
+      case 'kpi_snapshot':
+        return this.prisma.$executeRaw`
+          DELETE FROM kpi_snapshot WHERE id IN (
+            SELECT id FROM kpi_snapshot
+            WHERE environment = ${environment} AND report_date < ${cutoff.date}::date
+            LIMIT ${limit}::int)`;
+      default: {
+        const unexpected: never = table;
+        throw new Error(`KPI_PURGE_TABLE_NOT_ALLOWED ${String(unexpected)}`);
+      }
+    }
   }
 }

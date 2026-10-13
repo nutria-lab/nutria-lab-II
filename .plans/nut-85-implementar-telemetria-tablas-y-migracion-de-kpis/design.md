@@ -145,6 +145,10 @@ Ante ambigüedad se eligió la opción más conservadora según el contrato. Cad
 
 **D24 — Diagnóstico JSON siempre escrito (best effort, en `finally`).** Ruta por `--diagnostics-out` (el workflow apunta a un directorio temporal del runner, nunca dentro del repo). Contenido: herramienta, modo, ambiente, `report_date`, `window_start`/`window_end`, bucket, resultado de la muestra (`outcome`, `inserted` true/false, motivo), por KPI `{kpi_id, kind, value, quality, reason, sample_count}`, conteos (`http_terminal`, `http_pending_incomplete`, `dependency_attempts`, `health_samples`), purga (`executed`, corte, filas borradas por tabla), lista de códigos de error, `exit_code`, timestamps de la corrida. Nunca URLs, credenciales, mensajes de excepción, rutas reales ni datos de usuario.
 
+**D25 — Reejecutar un bucket ya registrado no hace nada nuevo (agregada en T5).** Si `sample` encuentra su bucket de 30 min ya guardado (ON CONFLICT DO NOTHING no inserta), el CLI sale con exit 0 sin preview ni purga y el diagnóstico registra `preview.skip_reason = SAMPLE_BUCKET_ALREADY_RECORDED`. Es la opción conservadora: la corrida original del bucket ya hizo su preview y su purga, y así una reejecución no crea otro corte de preview. Cubierto por `telemetry-cli.integration.spec.ts` ("sample: reejecutar el bucket…").
+
+**D26 — Pool propio para reporting (agregada en T5).** Las transacciones de finalize/preview/purga usan un pool separado del escritor de eventos (máx. 3 conexiones, connect 5 s, query 30 s del lado cliente), sin `statement_timeout` en el arranque de la conexión (evita el riesgo del pooler de Neon) y respetando `options`/`search_path` de la URL. Los errores reales de Prisma/adapter se normalizan a `23505`/`40001` (también P2002/P2034) para el reintento acotado de finalize.
+
 ---
 
 ## 3. Arquitectura

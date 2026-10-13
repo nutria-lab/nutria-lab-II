@@ -39,18 +39,18 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] F7 ★ unavailable ⇒ value null + reason no vacío; un 0 medido queda `observed`; NaN/Infinity lanza error (no se oculta). → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
 
 ## G. Snapshots y collect
-- [ ] G1 ★ Los 8 previews se guardan en UNA transacción e idempotentes por corte; los previews de distintos cortes coexisten.
-- [ ] G2 ★ finalize corre en transacción REPEATABLE READ; los finales son inmutables; si ya existen los 8, se devuelven sin recalcular.
-- [ ] G3 Dos finalizaciones concurrentes contra Postgres real ⇒ exactamente 8 finales iguales, sin mezcla de corridas.
-- [ ] G4 ★ `TelemetryLogger.collect(context)` usa el mismo código que finalize, respeta el corte fijo del contexto y devuelve exactamente los 8 códigos de Telemetry. Probado con un Composite falso.
+- [x] G1 ★ Los 8 previews se guardan en UNA transacción e idempotentes por corte; los previews de distintos cortes coexisten. → `snapshots/telemetry-snapshot.service.ts`; `src/modules/kpi/tests/telemetry-snapshot.service.spec.ts`; `src/modules/kpi/tests/telemetry-snapshots.integration.spec.ts` › G1
+- [x] G2 ★ finalize corre en transacción REPEATABLE READ; los finales son inmutables; si ya existen los 8, se devuelven sin recalcular. → `src/modules/kpi/tests/telemetry-snapshot.service.spec.ts` › REPEATABLE READ / reutiliza 8 finales; `src/modules/kpi/tests/telemetry-snapshots.integration.spec.ts` › G2
+- [x] G3 Dos finalizaciones concurrentes contra Postgres real ⇒ exactamente 8 finales iguales, sin mezcla de corridas. → `src/modules/kpi/tests/telemetry-snapshots.integration.spec.ts` › G3 (barrera + 20 pares en paralelo, Postgres desechable)
+- [x] G4 ★ `TelemetryLogger.collect(context)` usa el mismo código que finalize, respeta el corte fijo del contexto y devuelve exactamente los 8 códigos de Telemetry. Probado con un Composite falso. → `telemetry-logger.ts`; `src/modules/kpi/tests/telemetry-logger.spec.ts` (Composite falso); `src/modules/kpi/tests/telemetry-snapshots.integration.spec.ts` › G4
 
 ## H. CLI `scripts/kpi` (sample/finalize)
-- [ ] H1 ★ sample: bucket = floor(nowUTC/30min); API /health con timeout 5s y DB SELECT 1 con 2s; una fila por bucket con ON CONFLICT DO NOTHING (reejecutar no la modifica); timeout/5xx ⇒ unhealthy; no rellena buckets viejos.
-- [ ] H2 ★ Si no se puede guardar la muestra porque la DB cayó ⇒ exit ≠ 0, sin observación ficticia.
-- [ ] H3 ★ preview con end = min(ahora, 21:00 de D); si todavía no hay intervalo positivo, solo guarda la muestra y sale.
-- [ ] H4 ★ finalize no toma una muestra nueva de health ni falsea el timestamp de las 21:00.
-- [ ] H5 ★ Cada corrida escribe un JSON de diagnóstico no sensible (ventana, cantidad de muestras, calidad, errores técnicos); ante fallo de telemetría, exit ≠ 0.
-- [ ] H6 ★ Purga: no hace nada antes de 2027-01-01; desde ahí borra el trimestre cerrado de las 4 tablas crudas/snapshots en lotes de 1000; nunca toca kpi_publication ni el día en preparación.
+- [x] H1 ★ sample: bucket = floor(nowUTC/30min); API /health con timeout 5s y DB SELECT 1 con 2s; una fila por bucket con ON CONFLICT DO NOTHING (reejecutar no la modifica); timeout/5xx ⇒ unhealthy; no rellena buckets viejos. → `cli/telemetry-cli.ts`; `src/modules/kpi/tests/telemetry-cli.spec.ts` › sample; `src/modules/kpi/tests/telemetry-cli.integration.spec.ts` › H1 (D25)
+- [x] H2 ★ Si no se puede guardar la muestra porque la DB cayó ⇒ exit ≠ 0, sin observación ficticia. → `src/modules/kpi/tests/telemetry-cli.spec.ts` › no poder guardar la muestra ⇒ exit 1; `src/modules/kpi/tests/telemetry-cli.integration.spec.ts` › H2
+- [x] H3 ★ preview con end = min(ahora, 21:00 de D); si todavía no hay intervalo positivo, solo guarda la muestra y sale. → `src/modules/kpi/tests/telemetry-cli.spec.ts` › preview end=min(now,21:00) / NO_POSITIVE_WINDOW
+- [x] H4 ★ finalize no toma una muestra nueva de health ni falsea el timestamp de las 21:00. → `src/modules/kpi/tests/telemetry-cli.spec.ts` › finalize sin muestra; `src/modules/kpi/tests/telemetry-snapshot.service.spec.ts` › measured_at es el reloj
+- [x] H5 ★ Cada corrida escribe un JSON de diagnóstico no sensible (ventana, cantidad de muestras, calidad, errores técnicos); ante fallo de telemetría, exit ≠ 0. → `src/modules/kpi/tests/telemetry-cli.spec.ts` › diagnóstico (D24) y códigos 0/1/2; entrypoint `apps/api/scripts/kpi/telemetry.ts` › `src/modules/kpi/tests/kpi-cli-entrypoint.spec.ts`
+- [x] H6 ★ Purga: no hace nada antes de 2027-01-01; desde ahí borra el trimestre cerrado de las 4 tablas crudas/snapshots en lotes de 1000; nunca toca kpi_publication ni el día en preparación. → `cli/purge-policy.ts`; `src/modules/kpi/tests/purge-policy.spec.ts`; `src/modules/kpi/tests/telemetry-cli.integration.spec.ts` › H6
 
 ## I. Workflow `.github/workflows/kpi-telemetry.yml`
 - [ ] I1 ★ cron `*/30 * * * *`; workflow_dispatch con environment (dev/prod), date opcional y mode (sample/finalize); el schedule siempre usa prod; usa GitHub Environments.
