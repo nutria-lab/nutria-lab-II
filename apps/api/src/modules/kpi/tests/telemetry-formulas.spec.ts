@@ -1,5 +1,3 @@
-// NUT-85 T2 — F1 (unit), F2–F7: fórmulas puras agregados → KpiResult (design D12, §6.9).
-// Ventana [start, end). Sin DB, sin red, sin redondeo.
 import type { KpiResult } from '../kpi-contract';
 import {
   TELEMETRY_KPI_IDS,
@@ -390,7 +388,7 @@ describe('telemetry-formulas — F7 calidad y valores no finitos', () => {
   });
 });
 
-// Fix 1 (goal-fixes): instrumentación apagada ⇒ no publicar "observed 0".
+// Instrumentación apagada ⇒ no publicar "observed 0".
 // TelemetryAggregates.instrumentationDisabledSamples: number = muestras de salud con measured_at en [start, end)
 // y reason 'INSTRUMENTATION_DISABLED'. Si > 0, los 6 KPI que dependen de eventos salen unavailable.
 describe('telemetry-formulas — instrumentación apagada (INSTRUMENTATION_DISABLED)', () => {

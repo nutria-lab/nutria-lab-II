@@ -1,5 +1,3 @@
-// NUT-85 T1 — A2 (nombres de CHECK) y A3 (aditiva, índices createdAt). Test estático:
-// lee migration.sql como texto; no ejecuta Prisma ni toca ninguna base.
 import {
   BUSINESS_CREATED_AT_INDEXES,
   KPI_CHECK_CONSTRAINTS,
@@ -56,7 +54,7 @@ describe('NUT-85 A2/A3 — migración *_add_kpi_telemetry (estático)', () => {
   it('existe exactamente una migración *_add_kpi_telemetry posterior a 20260930220304_add_recipe_image', () => {
     const dirs = findKpiMigrationDirs();
     expect(dirs).toHaveLength(1);
-    // Es la última migración: no queda nada intercalado después de NUT-85 en esta rama.
+    // Es la última migración: no queda nada intercalado después en esta rama.
     const all = listMigrationDirs();
     expect(all[all.length - 1]).toBe(dirs[0]);
     expect(all.filter(name => /add_kpi_telemetry/.test(name))).toEqual(dirs);

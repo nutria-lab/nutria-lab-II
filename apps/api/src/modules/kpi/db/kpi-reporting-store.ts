@@ -1,7 +1,4 @@
-// NUT-85 — Store de reporting (snapshots, muestras de salud, purga) con su PROPIO pool (design D14, D16, D22).
-// No reutiliza el pool del escritor de eventos (statement_timeout de 100 ms, pensado para escrituras en caliente):
-// los agregados y la purga necesitan más margen. Respeta los parámetros de la URL (p. ej. options/search_path).
-// Sólo límites del lado del cliente (sin statement_timeout como parámetro de arranque, por compatibilidad con poolers).
+// Pool propio: los agregados y la purga necesitan más margen que el escritor de eventos; sin parámetros de arranque (poolers).
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { PrismaClient } from '../../../generated/prisma/client';
@@ -16,12 +13,11 @@ export const REPORTING_CONNECT_TIMEOUT_MS = 5000;
 export const REPORTING_QUERY_TIMEOUT_MS = 30_000;
 
 export interface TelemetryCliStore extends SnapshotStore, PurgePort {
-  /** false = bucket ya registrado (ON CONFLICT DO NOTHING): la muestra original no cambia. */
+  // false: el bucket ya estaba registrado y la muestra original no cambia.
   insertHealthSample(sample: HealthSampleInput): Promise<boolean>;
   close(): Promise<void>;
 }
 
-/** No conecta al construirse: la primera conexión ocurre en la primera consulta. */
 export function createReportingStore(databaseUrl: string): TelemetryCliStore {
   const pool = new Pool({
     connectionString: databaseUrl,
@@ -30,7 +26,7 @@ export function createReportingStore(databaseUrl: string): TelemetryCliStore {
     query_timeout: REPORTING_QUERY_TIMEOUT_MS,
     idleTimeoutMillis: 1000,
   });
-  // Un cliente inactivo que pierde la conexión no debe tirar el proceso.
+  // Sin este listener, un error de un cliente inactivo tiraría el proceso.
   pool.on('error', () => undefined);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool), errorFormat: 'minimal' });
   const snapshots = new PrismaSnapshotStore(prisma);

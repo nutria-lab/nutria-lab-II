@@ -1,8 +1,6 @@
-// NUT-85 — CLI de telemetría (design D22–D24, §6.4–6.8). Toda la lógica vive acá (typecheckeada con src);
-// el entrypoint de scripts/kpi sólo llama a runTelemetryCli. No levanta Nest, no carga .env, no usa el alias '@/':
-// toda la cadena de imports es relativa para que tsx la resuelva sin `paths`.
-// Códigos de salida (D23): 0 éxito (incluye bucket ya registrado), 1 falla de telemetría, 2 uso/configuración.
-// Diagnóstico (D24): siempre se intenta escribir (finally); nunca URLs, credenciales, rutas ni mensajes de excepción.
+// Códigos de salida: 0 éxito (también bucket ya registrado), 1 falla de telemetría, 2 uso/configuración.
+// Imports relativos en toda la cadena del CLI: tsx no resuelve los paths del tsconfig.
+// El diagnóstico nunca incluye URLs, credenciales ni mensajes de excepción.
 import * as fs from 'fs';
 import * as path from 'path';
 import { INSTRUMENTATION_DISABLED } from '../calc/telemetry-formulas';
@@ -31,7 +29,7 @@ export const DIAGNOSTICS_FILE_NAME = 'kpi-telemetry-diagnostics.json';
 const TOOL_NAME = 'nutria-kpi-telemetry';
 
 export type CliMode = 'sample' | 'finalize';
-/** instrumentation = header X-KPI-Instrumentation de /health; ausente o desconocido ⇒ null (backend viejo, D31). */
+// Header de /health; ausente o desconocido (backend viejo) ⇒ null.
 export type ApiProbeOutcome =
   | { kind: 'response'; status: number; body: unknown; instrumentation?: 'enabled' | 'disabled' | null }
   | { kind: 'timeout' }
@@ -72,7 +70,6 @@ interface CliArgs {
   date: string | undefined;
 }
 
-/** Error de uso/configuración (exit 2). Sólo lleva un código técnico. */
 class CliUsageError extends Error {
   constructor(readonly code: string) {
     super(code);
@@ -87,7 +84,6 @@ const KNOWN_FLAGS = ['--mode', '--environment', '--date', '--diagnostics-out'] a
 const MODES: readonly string[] = ['sample', 'finalize'];
 const ENVIRONMENTS: readonly string[] = ['dev', 'qa', 'prod'];
 
-/** `--flag valor`; flags desconocidos, repetidos o sin valor se acumulan como error. */
 function readFlags(argv: readonly string[]): { values: Map<string, string>; invalid: boolean } {
   const values = new Map<string, string>();
   let invalid = false;
@@ -175,7 +171,6 @@ interface ResolvedRun {
   databaseUrl: string;
   apiBaseUrl: string;
   now: Date;
-  /** Corte de la corrida: ventana del preview (end = min(now, 21:00 D)) o canónica del finalize. */
   cut: SnapshotCut;
   previewSkipReason: string | null;
 }
@@ -185,7 +180,6 @@ interface RunContext extends ResolvedRun {
   diag: TelemetryDiagnostics;
 }
 
-/** Valida entorno y ventana antes de cualquier efecto (B7, D23). */
 function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
   const config = resolveKpiConfig(env);
   if (config.disabledReason === 'KPI_ENV_MISSING' || config.disabledReason === 'KPI_ENV_INVALID') {
@@ -211,7 +205,7 @@ function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
     if (error instanceof KpiWindowError) throw new CliUsageError(error.code);
     throw error;
   }
-  // Un día ya purgado no se recalcula (D29): sus eventos ya no existen.
+  // Un día ya purgado no se recalcula: sus eventos ya no existen.
   const purgeCutoff = args.mode === 'finalize' ? computePurgeCutoff(now) : null;
   if (purgeCutoff !== null && window.date < purgeCutoff.date) throw new CliUsageError('PURGED_WINDOW');
   return {
@@ -244,7 +238,7 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     apiOk: apiReason === null,
     databaseOk: dbReason === null,
     outcome: apiReason === null && dbReason === null ? 'healthy' : 'unhealthy',
-    // D31: instrumentación apagada tiene prioridad; el detalle de salud queda en api_ok/database_ok.
+    // La instrumentación apagada tiene prioridad; el detalle de salud queda en api_ok/database_ok.
     reason: instrumentationDisabled(api) ? INSTRUMENTATION_DISABLED : (apiReason ?? dbReason),
   };
   diag.sample = { outcome: sample.outcome, inserted: false, reason: sample.reason, result: 'SAMPLE_WRITE_FAILED' };
@@ -257,8 +251,7 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     diag.error_codes.push('SAMPLE_WRITE_FAILED');
     return EXIT_FAILURE;
   }
-  // Re-ejecución del mismo bucket sin --date: la corrida original ya hizo preview y purga (D25).
-  // Con --date explícito se recalcula igual el preview de ese día.
+  // Sin --date, un bucket repetido no rehace preview ni purga: ya los hizo la corrida original.
   if (!diag.sample.inserted && args.date === undefined) {
     diag.preview = { executed: false, skip_reason: 'SAMPLE_BUCKET_ALREADY_RECORDED' };
     return EXIT_OK;
@@ -362,18 +355,14 @@ export async function runTelemetryCli(
       try {
         await deps.writeDiagnostics(diagnosticsDir, diag);
       } catch {
-        // Best effort (D24): un fallo al escribir el diagnóstico no cambia el código de salida.
+        // Un fallo al escribir el diagnóstico no cambia el código de salida.
       }
     }
   }
   return exitCode;
 }
 
-// ---------------------------------------------------------------------------
-// Dependencias reales
-// ---------------------------------------------------------------------------
-
-/** GET /health con timeout duro (abort) que cubre también la lectura del body. */
+// El abort cubre también la lectura del body.
 export async function probeApiHealth(healthUrl: string, timeoutMs: number): Promise<ApiProbeOutcome> {
   const controller = new AbortController();
   let timedOut = false;
@@ -399,7 +388,6 @@ function isTimeoutError(error: unknown): boolean {
   return error instanceof Error && /timeout|timed out/i.test(error.message);
 }
 
-/** SELECT 1 en una conexión efímera con deadline; nunca rechaza. */
 export async function probeDatabaseHealth(databaseUrl: string, timeoutMs: number): Promise<DbProbeOutcome> {
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<DbProbeOutcome>(resolve => {

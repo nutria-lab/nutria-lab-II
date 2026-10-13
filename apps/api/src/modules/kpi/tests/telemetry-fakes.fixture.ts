@@ -1,5 +1,3 @@
-// Fakes de tests KPI T5 (NUT-85). Excluido del build por el sufijo *.fixture.ts.
-// Sin red ni DB: store de snapshots en memoria, agregados fijos y reloj controlable.
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { TelemetryAggregates } from '../calc/telemetry-formulas';
 import type { KpiEnvironment, KpiResult } from '../kpi-contract';

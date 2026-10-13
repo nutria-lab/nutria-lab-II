@@ -1,9 +1,3 @@
-// NUT-85 T5 — Previews, finalize y collect sobre Postgres real (G1–G4; design D13–D15, D17).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local. Schema descartable por suite.
-// API fijada adicional (snapshots/telemetry-snapshot.service.ts):
-//   class PrismaSnapshotStore implements SnapshotStore { constructor(prisma: PrismaClient) }
-//     transaction(isolation, fn) = prisma.$transaction(tx => fn(new TelemetryRepository(tx)), { isolationLevel })
-//   TelemetryRepository implementa SnapshotTx (loadAggregates, readFinals, insertFinals, upsertPreviews).
 import { randomUUID } from 'crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';

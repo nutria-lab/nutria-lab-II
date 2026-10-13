@@ -1,15 +1,3 @@
-// NUT-85 T5 — Política de purga trimestral (H6; design D16). Unit, sin DB.
-// API fijada (cli/purge-policy.ts):
-//   PURGE_START_DATE = '2027-01-01'; PURGE_BATCH_SIZE = 1000; PURGE_MAX_BATCHES = 100 (por corrida, todas las tablas)
-//   PURGE_TABLES = ['kpi_http_event', 'kpi_dependency_event', 'kpi_health_sample', 'kpi_snapshot'] (nunca kpi_publication)
-//   interface PurgeCutoff { date: string /* YYYY-MM-DD local */; start: Date /* 00:00 local de date, en UTC */ }
-//   computePurgeCutoff(now): PurgeCutoff | null
-//     null si la fecha local de hoy < 2027-01-01; si no, min(primer día del trimestre local, día ANTERIOR al día en
-//     preparación), donde día en preparación = D del último corte de las 21:00 locales ya ocurrido. Así nunca se borra
-//     el último éxito previo al start de D (corrección post-review: cambio de trimestre).
-//   interface PurgePort { purgeBatch(table, environment, cutoff, limit): Promise<number> }
-//   runPurge(port, environment, cutoff): Promise<{ cutoff: string; deleted: Record<PurgeTable, number>; batches: number }>
-//     bucle por tabla hasta 0 filas (o un lote incompleto), lotes de 1000, tope total de 100 lotes por corrida.
 import {
   PURGE_BATCH_SIZE,
   PURGE_MAX_BATCHES,

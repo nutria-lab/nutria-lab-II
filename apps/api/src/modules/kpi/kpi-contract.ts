@@ -1,6 +1,4 @@
-// Contrato compartido v1 (NUT-85 / NUT-86). Propiedad de Lara (NUT-86).
-// Versión mínima con los tipos textuales del ticket, sin lógica, para que
-// NUT-85 compile mientras NUT-86 entrega la implementación real.
+// Versión mínima del contrato compartido v1 (tipos textuales del ticket); la implementación es de Lara.
 
 export type KpiEnvironment = 'dev' | 'qa' | 'prod';
 

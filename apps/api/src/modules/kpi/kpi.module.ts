@@ -1,9 +1,4 @@
-// NUT-85 — Módulo KPI (design D1–D4, D10). Global: registra el middleware HTTP para todas las rutas
-// (incluidas las no matcheadas) y GET /health; drena el escritor (acotado) al cerrar la app.
-// Es @Global para que los adaptadores de Gemini y Unsplash reciban DEPENDENCY_INSTRUMENTATION (D9) sin que
-// PlansModule/UnsplashModule importen KpiModule; en los adaptadores la inyección es @Optional (no-op por defecto).
-// Exporta TelemetryLogger (D15) para el Composite de NUT-86; usa un store de reporting con pool propio (no conecta
-// hasta el primer collect) y se libera al cerrar la app.
+// @Global para que Gemini y Unsplash reciban DEPENDENCY_INSTRUMENTATION sin importar KpiModule (inyección @Optional).
 import { Global, Inject, Logger, Module, RequestMethod } from '@nestjs/common';
 import type { MiddlewareConsumer, NestModule, OnApplicationShutdown } from '@nestjs/common';
 import { resolveKpiConfig } from './config/kpi-config';
@@ -43,7 +38,6 @@ function kpiEventWriterFactory(config: KpiConfig): KpiEventWriter {
     logger.error('KPI_DATABASE_URL_MISSING');
     return new NoopKpiEventWriter();
   }
-  // El pool no conecta hasta la primera escritura.
   const handle = createKpiPrismaClient(databaseUrl);
   return new PrismaKpiEventWriter(handle.prisma, () => disposeKpiPrismaClient(handle));
 }
@@ -53,7 +47,7 @@ type ReportingStore = SnapshotStore & { close(): Promise<void> };
 function reportingStoreFactory(): ReportingStore {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
-    // Sin DB: collect traduce la falla a SOURCE_UNAVAILABLE (D15).
+    // Sin DB: collect traduce la falla a SOURCE_UNAVAILABLE.
     return {
       transaction: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
       close: async () => undefined,

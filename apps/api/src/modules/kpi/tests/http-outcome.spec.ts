@@ -1,4 +1,3 @@
-// NUT-85 T3 — Clasificación HTTP y normalización de operación, funciones puras (B2, B4, B5; design D6, D7, D8).
 import {
   UNMATCHED_OPERATION,
   UNRESOLVED_OPERATION,

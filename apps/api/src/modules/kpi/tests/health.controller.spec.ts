@@ -1,6 +1,3 @@
-// NUT-85 T3 — GET /health con sonda falsa sobre la app Nest real (D1; design D10, §6.3).
-// Contrato fijado: DB_HEALTH_PROBE = { ping(): Promise<void> } (rechaza si la DB falla); el controller aplica
-// un deadline de HEALTH_DB_TIMEOUT_MS (2000) ⇒ 503. Body exacto, Cache-Control: no-store, sin detalle del error.
 import { Logger } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -143,7 +140,7 @@ describe('GET /health (D1)', () => {
     expect(JSON.parse(text)).toEqual(OK_BODY);
   });
 
-  // Fix 1 (goal-fixes): header X-KPI-Instrumentation según la config KPI efectiva; body y status sin cambios.
+  // Header X-KPI-Instrumentation según la config KPI efectiva; body y status sin cambios.
   it.each([
     ['habilitada', { enabled: true, environment: 'dev', disabledReason: null }, 'enabled'],
     ['apagada por switch false', { enabled: false, environment: 'dev', disabledReason: 'KPI_SWITCH_OFF' }, 'disabled'],

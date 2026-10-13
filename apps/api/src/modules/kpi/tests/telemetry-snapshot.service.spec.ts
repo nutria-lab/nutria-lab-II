@@ -1,18 +1,3 @@
-// NUT-85 T5 — Servicio de snapshots con store fake (G1, G2, G4, H4; design D13, D14).
-// API fijada (snapshots/telemetry-snapshot.service.ts):
-//   type SnapshotIsolation = 'ReadCommitted' | 'RepeatableRead'
-//   interface SnapshotCut { environment: KpiEnvironment; date: string; start: Date; end: Date }
-//   interface SnapshotTx {
-//     loadAggregates(environment, { start, end }): Promise<TelemetryAggregates>;
-//     readFinals(cut): Promise<KpiResult[]>;              // finales del corte (environment, date, end), por kpi_id
-//     insertFinals(cut, results): Promise<void>;          // INSERT plano, sin ON CONFLICT
-//     upsertPreviews(cut, results): Promise<void>;        // ON CONFLICT (...) DO UPDATE
-//   }
-//   interface SnapshotStore { transaction<T>(isolation, fn: (tx: SnapshotTx) => Promise<T>): Promise<T> }
-//   class TelemetrySnapshotService(store, clock: () => Date, options?: { afterFinalsRead?: (attempt: number) => Promise<void> })
-//     preview(cut) / finalizeCore(cut): Promise<{ results: KpiResult[]; reused: boolean; aggregates: TelemetryAggregates | null }>
-//   class KpiSnapshotError extends Error { code: 'KPI_FINAL_INCOMPLETE' | 'KPI_FINALIZE_CONFLICT' }
-//   FINALIZE_MAX_ATTEMPTS = 3
 import { TELEMETRY_KPI_IDS, buildTelemetryResults } from '../calc/telemetry-formulas';
 import {
   FINALIZE_MAX_ATTEMPTS,

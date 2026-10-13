@@ -1,5 +1,3 @@
-// NUT-85 T2 — F1–F6 sobre Postgres real (design D12: agregados en SQL, percentile_disc es la fuente de verdad).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local. Schema descartable por suite.
 import { randomUUID } from 'crypto';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../../generated/prisma/client';
@@ -298,7 +296,7 @@ describeIfKpiDb('telemetry-aggregates (integración Postgres)', () => {
     expect(pick(qa, 'health_status').value).toBe(0);
   });
 
-  // Fix 1 (goal-fixes): TelemetryAggregates.instrumentationDisabledSamples = muestras con measured_at en
+  // TelemetryAggregates.instrumentationDisabledSamples = muestras con measured_at en
   // [start, end), del ambiente, con reason 'INSTRUMENTATION_DISABLED'.
   it('sin muestras INSTRUMENTATION_DISABLED ⇒ instrumentationDisabledSamples 0 y operations_count 0 observed', async () => {
     await insertHealthAt('healthy', IN_WINDOW_MS, null);

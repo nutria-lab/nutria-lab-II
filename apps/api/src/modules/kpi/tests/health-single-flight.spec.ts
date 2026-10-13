@@ -1,12 +1,3 @@
-// NUT-85 corrección post-review (MAJOR) — GET /health no abre una conexión por request concurrente.
-// Contrato fijado:
-// - Pings simultáneos comparten la misma promesa de la sonda (single-flight).
-// - Un resultado (ok o error/timeout) se reutiliza durante HEALTH_RESULT_TTL_MS = 5000 ms (exportado por
-//   health/db-health-probe.ts); pasada la ventana se vuelve a sondear. Un fallo nunca se cachea más que esa ventana.
-// - Bodies 200/503, Cache-Control no-store y el límite de 2 s (HEALTH_DB_TIMEOUT_MS) no cambian.
-// Controller directo con fake timers (Date.now/performance.now/setTimeout falsos), sin HTTP real.
-// Fix 1 (goal-fixes): constructor fijado `new HealthController(probe: DbHealthProbe, config: KpiConfig)`
-// (config = KPI_CONFIG); cada respuesta, incluso la reutilizada, lleva X-KPI-Instrumentation: enabled|disabled.
 import { Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import type { KpiConfig } from '../config/kpi-config';

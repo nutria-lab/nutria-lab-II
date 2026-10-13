@@ -59,7 +59,6 @@ const EPOCH_SECONDS_THRESHOLD = 1_000_000_000;
 
 type SearchResult = { query: string; candidate: UnsplashCandidate };
 
-// Resultado del intercambio de red de la búsqueda (fetch + status + lectura del body).
 type SearchExchange = { kind: 'status'; status: number } | { kind: 'invalid_json' } | { kind: 'body'; data: unknown };
 
 // Agrega la UTM de atribución que pide Unsplash conservando los demás parámetros.
@@ -105,7 +104,7 @@ export class UnsplashService {
   // Hasta cuándo no se busca porque la cuota está agotada (null = hay cuota). Vive en memoria.
   private quotaExhaustedUntil: number | null = null;
 
-  // La instrumentación KPI (NUT-85) es opcional: sin KpiModule o en construcciones manuales es no-op.
+  // La instrumentación KPI es opcional: sin KpiModule o en construcciones manuales es no-op.
   constructor(
     private readonly configService: ConfigService,
     @Optional()
@@ -198,7 +197,7 @@ export class UnsplashService {
     const timeoutId = setTimeout(() => abortController.abort(), UNSPLASH_TIMEOUT_MS);
 
     try {
-      // Sólo el fetch se registra como intento KPI de 'unsplash_download' (NUT-85, D9).
+      // Sólo el fetch se registra como intento KPI de 'unsplash_download'.
       const response = await this.instrumentation.run(
         'unsplash_download',
         () =>
@@ -259,8 +258,7 @@ export class UnsplashService {
 
     // Un solo try/finally para fetch() y json(): el timeout también cubre la lectura del body.
     try {
-      // Sólo el intercambio de red (fetch + status + json) se registra como intento KPI de 'unsplash_search'
-      // (NUT-85, D9): 200 con JSON leído ⇒ success (aunque no haya resultados); otro status o JSON inválido ⇒ error.
+      // 200 con JSON leído ⇒ success aunque no haya resultados; otro status o JSON inválido ⇒ error.
       const exchange = await this.instrumentation.run(
         'unsplash_search',
         () => this.searchExchange(url.toString(), apiKey, abortController.signal),
@@ -313,7 +311,7 @@ export class UnsplashService {
     }
   }
 
-  // fetch de la búsqueda + lectura del body. Un abort (también durante json()) se relanza.
+  // Un abort, también durante json(), se relanza.
   private async searchExchange(url: string, apiKey: string, signal: AbortSignal): Promise<SearchExchange> {
     const response = await fetch(url, {
       headers: { Authorization: `Client-ID ${apiKey}` },

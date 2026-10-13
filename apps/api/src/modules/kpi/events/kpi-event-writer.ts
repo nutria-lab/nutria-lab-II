@@ -1,10 +1,3 @@
-// NUT-85 — Escritor de eventos KPI (design D3, D5).
-// - Cada escritura se espera como máximo KPI_WRITE_WAIT_MS y nunca rechaza.
-// - Fallos ⇒ log con código técnico + SQLSTATE; nunca el mensaje del error ni la URL de conexión.
-// - Las queries que exceden la espera quedan registradas "en vuelo"; drain(ms) las espera acotado al cerrar la app.
-// - Cada escritura corre en su propia transacción con `SET LOCAL statement_timeout` previo (D27): nada de
-//   parámetros de arranque (el pooler PgBouncer de Neon puede rechazarlos) y el límite no queda pegado a la conexión.
-// - El cierre es un UPDATE condicional (outcome = 'pending') del mismo id: nunca INSERT (un segundo cierre afecta 0 filas).
 import { Logger } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '../../../generated/prisma/client';
 import type { KpiEnvironment } from '../kpi-contract';
@@ -52,17 +45,14 @@ export interface KpiEventWriter {
   closeHttp(event: HttpCloseEvent): Promise<void>;
   insertDependencyPending(event: DependencyPendingEvent): Promise<void>;
   closeDependency(event: DependencyCloseEvent): Promise<void>;
-  /** Espera (acotado) a que terminen las escrituras en vuelo. Nunca rechaza. */
   drain(timeoutMs?: number): Promise<void>;
   inFlightCount(): number;
-  /** Libera recursos propios (pool). Opcional. */
   dispose?(): Promise<void>;
 }
 
-/** $executeRaw (tagged template, parametrizado), el SET LOCAL sin parámetros y $transaction en forma batch. */
 export type KpiWriterClient = Pick<PrismaClient, '$executeRaw' | '$executeRawUnsafe' | '$transaction'>;
 
-/** SET LOCAL no admite parámetros; el valor sale de una constante numérica, nunca de entrada externa. */
+// SET LOCAL no admite parámetros: el valor sale de una constante, nunca de entrada externa.
 const SET_LOCAL_STATEMENT_TIMEOUT = `SET LOCAL statement_timeout = '${KPI_SQL_STATEMENT_TIMEOUT_MS}ms'`;
 
 const logger = new Logger('KpiEventWriter');
@@ -70,7 +60,6 @@ const logger = new Logger('KpiEventWriter');
 const SQLSTATE_RE = /^[0-9A-Z]{5}$/;
 const STATEMENT_TIMEOUT_SQLSTATE = '57014';
 
-/** Busca el SQLSTATE de Postgres en el error (directo de pg o envuelto por Prisma/adapter-pg). */
 export function sqlStateOf(error: unknown): string | null {
   const queue: Array<{ node: unknown; depth: number }> = [{ node: error, depth: 0 }];
   const seen = new Set<unknown>();
@@ -102,10 +91,7 @@ const PRISMA_CODE_RE = /^P\d{4}$/;
 export const CLIENT_QUERY_TIMEOUT_CODE = 'CLIENT_QUERY_TIMEOUT';
 export const CLIENT_CONNECT_TIMEOUT_CODE = 'CLIENT_CONNECT_TIMEOUT';
 
-/**
- * Código técnico de un fallo sin SQLSTATE (D32): el `query_timeout`/connect timeout del cliente pg llega como
- * `Error` sin `code` (Prisma no lo envuelve), así que se reconoce por su texto fijo; el mensaje nunca se loguea.
- */
+// El query_timeout/connect timeout de pg llega sin code (Prisma no lo envuelve): se reconoce por su texto fijo, que nunca se loguea.
 export function technicalCodeOf(error: unknown): string | null {
   if (error === null || typeof error !== 'object') return null;
   const record = error as Record<string, unknown>;
@@ -127,10 +113,7 @@ function logWriteFailure(operation: string, error: unknown): void {
   logger.warn(`${code} op=${operation} sqlstate=${sqlState ?? 'none'}${suffix}`);
 }
 
-/**
- * Ejecuta una escritura y la espera como máximo `waitMs`. Nunca rechaza: un rechazo se loguea como
- * KPI_WRITE_FAILED/KPI_WRITE_TIMEOUT y el vencimiento como KPI_WRITE_WAIT_EXCEEDED. El temporizador siempre se limpia.
- */
+// Nunca rechaza: el fallo y el vencimiento de la espera sólo se loguean.
 export function awaitWriteBounded(
   write: () => Promise<unknown>,
   operation: string,
@@ -160,7 +143,7 @@ export function awaitWriteBounded(
 
 export class PrismaKpiEventWriter implements KpiEventWriter {
   private readonly inFlight = new Set<Promise<void>>();
-  /** INSERT pending por id, para encadenar el cierre después del insert de la misma request. */
+  // Permite que el cierre del mismo id espere a su insert.
   private readonly pendingInserts = new Map<string, Promise<void>>();
 
   constructor(
@@ -248,14 +231,13 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     await this.onDispose?.().catch(() => undefined);
   }
 
-  /** Corre la escritura en su propia transacción (batch), precedida por el SET LOCAL del límite SQL. */
+  // SET LOCAL en cada transacción: el pooler PgBouncer de Neon puede rechazar parámetros de arranque.
   private async withLocalTimeout(write: () => Prisma.PrismaPromise<number>): Promise<number> {
     const setLocal = this.client.$executeRawUnsafe(SET_LOCAL_STATEMENT_TIMEOUT);
     const [, affected] = await this.client.$transaction([setLocal, write()]);
     return affected;
   }
 
-  /** INSERT pending registrado por id, para que el cierre del mismo id espere al insert. */
   private insertPending(id: string, operation: string, run: () => Promise<unknown>): Promise<void> {
     const settled = this.track(operation, run);
     this.pendingInserts.set(id, settled);
@@ -265,7 +247,6 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     return awaitWriteBounded(() => settled, operation);
   }
 
-  /** Ejecuta la query y la registra en vuelo hasta que termina; la promesa resultante nunca rechaza. */
   private track(operation: string, run: () => Promise<unknown>): Promise<void> {
     let settled: Promise<void>;
     try {

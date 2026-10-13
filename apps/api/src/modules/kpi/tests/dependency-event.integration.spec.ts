@@ -1,11 +1,3 @@
-// NUT-85 T4 — Escritor de dependencias contra Postgres desechable (C2; design D3, D5, D9).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local. Schema descartable por suite.
-// Contrato fijado: insertDependencyPending INSERT 'pending'; closeDependency UPDATE condicional (outcome = 'pending')
-// del mismo id; UNIQUE (environment, operation_id, dependency, attempt) ⇒ el 2º insert falla, se loguea sin
-// mensaje y nunca rechaza.
-// D32: el escritor de esta suite usa un cliente con query_timeout amplio (kpi-writer-client.fixture) y se drena
-// antes de cada lectura, para que el resultado dependa de Postgres y no de la carga del runner. El query_timeout
-// de producción (150 ms) está fijado en el unit test de createKpiPrismaClient.
 import { randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import type { KpiPrismaHandle } from '../db/kpi-prisma';

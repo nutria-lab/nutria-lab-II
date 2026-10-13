@@ -1,6 +1,3 @@
-// NUT-85 T2 — E1/E2: ventana temporal del reporte diario (design D11).
-// Zona America/Argentina/Buenos_Aires, día D desde 00:00 inclusive hasta 21:00 exclusivo, instantes en UTC.
-// Unit puro con reloj fijo (se pasa `now`, nunca se lee Date.now()).
 import {
   KpiWindowError,
   parseReportDate,

@@ -1,5 +1,3 @@
-// NUT-85 T3 — Config KPI (B7, B8; design D1, D2).
-// KPI_ENV obligatorio y exacto (dev|qa|prod), nunca inferido de NODE_ENV; interruptor KPI_INSTRUMENTATION_ENABLED.
 import { resolveKpiConfig } from '../config/kpi-config';
 
 describe('resolveKpiConfig', () => {

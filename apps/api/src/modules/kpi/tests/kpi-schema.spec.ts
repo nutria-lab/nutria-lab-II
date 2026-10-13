@@ -1,4 +1,3 @@
-// NUT-85 T1 — A1 (+ base de J2). Test estático: lee los .prisma como texto, no toca ninguna base.
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -200,7 +199,7 @@ describe('NUT-85 A1 — kpi.prisma (estático)', () => {
 
       if (spec.id) {
         expect(line).toMatch(/@id\b/);
-        // D19: ids generados por la aplicación con crypto.randomUUID(), sin default en la base.
+        // Ids generados por la aplicación con crypto.randomUUID(), sin default en la base.
         expect(line).not.toMatch(/@default\(/);
       }
     });
@@ -308,7 +307,7 @@ describe('NUT-85 A1/A3 — modelos de negocio', () => {
   const mealPlanFile = path.resolve(modelsDir, 'mealPlan.prisma');
   const recipeFile = path.resolve(modelsDir, 'recipe.prisma');
 
-  // Huella de mealPlan.prisma / recipe.prisma tal como estaban antes de NUT-85, ignorando
+  // Huella de mealPlan.prisma / recipe.prisma antes de esta migración, ignorando
   // únicamente la línea `@@index([createdAt])` (CRLF→LF, sin espacios finales).
   // Si otro ticket cambia estos modelos, actualizar la huella en ese ticket.
   const BASELINE_HASHES: Record<string, string> = {

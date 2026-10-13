@@ -1,8 +1,4 @@
-// NUT-85 — TelemetryLogger: fuente de los 8 KPI de Telemetry para el Composite de NUT-86 (design D15).
-// collect(context) = validación del contexto ⇒ núcleo de finalize (mismo corte fijo) ⇒ 8 KpiResult por kpi_id.
-// Errores de contrato se propagan; una falla de la fuente se traduce a 8 unavailable SOURCE_UNAVAILABLE sin persistir.
-// Errores estructurales de SQL (clase 42, clase 23 salvo 23505) se propagan (D30). Un día ya purgado devuelve
-// sus 8 finales si existen o 8 unavailable PURGED_WINDOW, sin recalcular ni insertar (D29).
+// Una falla de la fuente da 8 unavailable SOURCE_UNAVAILABLE sin persistir; los errores de contrato o de SQL estructural se propagan.
 import { TELEMETRY_KPI_IDS } from './calc/telemetry-formulas';
 import { computePurgeCutoff } from './cli/purge-policy';
 import type { KpiConfig } from './config/kpi-config';
@@ -30,13 +26,12 @@ export class KpiContextError extends Error {
   }
 }
 
-/** SQLSTATE de programación/estructura: clase 42 (sintaxis, objeto inexistente) y clase 23 salvo 23505 (conflicto). */
+// Clase 42 y clase 23 salvo 23505: errores de programación, no de la fuente.
 function isStructuralSqlState(sqlState: string | null): boolean {
   if (sqlState === null) return false;
   return sqlState.startsWith('42') || (sqlState.startsWith('23') && sqlState !== '23505');
 }
 
-/** Errores de integridad o de programación: no son una falla de la fuente y se propagan. */
 function isSourceFailure(error: unknown): boolean {
   if (error instanceof KpiSnapshotError) return error.code === 'KPI_FINALIZE_CONFLICT';
   if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) return false;
@@ -44,7 +39,7 @@ function isSourceFailure(error: unknown): boolean {
   return !(error instanceof Error && error.message.startsWith('KPI_NON_FINITE'));
 }
 
-/** Orden por kpi_id en code points (independiente de la collation de la DB). */
+// Orden por code points, independiente de la collation de la DB.
 function byKpiId(a: KpiResult, b: KpiResult): number {
   if (a.kpi_id === b.kpi_id) return 0;
   return a.kpi_id < b.kpi_id ? -1 : 1;

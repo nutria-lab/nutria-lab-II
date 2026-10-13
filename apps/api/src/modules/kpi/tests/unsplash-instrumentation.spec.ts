@@ -1,11 +1,3 @@
-// NUT-85 T4 — Unsplash instrumentado en el punto de ejecución (C1, C2; design D9). fetch mockeado, sin red.
-// Contrato fijado:
-// - new UnsplashService(config, instrumentation?) — 2º parámetro @Optional() @Inject(DEPENDENCY_INSTRUMENTATION), por defecto NOOP.
-// - Búsqueda: sólo el intercambio de red (fetch + status + json) va envuelto con run('unsplash_search', ...):
-//   200 + JSON leído ⇒ success (incluso 0 resultados); status ≠ 200 ⇒ error; abort ⇒ timeout; JSON inválido ⇒ error.
-// - trackDownload: sólo el fetch va envuelto con run('unsplash_download', ...): ok ⇒ success; no ok ⇒ error; abort ⇒ timeout.
-// - Sin key, cuota agotada o URL de tracking inválida ⇒ no hay intento ⇒ el wrapper no se llama.
-// - El contrato de negocio no cambia (null / FAILED, nunca lanza).
 import { randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';

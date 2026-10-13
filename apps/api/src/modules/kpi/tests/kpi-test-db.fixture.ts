@@ -1,11 +1,3 @@
-// Helper de tests KPI (NUT-85). Excluido del build por el sufijo *.fixture.ts.
-//
-// Reglas (design D17):
-// - Sólo lee KPI_TEST_DATABASE_URL. Nunca carga .env ni importa dotenv.
-// - Sin la variable, las suites de integración hacen skip limpio.
-// - Si el host no es local, la suite FALLA (nunca se corre contra Neon ni bases compartidas).
-// - Nunca invoca el CLI de Prisma: aplica los migration.sql con `pg` dentro de un schema
-//   descartable por suite (kpi_it_<aleatorio>) vía search_path, y lo borra al final.
 import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,15 +9,11 @@ export const PRISMA_DIR = path.resolve(__dirname, '../../../../prisma');
 export const MIGRATIONS_DIR = path.resolve(PRISMA_DIR, 'migrations');
 export const KPI_PRISMA_FILE = path.resolve(PRISMA_DIR, 'models/kpi.prisma');
 
-/** Última migración anterior a NUT-85. */
+// Última migración anterior a la de telemetría KPI.
 export const PRE_KPI_BASELINE_MIGRATION = '20260930220304_add_recipe_image';
 export const KPI_MIGRATION_NAME_PATTERN = /^\d{14}_add_kpi_telemetry$/;
 
-// ---------------------------------------------------------------------------
-// Contrato de nombres del esquema KPI (design §5.1, D19–D21). Los nombres son
-// explícitos y estables: el SQL de la migración y el `map:` de Prisma deben usarlos.
-// Todos ≤ 63 caracteres (límite de identificadores de Postgres).
-// ---------------------------------------------------------------------------
+// Nombres explícitos del esquema KPI: la migración y el map: de Prisma deben usarlos (≤ 63 caracteres, límite de Postgres).
 
 export const KPI_TABLES = [
   'kpi_http_event',

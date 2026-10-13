@@ -1,5 +1,3 @@
-// NUT-85 T3 — Escritor real contra Postgres desechable (B1, B3, B6; design D3, D5).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local. Schema descartable por suite.
 import { randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import { createKpiPrismaClient } from '../db/kpi-prisma';
@@ -208,9 +206,7 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
   });
 
   it('B6: el cierre (UPDATE) con la tabla bloqueada también da KPI_WRITE_TIMEOUT (SET LOCAL 57014) acotado', async () => {
-    // D32: este caso fija que el límite lo corta Postgres (SET LOCAL ⇒ 57014). Con el query_timeout de 150 ms del
-    // pool de producción, bajo carga el temporizador del cliente puede ganar y el log sale sin SQLSTATE; por eso
-    // usa un cliente con query_timeout amplio. El otro caso B6 cubre el pool real (acepta cualquiera de las vías).
+    // Cliente con query_timeout amplio: bajo carga el temporizador de 150 ms del cliente puede ganarle al 57014 de Postgres.
     const wide = createWideTimeoutKpiPrismaClient(db);
     const writer = new PrismaKpiEventWriter(wide.prisma);
     const id = randomUUID();

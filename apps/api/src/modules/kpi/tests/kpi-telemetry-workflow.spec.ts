@@ -1,7 +1,3 @@
-// NUT-85 T6 — I1, I2, I3. Test estático del workflow .github/workflows/kpi-telemetry.yml:
-// lo lee como texto (sin librerías YAML) y verifica disparadores, ambiente efectivo,
-// aislamiento, pasos, comando del CLI, artifact y uso de secrets/vars del contrato.
-// No ejecuta la Action ni toca ninguna base.
 import * as fs from 'fs';
 import * as path from 'path';
 

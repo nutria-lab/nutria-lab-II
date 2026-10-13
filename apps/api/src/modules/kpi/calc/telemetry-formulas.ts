@@ -1,8 +1,5 @@
-// NUT-85 — Fórmulas puras: agregados de la ventana [start, end) → KpiResult (design D12, §6.9).
-// Sin DB, sin red, sin redondeo. Un valor no finito es un error de programación (KPI_NON_FINITE).
 import type { KpiId, KpiResult } from '../kpi-contract';
 
-/** Los 8 KPI de Telemetry, ordenados por kpi_id. */
 export const TELEMETRY_KPI_IDS = [
   'availability_rate',
   'dependency_error_rate',
@@ -19,7 +16,6 @@ export type TelemetryKpiId = (typeof TELEMETRY_KPI_IDS)[number];
 export type HealthOutcome = 'healthy' | 'unhealthy' | 'unknown';
 
 export interface TelemetryAggregates {
-  /** Eventos HTTP terminales con finished_at en ventana, por outcome. */
   http: {
     success: number;
     clientError: number;
@@ -27,26 +23,21 @@ export interface TelemetryAggregates {
     networkError: number;
     timeout: number;
     other: number;
-    /** percentile_disc(0.95) de duration_ms; null si no hay operaciones. */
     p95DurationMs: number | null;
-    /** Sólo diagnóstico: no entra en ningún KPI. */
+    // Sólo diagnóstico: no entra en ningún KPI.
     pendingIncomplete: number;
   };
-  /** max(finished_at) de success con finished_at < end (sin límite inferior). */
+  // Sin límite inferior: el último éxito puede ser anterior a start.
   lastSuccessFinishedAt: Date | null;
-  /** Intentos de dependencias terminales con finished_at en ventana. */
   dependency: { success: number; error: number; timeout: number };
-  /** Muestra de salud con mayor measured_at en ventana (desempate por scheduled_for). */
   latestHealth: { outcome: HealthOutcome; measuredAt: Date; scheduledFor: Date } | null;
-  /** Muestras de salud con measured_at en ventana, por outcome. */
   health: { healthy: number; unhealthy: number; unknown: number };
-  /** Muestras de salud con measured_at en ventana y reason INSTRUMENTATION_DISABLED (D31). */
   instrumentationDisabledSamples: number;
 }
 
 export const INSTRUMENTATION_DISABLED = 'INSTRUMENTATION_DISABLED';
 
-/** KPI que dependen de eventos: sin instrumentación en la ventana no se publican como observed (D31). */
+// Sin instrumentación en la ventana, estos KPI no se publican como observed.
 const EVENT_KPI_IDS = [
   'operations_count',
   'error_rate',

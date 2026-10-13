@@ -1,23 +1,3 @@
-// NUT-85 T4 — Wrapper de dependencias externas (C1, C2; design D9, §6.2). Unit, escritor falso, sin red ni DB.
-// Contrato fijado:
-// - dependencies/dependency-instrumentation.ts exporta:
-//     type KpiDependency = 'gemini' | 'unsplash_search' | 'unsplash_download'
-//     type DependencyTerminalOutcome = 'success' | 'error' | 'timeout'
-//     type DependencyCallResult<T> = { ok: true; value: T } | { ok: false; error: unknown }
-//     interface DependencyInstrumentation {
-//       run<T>(dependency: KpiDependency, call: () => Promise<T>,
-//              classify: (result: DependencyCallResult<T>) => DependencyTerminalOutcome): Promise<T>
-//     }
-//     NOOP_DEPENDENCY_INSTRUMENTATION: DependencyInstrumentation (ejecuta call() directo)
-//     class KpiDependencyInstrumentation implements DependencyInstrumentation
-//       constructor(@Inject(KPI_CONFIG) config: KpiConfig, @Inject(KPI_EVENT_WRITER) writer: KpiEventWriter)
-// - kpi.tokens.ts exporta DEPENDENCY_INSTRUMENTATION.
-// - KpiEventWriter gana insertDependencyPending(DependencyPendingEvent) y closeDependency(DependencyCloseEvent):
-//     DependencyPendingEvent = { id, environment, operationId, dependency, attempt, startedAt }
-//     DependencyCloseEvent   = { id, outcome, finishedAt, durationMs }
-// - operation_id = operationId del contexto de request; fuera de request, UUID nuevo por invocación (attempt 1).
-// - attempt = contador por (operation_id, dependency), incrementado sincrónicamente al iniciar cada llamada.
-// - Deshabilitada ⇒ call() directo, 0 escrituras. Fallos/lentitud del escritor nunca cambian el resultado.
 import { randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import type { KpiConfig } from '../config/kpi-config';

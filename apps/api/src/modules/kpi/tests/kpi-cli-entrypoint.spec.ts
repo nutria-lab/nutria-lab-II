@@ -1,7 +1,3 @@
-// NUT-85 T5 — Entrypoint delgado del CLI (design D22). Estático + typecheck dirigido.
-// apps/api/scripts/kpi/telemetry.ts queda fuera de rootDir/include: ni lint ni build lo ven, por eso este spec.
-// Contrato: único import relativo '../../src/modules/kpi/cli/telemetry-cli'; sin dotenv ni '@/'; sin lógica;
-// runTelemetryCli(process.argv.slice(2), process.env, createDefaultDeps()).then(code => { process.exitCode = code; }).
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';

@@ -1,10 +1,3 @@
-// NUT-85 T4 — Gemini instrumentado en el punto de ejecución (C1, C2; design D9). SDK mockeado, sin red.
-// Contrato fijado:
-// - new GeminiService(config, instrumentation?) — 2º parámetro @Optional() @Inject(DEPENDENCY_INSTRUMENTATION),
-//   por defecto NOOP (las construcciones manuales existentes siguen funcionando).
-// - generateText envuelve sólo model.generateContent con run('gemini', ...): una fila por llamada real.
-// - Abort por el timeout propio (15 s) ⇒ 'timeout'; error del SDK ⇒ 'error'; respuesta ⇒ 'success'.
-// - Los errores de negocio (AiProviderUnavailableError AI_TIMEOUT / AI_PROVIDER_ERROR) no cambian.
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
 import { GoogleGenerativeAIAbortError } from '@google/generative-ai';

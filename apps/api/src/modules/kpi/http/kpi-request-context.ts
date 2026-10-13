@@ -1,4 +1,3 @@
-// NUT-85 — Contexto de request KPI (design D4, D9): operation_id y contador de attempts por dependencia.
 import { AsyncLocalStorage } from 'async_hooks';
 
 export interface KpiRequestContext {

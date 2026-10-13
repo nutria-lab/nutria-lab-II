@@ -1,29 +1,3 @@
-// NUT-85 T5 — CLI de telemetría con dependencias fake (B7, H1–H6; design D16, D22–D24). Sin red ni DB.
-// API fijada (cli/telemetry-cli.ts):
-//   runTelemetryCli(argv: readonly string[], env: KpiEnvSource, deps: TelemetryCliDeps): Promise<number>  // 0 | 1 | 2
-//   createDefaultDeps(): TelemetryCliDeps
-//   argv: --mode sample|finalize  --environment dev|qa|prod  [--date YYYY-MM-DD]  [--diagnostics-out <dir>]
-//   interface TelemetryCliDeps {
-//     clock(): Date;
-//     probeApi(healthUrl: string, timeoutMs: number): Promise<ApiProbeOutcome>;      // `${KPI_API_BASE_URL}/health`, 5000
-//     probeDatabase(databaseUrl: string, timeoutMs: number): Promise<DbProbeOutcome>; // SELECT 1, 2000
-//     openStore(databaseUrl: string): TelemetryCliStore;
-//     writeDiagnostics(dir: string, diagnostics: TelemetryDiagnostics): Promise<void>;
-//   }
-//   type ApiProbeOutcome = { kind: 'response'; status: number; body: unknown; instrumentation?: 'enabled' | 'disabled' | null }
-//     | { kind: 'timeout' } | { kind: 'network_error' }
-//     (Fix 1: instrumentation = header X-KPI-Instrumentation de /health; ausente o desconocido ⇒ null/undefined)
-//   type DbProbeOutcome = 'ok' | 'timeout' | 'error'
-//   interface HealthSampleInput { environment; scheduledFor: Date; measuredAt: Date; apiOk: boolean | null;
-//     databaseOk: boolean | null; outcome: 'healthy' | 'unhealthy' | 'unknown'; reason: string | null }
-//   interface TelemetryCliStore extends SnapshotStore, PurgePort {
-//     insertHealthSample(sample: HealthSampleInput): Promise<boolean>;  // false = bucket ya registrado (ON CONFLICT DO NOTHING)
-//     close(): Promise<void>;
-//   }
-//   Diagnóstico (JSON, snake_case): tool, mode, environment, report_date, window_start, window_end, bucket,
-//     sample { outcome, inserted, reason } | null, kpis [{ kpi_id, kind, value, quality, reason, sample_count }],
-//     counts { http_terminal, http_pending_incomplete, dependency_attempts, health_samples } | null,
-//     purge { executed, cutoff, deleted }, error_codes: string[], exit_code, started_at, finished_at.
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { PurgeCutoff } from '../cli/purge-policy';
 import { PURGE_TABLES } from '../cli/purge-policy';
@@ -536,7 +510,7 @@ describe('runTelemetryCli — purga (H6)', () => {
   });
 });
 
-// Fix 1 (goal-fixes): /health con X-KPI-Instrumentation: disabled ⇒ la muestra se guarda igual (misma salud)
+// /health con X-KPI-Instrumentation: disabled ⇒ la muestra se guarda igual (misma salud)
 // con reason 'INSTRUMENTATION_DISABLED' (también si es unhealthy). Header ausente o enabled ⇒ reason como antes.
 describe('runTelemetryCli — sample con instrumentación apagada (X-KPI-Instrumentation)', () => {
   const okBody = { status: 'ok', database: 'ok' };

@@ -1,6 +1,3 @@
-// NUT-85 T1 — A2/A4 (parte automatizable). Integración contra Postgres real.
-// Sólo usa KPI_TEST_DATABASE_URL; sin ella hace skip. Falla si el host no es local.
-// Aplica los migration.sql con `pg` en un schema descartable; nunca usa el CLI de Prisma ni .env.
 import {
   BUSINESS_CREATED_AT_INDEXES,
   DisposableSchema,
@@ -211,7 +208,7 @@ describeIfKpiDb('NUT-85 A2/A4 — migración sobre Postgres desechable', () => {
       );
       expect(actual).toEqual(expected);
 
-      // Los ids los genera la aplicación (D19): sin default en la base.
+      // Los ids los genera la aplicación: sin default en la base.
       const idColumn = KPI_PRIMARY_KEYS[table].column;
       expect(rows.find(row => row.column_name === idColumn)?.column_default ?? null).toBeNull();
     });

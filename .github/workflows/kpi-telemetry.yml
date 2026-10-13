@@ -1,10 +1,6 @@
 name: KPI Telemetry
 
-# NUT-85: muestreo/cierre de los KPIs de telemetría.
-# - El script `kpi:telemetry` (y la dependencia `tsx`) los agrega Lara en
-#   apps/api/package.json (pendiente humano); hasta entonces el paso de telemetría falla.
-# - Rollback operativo: deshabilitar este workflow (Actions > KPI Telemetry > Disable workflow).
-# - Este workflow solo lee/escribe filas KPI vía el CLI; no aplica cambios de esquema.
+# Requiere el script kpi:telemetry en apps/api/package.json (hasta entonces el paso falla); rollback: deshabilitar este workflow.
 
 on:
   schedule:

@@ -1,12 +1,3 @@
-// NUT-85 T3 — Middleware HTTP KPI sobre la app Nest real (listen(0) + http/fetch), escritor falso (B1–B6, B8; D4–D8).
-// Contrato fijado:
-// - KpiModule (@Global) registra el middleware para todas las rutas (incluidas las no matcheadas) y HealthController.
-// - Tokens en kpi.tokens.ts: KPI_CONFIG (KpiConfig), KPI_EVENT_WRITER (escritor), DB_HEALTH_PROBE ({ ping(): Promise<void> }).
-// - Por request: insertHttpPending({id, environment, operation:'UNRESOLVED', startedAt}) ANTES del handler,
-//   closeHttp({id, operation, outcome, httpStatus, finishedAt, durationMs}) una sola vez, ANTES de completar la respuesta.
-// - getKpiRequestContext() expone { operationId, attempts } dentro del handler.
-// - Espera acotada por paso (≤ 250 ms) aunque el escritor tarde o falle; logs con código técnico.
-// - Al cerrar la app (onApplicationShutdown) drena el escritor.
 import { Controller, Get, HttpCode, Logger, NotFoundException, Param, Post } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';

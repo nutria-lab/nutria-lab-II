@@ -34,7 +34,7 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI;
   private readonly logger = new Logger(GeminiService.name);
 
-  // La instrumentación KPI (NUT-85) es opcional: sin KpiModule o en construcciones manuales es no-op.
+  // La instrumentación KPI es opcional: sin KpiModule o en construcciones manuales es no-op.
   constructor(
     private configService: ConfigService,
     @Optional()
@@ -78,7 +78,7 @@ export class GeminiService {
 
     try {
       // El SDK lee `signal` en el primer nivel de las opciones (SingleRequestOptions).
-      // Sólo la llamada de red se registra como intento KPI de 'gemini' (NUT-85, D9).
+      // Sólo la llamada de red se registra como intento KPI de 'gemini'.
       const result = await this.instrumentation.run(
         'gemini',
         () =>

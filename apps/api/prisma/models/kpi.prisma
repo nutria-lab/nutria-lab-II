@@ -1,6 +1,4 @@
-// NUT-85: tablas de telemetría KPI. Sin relaciones ni PII.
-// Las enumeraciones se guardan como texto; los CHECK viven sólo en la migración SQL.
-// Los ids (uuid) los genera la aplicación: sin default en la base.
+// Ids generados por la aplicación (sin default); los CHECK viven sólo en la migración SQL.
 
 model KpiHttpEvent {
   id          String    @id @db.Uuid
@@ -71,7 +69,7 @@ model KpiSnapshot {
   @@map("kpi_snapshot")
 }
 
-// Tabla de publicación: la escribe/lee NUT-86. updatedAt se setea explícitamente (sin @updatedAt).
+// updatedAt se setea explícitamente (sin @updatedAt).
 model KpiPublication {
   runId         String    @id @map("run_id") @db.Uuid
   environment   String

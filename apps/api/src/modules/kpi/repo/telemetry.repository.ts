@@ -1,7 +1,4 @@
-// NUT-85 — Agregados de telemetría en SQL (design D12, §6.9). Ventana [start, end), filtrada por ambiente.
-// Consultas parametrizadas con $queryRaw (tagged template): nunca se concatena SQL.
-// Tablas sin calificar por schema (resuelven por search_path).
-// Snapshots (D13, D14), muestras de salud (§6.4) y purga por lotes (D16): también SQL parametrizado.
+// Tablas sin calificar por schema: resuelven por search_path.
 import { randomUUID } from 'crypto';
 import type { PrismaClient } from '../../../generated/prisma/client';
 import type { KpiEnvironment, KpiId, KpiResult } from '../kpi-contract';
@@ -10,7 +7,6 @@ import type { HealthOutcome, TelemetryAggregates, TelemetryWindow } from '../cal
 import type { PurgeCutoff, PurgeTable } from '../cli/purge-policy';
 import type { SnapshotCut, SnapshotTx } from '../snapshots/telemetry-snapshot.service';
 
-/** Cliente Prisma o cliente de transacción: sólo SQL crudo parametrizado (tagged template). */
 export type KpiQueryClient = Pick<PrismaClient, '$queryRaw' | '$executeRaw'>;
 
 export interface HealthSampleInput {
@@ -168,7 +164,6 @@ export class TelemetryRepository implements SnapshotTx {
     };
   }
 
-  /** Finales del corte (environment, report_date, window_end), ordenados por kpi_id. */
   async readFinals(cut: SnapshotCut): Promise<KpiResult[]> {
     const rows = await this.prisma.$queryRaw<FinalRow[]>`
       SELECT kpi_id, value, quality, reason, sample_count::text AS sample_count, measured_at
@@ -188,7 +183,7 @@ export class TelemetryRepository implements SnapshotTx {
     }));
   }
 
-  /** INSERT plano de los finales (sin ON CONFLICT): un conflicto debe fallar la transacción entera (D14). */
+  // Sin ON CONFLICT: un conflicto debe hacer fallar toda la transacción.
   async insertFinals(cut: SnapshotCut, results: readonly KpiResult[]): Promise<void> {
     for (const r of results) {
       await this.prisma.$executeRaw`
@@ -200,7 +195,7 @@ export class TelemetryRepository implements SnapshotTx {
     }
   }
 
-  /** Upsert de previews por corte (D13); el llamador lo ejecuta dentro de una única transacción. */
+  // El llamador lo ejecuta dentro de una única transacción.
   async upsertPreviews(cut: SnapshotCut, results: readonly KpiResult[]): Promise<void> {
     for (const r of results) {
       await this.prisma.$executeRaw`
@@ -219,7 +214,6 @@ export class TelemetryRepository implements SnapshotTx {
     }
   }
 
-  /** Inserta la muestra del bucket; false si el bucket ya estaba registrado (la original no cambia). */
   async insertHealthSample(sample: HealthSampleInput): Promise<boolean> {
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO kpi_health_sample (id, environment, scheduled_for, measured_at, api_ok, database_ok, outcome, reason)
@@ -230,10 +224,7 @@ export class TelemetryRepository implements SnapshotTx {
     return inserted === 1;
   }
 
-  /**
-   * Borra un lote (≤ limit) del ambiente, anterior al corte. El nombre de tabla nunca se interpola:
-   * cada tabla de la lista blanca tiene su propia sentencia fija.
-   */
+  // El nombre de tabla nunca se interpola: cada tabla de la lista blanca tiene su sentencia fija.
   async purgeBatch(table: PurgeTable, environment: KpiEnvironment, cutoff: PurgeCutoff, limit: number): Promise<number> {
     const start = cutoff.start.toISOString();
     switch (table) {

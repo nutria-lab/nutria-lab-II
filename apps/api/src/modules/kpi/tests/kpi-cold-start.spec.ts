@@ -1,13 +1,3 @@
-// NUT-85 Fix 2 — Arranque en frío: una conexión nueva lenta no debe perder la request ni demorar al negocio.
-// Contrato fijado:
-// - La espera acotada del negocio (KPI_WRITE_WAIT_MS = 250) no cambia: si la conexión tarda (~600 ms), la promesa
-//   de insertHttpPending resuelve a los 250 ms con KPI_WRITE_WAIT_EXCEEDED y el insert termina después, en vuelo.
-// - closeHttp del MISMO id se aplica después del insert (insert y luego update) ⇒ UNA fila terminal, nunca 0 filas.
-//   El cliente falso modela un pool de 2 conexiones independientes (la primera fría, la segunda caliente): sin el
-//   encadenamiento del cierre detrás del insert, el UPDATE correría primero y afectaría 0 filas.
-// - drain espera a que terminen ambas escrituras.
-// - Middleware real + PrismaKpiEventWriter real sobre ese cliente lento: respuesta de negocio ≤ 2×250 + margen y
-//   al final un único evento cerrado con el status correcto.
 import { Controller, Get, Logger } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';

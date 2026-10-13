@@ -1,6 +1,3 @@
-// NUT-85 corrección post-review (CRITICAL) — la sonda de /health no manda statement_timeout como parámetro de
-// arranque (el pooler PgBouncer de Neon puede rechazar parámetros de startup). Sigue con query_timeout y
-// connectionTimeoutMillis = HEALTH_DB_TIMEOUT_MS (2 s), SELECT 1 y liberación siempre. Unit con `pg` simulado.
 const clientOptions: Array<Record<string, unknown>> = [];
 const clientInstances: Array<{ query: jest.Mock; end: jest.Mock; connect: jest.Mock }> = [];
 

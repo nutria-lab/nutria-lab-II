@@ -1,8 +1,4 @@
-// NUT-85 — GET /health (design D10, §6.3). 200 tras SELECT 1; 503 si la DB falla o tarda más de 2 s.
-// Body exacto, Cache-Control: no-store, sin detalle del error ni credenciales. El resultado no depende de la
-// config KPI; sólo el header X-KPI-Instrumentation la refleja (D31): enabled|disabled, en 200, 503 y reutilizados.
-// Single-flight + caché corta (D28): requests concurrentes comparten una sonda y su resultado se reutiliza
-// HEALTH_RESULT_TTL_MS; cada request igual responde dentro de los 2 s desde que llegó.
+// El resultado no depende de la config KPI; sólo el header X-KPI-Instrumentation la refleja.
 import { Controller, Get, Header, Inject, Logger, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import type { KpiConfig } from '../config/kpi-config';
@@ -40,7 +36,6 @@ export class HealthController {
   private inFlight: Promise<ProbeResult> | null = null;
   private cached: { result: ProbeResult; at: number } | null = null;
 
-  /** Resultado compartido: caché vigente, sonda en curso o una nueva. Acotado a 2 s por request. */
   private pingWithDeadline(): Promise<ProbeResult> {
     if (this.cached && Date.now() - this.cached.at < HEALTH_RESULT_TTL_MS) return Promise.resolve(this.cached.result);
     if (!this.inFlight) {

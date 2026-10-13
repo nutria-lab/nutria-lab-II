@@ -1,6 +1,3 @@
-// NUT-85 — Middleware HTTP KPI (design D4–D8, §6.1).
-// pending (esperado, acotado) → handler dentro del contexto de request → end diferido hasta el UPDATE de cierre
-// (esperado, acotado). Un solo cierre por request. Deshabilitado o excluido ⇒ pass-through.
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { NestMiddleware } from '@nestjs/common';
 import { randomUUID } from 'crypto';
@@ -25,7 +22,7 @@ function routeOf(req: Request): { path?: unknown } | undefined {
   return (req as Request & { route?: { path?: unknown } }).route;
 }
 
-/** Guarda propia del middleware por si el escritor inyectado no respeta su límite (design D5: ≤ 250 ms por paso). */
+// Guarda propia por si el escritor inyectado no respeta su límite.
 const MIDDLEWARE_WAIT_MS = KPI_WRITE_WAIT_MS;
 
 @Injectable()
@@ -97,7 +94,7 @@ export class KpiHttpMiddleware implements NestMiddleware {
       }
     });
 
-    // Difiere el end real hasta que el cierre se haya persistido (acotado).
+    // El end real espera a que el cierre se persista (acotado).
     const originalEnd = res.end;
     let endCalled = false;
     res.end = function deferredEnd(this: Response, ...args: unknown[]) {

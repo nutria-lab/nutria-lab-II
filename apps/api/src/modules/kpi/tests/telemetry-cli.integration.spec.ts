@@ -1,9 +1,3 @@
-// NUT-85 T5 — CLI sobre Postgres real con createDefaultDeps().openStore (H1, H2, H6; design D16, D17, D23).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local. Schema descartable por suite;
-// el store real recibe el search_path por el parámetro `options` de la URL. Sondas, reloj y diagnóstico son fakes.
-// API fijada adicional: TelemetryRepository.purgeBatch(table, environment, cutoff: PurgeCutoff, limit): Promise<number>
-//   (DELETE ... WHERE id IN (SELECT id ... LIMIT limit); eventos por started_at, muestras por scheduled_for,
-//   snapshots por report_date; sólo filas del ambiente y anteriores al corte).
 import { randomUUID } from 'crypto';
 import { createDefaultDeps, runTelemetryCli } from '../cli/telemetry-cli';
 import type { ApiProbeOutcome, DbProbeOutcome, TelemetryCliDeps } from '../cli/telemetry-cli';

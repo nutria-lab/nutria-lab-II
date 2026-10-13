@@ -1,4 +1,4 @@
-// NUT-85 — Config KPI (design D1, D2). Recibe el entorno por parámetro: nunca lee process.env ni NODE_ENV.
+// Recibe el entorno por parámetro: nunca lee process.env ni infiere el ambiente de NODE_ENV.
 import type { KpiEnvironment } from '../kpi-contract';
 
 export type KpiDisabledReason = 'KPI_ENV_MISSING' | 'KPI_ENV_INVALID' | 'KPI_SWITCH_OFF' | 'KPI_SWITCH_INVALID';

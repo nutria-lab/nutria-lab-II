@@ -1,8 +1,3 @@
-// NUT-85 T4 — Regeneración con 2 llamadas a Gemini (C1, C2; design D9). Sin red ni DB.
-// Cadena real: MealPlanRegenerationService.regenerate → firstDifferentProposal (máx. 2) →
-// GeminiWeeklyProposalComposer → GeminiService.generateText (SDK mockeado) → instrumentación.
-// Contrato fijado: las 2 llamadas reales son attempts 1 y 2 de 'gemini' con el mismo operation_id (el de la
-// request); ni la regeneración ni el composer ni la validación agregan filas propias (sólo el punto de ejecución).
 import 'reflect-metadata';
 import { randomUUID } from 'crypto';
 import { Logger, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';

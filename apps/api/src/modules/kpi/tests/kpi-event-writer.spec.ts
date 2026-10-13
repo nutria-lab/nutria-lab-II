@@ -1,17 +1,3 @@
-// NUT-85 T3 — Escritor de eventos con cliente Prisma falso y fake timers (B3, B6; design D3, D5).
-// Contrato fijado:
-// - PrismaKpiEventWriter(client) usa client.$executeRaw (tagged template, parametrizado).
-// - insertHttpPending / closeHttp nunca rechazan y resuelven en ≤ KPI_WRITE_WAIT_MS (250 ms).
-// - Fallos ⇒ log con código técnico (KPI_WRITE_TIMEOUT si SQLSTATE 57014, KPI_WRITE_FAILED, KPI_WRITE_WAIT_EXCEEDED)
-//   + SQLSTATE; nunca el mensaje del error ni la URL.
-// - Registro en vuelo: inFlightCount() cuenta queries no terminadas; drain(ms) espera acotado a que se vacíe.
-// - NoopKpiEventWriter no toca nada.
-// - Cada escritura (insert pending y cierre, HTTP y dependencia) corre en una transacción Prisma (batch o interactiva)
-//   que aplica `SET LOCAL statement_timeout = '100ms'` (o set_config('statement_timeout','100ms', true)) ANTES de la
-//   escritura y en la MISMA transacción (corrección post-review: nada de parámetros de arranque, PgBouncer de Neon).
-// - createKpiPrismaClient(url, overrides) arma un Pool propio: max 2, SIN statement_timeout de arranque,
-//   query_timeout = 150, connectionTimeoutMillis = KPI_CONNECT_TIMEOUT_MS (1500, Fix 2: arranque en frío), sin conectar
-//   al construirse. La espera acotada del negocio sigue en KPI_WRITE_WAIT_MS (250) y el SET LOCAL en 100 ms.
 import { Logger } from '@nestjs/common';
 import { KPI_CONNECT_TIMEOUT_MS, createKpiPrismaClient } from '../db/kpi-prisma';
 import {
@@ -491,7 +477,7 @@ describe('createKpiPrismaClient (pool propio, D3)', () => {
       expect(String(options.options ?? '')).not.toMatch(/statement_timeout/i);
       expect(String(options.connectionString ?? '')).not.toMatch(/statement_timeout/i);
       expect(options.query_timeout).toBe(150);
-      // Fix 2: una conexión nueva (arranque en frío Vercel+Neon) suele tardar más de 150 ms.
+      // Una conexión nueva (arranque en frío Vercel+Neon) suele tardar más de 150 ms.
       expect(options.connectionTimeoutMillis).toBe(KPI_CONNECT_TIMEOUT_MS);
       expect(options.connectionTimeoutMillis).toBe(1500);
       expect(options.options).toBe('-c search_path=kpi_x,public');

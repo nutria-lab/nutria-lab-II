@@ -1,12 +1,10 @@
-// NUT-85 — Clasificación HTTP, normalización de operación y exclusiones (design D6, D7, D8). Funciones puras.
-
 export type HttpTerminalOutcome = 'success' | 'client_error' | 'server_error' | 'network_error' | 'timeout' | 'other';
 
 export interface HttpOutcomeInput {
   statusCode: number | null;
-  /** El socket se cerró antes de terminar la respuesta. */
+  // El socket se cerró antes de terminar la respuesta.
   clientDisconnected?: boolean;
-  /** El propio servidor señaló el timeout (timeout confirmado). */
+  // Timeout señalado por el propio servidor (confirmado).
   serverTimedOut?: boolean;
 }
 
@@ -15,9 +13,7 @@ export interface HttpOutcomeResult {
   httpStatus: number | null;
 }
 
-/** Valor fijo del INSERT pending (antes del ruteo). */
 export const UNRESOLVED_OPERATION = 'UNRESOLVED';
-/** Valor fijo cuando ninguna ruta matcheó. */
 export const UNMATCHED_OPERATION = 'UNMATCHED';
 
 const MAX_OPERATION_LENGTH = 200;
@@ -41,13 +37,13 @@ function pathOnly(url: string): string {
   return trimmed === '' ? '/' : trimmed;
 }
 
-/** Método + plantilla de ruta (nunca la URL real), sin query ni barra final, ≤ 200 caracteres. */
+// Plantilla de ruta, nunca la URL real (sin query, userId ni token).
 export function normalizeOperation(method: string, routeTemplate: string | null | undefined): string {
   if (!routeTemplate) return UNMATCHED_OPERATION;
   return `${method.toUpperCase()} ${pathOnly(routeTemplate)}`.slice(0, MAX_OPERATION_LENGTH);
 }
 
-/** /health, el prefijo reservado /kpi (reporting) y las preflight OPTIONS no son tráfico de negocio. */
+// /health, reporting (/kpi) y las preflight OPTIONS no son tráfico de negocio.
 export function isExcludedFromTraffic(method: string, url: string): boolean {
   if (method.toUpperCase() === 'OPTIONS') return true;
   const path = pathOnly(url);

@@ -1,7 +1,4 @@
-// NUT-85 — Ventana temporal del reporte diario (design D11).
-// Día D en America/Argentina/Buenos_Aires: [00:00 local, 21:00 local), expresado en UTC.
-// El offset se resuelve por instante con Intl (sin -03:00 fijo, sin librerías nuevas).
-// Funciones puras: el reloj (`now`) siempre se recibe como argumento.
+// El offset de America/Argentina/Buenos_Aires se resuelve por instante con Intl (sin -03:00 fijo).
 
 export const KPI_TIME_ZONE = 'America/Argentina/Buenos_Aires';
 export const REPORT_CUT_HOUR = 21;
@@ -17,7 +14,7 @@ export class KpiWindowError extends Error {
 }
 
 export interface KpiWindow {
-  /** YYYY-MM-DD en hora local de Argentina. */
+  // YYYY-MM-DD local de Argentina.
   date: string;
   start: Date;
   end: Date;
@@ -64,14 +61,13 @@ function localParts(instantMs: number): LocalParts {
   };
 }
 
-/** Offset (ms) de la zona local respecto de UTC en ese instante: local = utc + offset. */
+// local = utc + offset.
 function zoneOffsetMs(instantMs: number): number {
   const p = localParts(instantMs);
   const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
   return asUtc - Math.floor(instantMs / 1000) * 1000;
 }
 
-/** Instante UTC correspondiente a la hora local indicada en la zona KPI. */
 function localTimeToUtc(year: number, month: number, day: number, hour: number): Date {
   const naive = Date.UTC(year, month - 1, day, hour);
   let instant = naive - zoneOffsetMs(naive);
@@ -89,7 +85,6 @@ function splitDate(date: string): [number, number, number] {
   return [y, m, d];
 }
 
-/** Fecha local (YYYY-MM-DD) del instante en la zona KPI. */
 export function localDateOf(now: Date): string {
   const p = localParts(now.getTime());
   return formatDate(p.year, p.month, p.day);
@@ -101,7 +96,6 @@ function previousDate(date: string): string {
   return formatDate(prev.getUTCFullYear(), prev.getUTCMonth() + 1, prev.getUTCDate());
 }
 
-/** Valida `YYYY-MM-DD` y que sea una fecha de calendario real. */
 export function parseReportDate(raw: string): string {
   const match = REPORT_DATE_PATTERN.exec(raw);
   if (!match) throw new KpiWindowError('INVALID_DATE');
@@ -117,7 +111,6 @@ export function parseReportDate(raw: string): string {
   return raw;
 }
 
-/** Ventana canónica de D: [00:00 local, 21:00 local). */
 export function windowForDate(date: string): KpiWindow {
   const [y, m, d] = splitDate(parseReportDate(date));
   return {
@@ -127,10 +120,6 @@ export function windowForDate(date: string): KpiWindow {
   };
 }
 
-/**
- * Finalize: con fecha explícita la valida y rechaza un corte futuro (FUTURE_CUT);
- * sin fecha toma el último corte de las 21:00 locales ya ocurrido.
- */
 export function resolveFinalizeDate(now: Date, rawDate?: string): KpiWindow {
   if (rawDate !== undefined) {
     const window = windowForDate(parseReportDate(rawDate));
@@ -141,7 +130,6 @@ export function resolveFinalizeDate(now: Date, rawDate?: string): KpiWindow {
   return today.end.getTime() <= now.getTime() ? today : windowForDate(previousDate(today.date));
 }
 
-/** Preview: end = min(now, 21:00 de D); start(D) > now ⇒ FUTURE_DATE; end ≤ start ⇒ NO_POSITIVE_WINDOW. */
 export function resolvePreviewWindow(now: Date, rawDate?: string): PreviewWindow {
   const date = rawDate !== undefined ? parseReportDate(rawDate) : localDateOf(now);
   const window = windowForDate(date);
@@ -155,7 +143,6 @@ export function resolvePreviewWindow(now: Date, rawDate?: string): PreviewWindow
   };
 }
 
-/** Bucket de muestra de salud: floor(now / 30 min) en UTC. */
 export function scheduledBucket(now: Date): Date {
   return new Date(Math.floor(now.getTime() / HEALTH_BUCKET_MS) * HEALTH_BUCKET_MS);
 }

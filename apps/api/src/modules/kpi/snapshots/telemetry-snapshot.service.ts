@@ -1,8 +1,4 @@
-// NUT-85 — Snapshots de telemetría (design D13, D14).
-// - preview: agregados ⇒ fórmulas ⇒ upsert de los 8 del corte, en UNA transacción.
-// - finalizeCore: REPEATABLE READ; 8 finales ⇒ se devuelven sin recalcular; 1..7 ⇒ KPI_FINAL_INCOMPLETE;
-//   0 ⇒ cálculo en el mismo snapshot + INSERT plano. 23505/40001 ⇒ nueva transacción que lee los del ganador.
-//   Máximo FINALIZE_MAX_ATTEMPTS transacciones; agotadas ⇒ KPI_FINALIZE_CONFLICT.
+// finalizeCore: ante 23505/40001 reintenta en una transacción nueva que devuelve los finales del ganador.
 import type { PrismaClient } from '../../../generated/prisma/client';
 import { TELEMETRY_KPI_IDS, buildTelemetryResults } from '../calc/telemetry-formulas';
 import type { TelemetryAggregates, TelemetryWindow } from '../calc/telemetry-formulas';
@@ -16,7 +12,6 @@ export type SnapshotIsolation = 'ReadCommitted' | 'RepeatableRead';
 
 export interface SnapshotCut {
   environment: KpiEnvironment;
-  /** YYYY-MM-DD local (report_date). */
   date: string;
   start: Date;
   end: Date;
@@ -36,7 +31,7 @@ export interface SnapshotStore {
 export interface SnapshotRun {
   results: KpiResult[];
   reused: boolean;
-  /** Agregados del cálculo (para el diagnóstico); null si se reutilizaron finales. */
+  // null si se reutilizaron finales.
   aggregates: TelemetryAggregates | null;
 }
 
@@ -50,7 +45,7 @@ export class KpiSnapshotError extends Error {
 }
 
 export interface TelemetrySnapshotOptions {
-  /** Barrera inyectable entre la lectura de finales y la inserción (tests de concurrencia, G3). */
+  // Barrera inyectable para los tests de concurrencia.
   afterFinalsRead?: (attempt: number) => Promise<void>;
 }
 
@@ -63,7 +58,7 @@ function isConflict(error: unknown): boolean {
   return typeof code === 'string' && CONFLICT_SQLSTATES.includes(code);
 }
 
-/** Normaliza un conflicto real de Prisma/adapter-pg a { code: '23505' | '40001' }, sin el mensaje original. */
+// Normaliza el conflicto a { code } sin el mensaje original.
 export function normalizeConflictError(error: unknown): unknown {
   if (error instanceof KpiSnapshotError) return error;
   const sqlState = sqlStateOf(error);
@@ -79,7 +74,6 @@ function conflictError(code: string): Error & { code: string } {
   return Object.assign(new Error('KPI_SNAPSHOT_CONFLICT'), { code });
 }
 
-/** Store sobre Prisma: cada transacción usa un TelemetryRepository sobre el cliente de transacción. */
 export class PrismaSnapshotStore implements SnapshotStore {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -123,7 +117,6 @@ export class TelemetrySnapshotService {
     throw new KpiSnapshotError('KPI_FINALIZE_CONFLICT');
   }
 
-  /** Sólo lectura: los 8 finales del corte si están completos; si no, null. Nunca calcula ni inserta. */
   readCompleteFinals(cut: SnapshotCut): Promise<KpiResult[] | null> {
     return this.store.transaction('ReadCommitted', async tx => {
       const finals = await tx.readFinals(cut);

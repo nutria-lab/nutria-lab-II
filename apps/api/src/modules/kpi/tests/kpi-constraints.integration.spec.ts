@@ -1,6 +1,3 @@
-// NUT-85 T1 — A2 (comportamiento real de los CHECK/UNIQUE) y base de F7 (NaN/Infinity).
-// Integración contra Postgres real: sólo KPI_TEST_DATABASE_URL, skip si falta, falla si el host no es local.
-// Cada caso inválido viola UNA sola regla (salvo donde se indica más de un nombre aceptable).
 import { randomUUID } from 'crypto';
 import {
   DisposableSchema,

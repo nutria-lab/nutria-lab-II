@@ -1,7 +1,3 @@
-// NUT-85 T3 — GET /health y PgDbHealthProbe contra Postgres real (D1; design D10).
-// Sólo KPI_TEST_DATABASE_URL; skip si falta; falla si el host no es local.
-// Contrato fijado: new PgDbHealthProbe(connectionString, timeoutMs = HEALTH_DB_TIMEOUT_MS).ping(): Promise<void>
-// (SELECT 1 en conexión efímera, liberada siempre). El provider DB_HEALTH_PROBE de KpiModule usa DATABASE_URL.
 import { Logger } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';

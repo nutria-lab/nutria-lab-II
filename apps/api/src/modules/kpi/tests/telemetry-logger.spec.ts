@@ -1,15 +1,3 @@
-// NUT-85 T5 — TelemetryLogger.collect con Composite falso (G4; design D15).
-// API fijada (telemetry-logger.ts):
-//   class TelemetryLogger implements KpiLogger (de ../kpi-contract, sin modificarlo)
-//     constructor(core: Pick<TelemetrySnapshotService, 'finalizeCore'>, config: Pick<KpiConfig, 'environment'>, clock?: () => Date)
-//     collect(context): valida (D15) ⇒ core.finalizeCore(cut del contexto) ⇒ 8 KpiResult ordenados por kpi_id.
-//   class KpiContextError extends Error { code: 'KPI_CONTRACT_VERSION_MISMATCH' | 'KPI_ENV_MISMATCH'
-//     | 'KPI_CONTEXT_WINDOW_MISMATCH' | 'FUTURE_CUT' | 'INVALID_DATE' }  (los errores de contrato se propagan)
-//   Falla de la fuente ⇒ 8 unavailable, reason 'SOURCE_UNAVAILABLE', value null, sample_count 0, measured_at = reloj, sin persistir.
-//   KpiModule provee y exporta TelemetryLogger.
-//   Corrección post-review: SQLSTATE clase 42 y clase 23 (salvo 23505), directos o envueltos (Prisma P2010/meta,
-//   adapter cause.originalCode), se propagan. report_date < computePurgeCutoff(clock) ⇒ 8 unavailable 'PURGED_WINDOW'
-//   sin recalcular ni insertar (o los 8 finales existentes).
 import 'reflect-metadata';
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { CollectionContext, KpiId, KpiLogger, KpiResult } from '../kpi-contract';
