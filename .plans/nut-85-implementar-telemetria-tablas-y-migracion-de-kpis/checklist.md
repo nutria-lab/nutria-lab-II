@@ -9,21 +9,21 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] A4 `migrate deploy` sobre un Postgres DESECHABLE vacío y sobre otro con datos de NutrIA: existen 5 tablas/CHECK/UNIQUE/índices; los conteos de users/recipes/meal_plans son iguales antes y después. → `evidence-t1-a4.md` (kpi_empty y kpi_withdata en Postgres desechable, conteos/md5 iguales); `kpi-migration.integration.spec.ts`
 
 ## B. Instrumentación HTTP
-- [ ] B1 ★ Inserta `pending` al comenzar y cierra el MISMO id con UPDATE: una sola fila por request; id UUID y duration ≥ 0.
-- [ ] B2 ★ Outcomes: 200→success, 404→client_error, 500→server_error, desconexión→network_error, timeout confirmado→timeout, sin cierre→queda pending (nunca timeout inferido).
-- [ ] B3 ★ Un cierre duplicado no crea otra fila ni pisa el cierre original.
-- [ ] B4 ★ `operation` es la ruta normalizada (plantilla), sin query, userId ni token; si la ruta no matchea, un valor fijo.
-- [ ] B5 ★ `/health` y el tráfico de reporting quedan excluidos.
-- [ ] B6 ★ Cada escritura tiene timeout SQL de 100ms y espera acotada; si la DB falla o está lenta, el negocio responde igual y se loguea un código técnico. No quedan promesas sueltas (todo se espera antes de terminar).
-- [ ] B7 ★ `KPI_ENV` es obligatorio y se valida (dev|qa|prod); nunca se infiere de NODE_ENV.
-- [ ] B8 ★ Existe un interruptor para desactivar la instrumentación (rollback operativo) y, desactivada, la app funciona sin tocar tablas.
+- [x] B1 ★ Inserta `pending` al comenzar y cierra el MISMO id con UPDATE: una sola fila por request; id UUID y duration ≥ 0. → `events/kpi-event-writer.ts`, `http/kpi-http.middleware.ts`; `tests/kpi-http.middleware.spec.ts` › B1; `tests/kpi-event-writer.integration.spec.ts` › B1
+- [x] B2 ★ Outcomes: 200→success, 404→client_error, 500→server_error, desconexión→network_error, timeout confirmado→timeout, sin cierre→queda pending (nunca timeout inferido). → `http/http-outcome.ts`; `tests/http-outcome.spec.ts`; `tests/kpi-http.middleware.spec.ts` › B2 (incl. socket cortado y timeout del servidor)
+- [x] B3 ★ Un cierre duplicado no crea otra fila ni pisa el cierre original. → `tests/kpi-event-writer.integration.spec.ts` › B3; `tests/kpi-event-writer.spec.ts` › closeHttp UPDATE condicional
+- [x] B4 ★ `operation` es la ruta normalizada (plantilla), sin query, userId ni token; si la ruta no matchea, un valor fijo. → `tests/http-outcome.spec.ts` › normalizeOperation; `tests/kpi-http.middleware.spec.ts` › B4
+- [x] B5 ★ `/health` y el tráfico de reporting quedan excluidos. → `tests/http-outcome.spec.ts` › isExcludedFromTraffic; `tests/kpi-http.middleware.spec.ts` › B5
+- [x] B6 ★ Cada escritura tiene timeout SQL de 100ms y espera acotada; si la DB falla o está lenta, el negocio responde igual y se loguea un código técnico. No quedan promesas sueltas (todo se espera antes de terminar). → `db/kpi-prisma.ts` (statement_timeout 100ms); `tests/kpi-event-writer.spec.ts`; `tests/kpi-event-writer.integration.spec.ts` › B6; `tests/kpi-http.middleware.spec.ts` › B6 y drain al cerrar
+- [x] B7 ★ `KPI_ENV` es obligatorio y se valida (dev|qa|prod); nunca se infiere de NODE_ENV. → `config/kpi-config.ts`; `tests/kpi-config.spec.ts` › KPI_ENV; `tests/kpi-http.middleware.spec.ts` › factories reales
+- [x] B8 ★ Existe un interruptor para desactivar la instrumentación (rollback operativo) y, desactivada, la app funciona sin tocar tablas. → `KPI_INSTRUMENTATION_ENABLED`; `tests/kpi-config.spec.ts` › interruptor; `tests/kpi-http.middleware.spec.ts` › instrumentación deshabilitada (B8)
 
 ## C. Dependencias externas
 - [ ] C1 ★ Wrapper aplicado donde se ejecuta la llamada: Gemini (`generateText`) y Unsplash (search y trackDownload), sin instrumentar también la capa superior.
 - [ ] C2 ★ Cada intento genera su propia fila con attempt incremental (incluye las 2 llamadas de la regeneración); outcome success/error/timeout; sin URL ni claves.
 
 ## D. GET /health
-- [ ] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales.
+- [x] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales. → `health/`; `tests/health.controller.spec.ts`; `tests/health.integration.spec.ts`
 
 ## E. Ventana temporal
 - [x] E1 ★ D=2026-10-09 ⇒ start=2026-10-09T03:00:00Z, end=2026-10-10T00:00:00Z (America/Argentina/Buenos_Aires, 00:00–21:00). → `window/kpi-window.ts`; `tests/kpi-window.spec.ts`
