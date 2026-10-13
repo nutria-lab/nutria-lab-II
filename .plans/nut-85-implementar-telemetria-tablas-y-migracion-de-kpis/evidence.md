@@ -33,7 +33,7 @@ $ KPI_TEST_DATABASE_URL=postgresql://kpitest:***@localhost:55432/kpitest \
 Test Suites: 29 passed, 29 total
 Tests:       713 passed, 713 total
 ```
-Esta corrida la hizo el implementer al cerrar la ronda de correcciones, contra el Postgres desechable `nutria-kpi-test-pg` (`postgres:16-alpine`, localhost:55432). Cada suite crea un schema `kpi_it_*` descartable y lo borra.
+Re-ejecutada en la sesión de cierre (2026-10-12, exit 0, 57.8 s; también la corrió el implementer al cerrar la ronda de correcciones), contra el Postgres desechable `nutria-kpi-test-pg` (`postgres:16-alpine`, localhost:55432). Cada suite crea un schema `kpi_it_*` descartable y lo borra.
 
 ```
 $ pnpm --filter api lint      # prisma generate + tsc --noEmit
