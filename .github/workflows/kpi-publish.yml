@@ -1,0 +1,47 @@
+name: KPI publish (gated)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Argentina report date (YYYY-MM-DD)
+        required: true
+        type: string
+      environment:
+        description: Publishable environment
+        required: true
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: kpi-publication-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  publication-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api run prisma:generate
+      # Publication is deliberately disabled until repository and HTTP adapters
+      # are approved; this workflow only proves the gated runtime can prepare.
+      - run: echo 'KPI publication remains gated pending approved adapters.'
+      - name: Upload gated publication artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-publication-gated-${{ github.run_id }}
+          path: .github/workflows/kpi-publish.yml
+          retention-days: 90

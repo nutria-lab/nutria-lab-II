@@ -1,0 +1,67 @@
+name: KPI retry (gated)
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Argentina report date (YYYY-MM-DD)
+        required: true
+        type: string
+      environment:
+        description: Publishable environment
+        required: true
+        type: choice
+        options: [dev, prod]
+      retry_chain_id:
+        description: Retry chain UUID
+        required: true
+        type: string
+      attempt:
+        description: Retry attempt (1 or 2)
+        required: true
+        type: choice
+        options: ['1', '2']
+      source_commit:
+        description: Full source commit SHA
+        required: true
+        type: string
+      run_id:
+        description: Optional original run ID
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: kpi-publication-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  retry-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api run prisma:generate
+      - name: Delay retry attempt 1
+        if: inputs.attempt == '1'
+        run: sleep 300
+      - name: Delay retry attempt 2
+        if: inputs.attempt == '2'
+        run: sleep 600
+      # No external publication action is allowed until its contract is approved.
+      - run: echo 'KPI retry remains gated pending approved adapters.'
+      - name: Upload gated retry artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-retry-gated-${{ github.run_id }}
+          path: .github/workflows/kpi-retry.yml
+          retention-days: 90
