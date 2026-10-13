@@ -224,15 +224,36 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       warn.mockRestore();
     });
 
-    it('una sola comida con un ingrediente excluido rechaza el plan entero (hoy no hay forma de cubrir el hueco)', async () => {
-      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
+    it('initial generation bypasses both exclusion gates while Gemini receives the original restrictions', async () => {
+      const restrictedProfile = { ...mockNutritionProfile, excludedIngredients: ['NUTS'] };
+      const originalProfile = structuredClone(restrictedProfile);
+      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: restrictedProfile });
       mockGemini.generateMealPlan.mockResolvedValue(weekWith(meal({ ingredients: [{ name: 'Almendras tostadas', quantity: 30, unit: 'g' }] })));
 
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.objectContaining({
-        errorCode: 'EXCLUDED_INGREDIENT',
-      }));
-      expectNoDomainWrites();
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).resolves.toEqual(persistedPlan);
+
+      expect(mockGemini.generateMealPlan.mock.calls[0][0]).toBe(restrictedProfile);
+      expect(restrictedProfile).toEqual(originalProfile);
+      expect(mockRepository.createPlanTransaction).toHaveBeenCalledTimes(1);
+      expect(mockRepository.createPlanTransaction.mock.calls[0][2][0].meals[0].recipe.ingredients)
+        .toEqual([{ name: 'Almendras tostadas', quantity: 30, unit: 'g' }]);
+      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.anything());
+    });
+
+    it('manual editing retains exclusion enforcement even though it creates a generation run', async () => {
+      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
+      mockRepository.updatePlanTransaction = jest.fn();
+      const days = generatedDays.map((day, index) => index === 0
+        ? { ...day, meals: [meal({ ingredients: [{ name: 'Almendras', quantity: 30, unit: 'g' }] })] }
+        : day);
+
+      await expect(service.updatePlan(userId, { weekStart: weekStartStr, days } as any))
+        .rejects.toThrow('contains excluded ingredient/concept: nuts');
+      expect(mockRepository.updatePlanTransaction).not.toHaveBeenCalled();
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
+        errorCode: 'RESTRICTION_VIOLATION',
+      });
+      expect(mockGemini.generateMealPlan).not.toHaveBeenCalled();
     });
 
     it('envoltorio del plan inválido (día fuera del enum): 422 AI_INVALID_SCHEMA, sin escribir', async () => {
@@ -329,14 +350,14 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       mockRecipes.findByNormalizedTitles.mockResolvedValue([
         { id: 'recipe-cat', title: 'Ensalada de Quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }] },
       ]);
-      const nuts = { ...baseMeal(), title: 'Budín de nueces', recipe: { ...baseMeal().recipe, title: 'Budín de nueces' } };
+      const invalidMeal = { ...baseMeal(), title: 'Arroz integral', recipe: { ...baseMeal().recipe, title: 'Arroz integral', ingredients: [{ name: 'Arroz', quantity: -1, unit: 'g' }] } };
       mockGemini.generateMealPlan.mockResolvedValue(JSON.stringify({
-        days: generatedDays.map((day, index) => (index === 6 ? { ...day, meals: [nuts] } : day)),
+        days: generatedDays.map((day, index) => (index === 6 ? { ...day, meals: [invalidMeal] } : day)),
       }));
 
       await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
       expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.objectContaining({
-        errorCode: 'EXCLUDED_INGREDIENT',
+        errorCode: 'INVALID_RANGE',
       }));
       expectNoDomainWrites();
     });

@@ -16,6 +16,7 @@ export interface WeeklyProposalInput {
   profile: NutritionProfile;
   weekStart: Date;
   weekStartStr: string;
+  validateExcludedIngredients?: boolean;
 }
 
 export interface WeeklyProposal {
@@ -47,7 +48,7 @@ export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
     super();
   }
 
-  async composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr }: WeeklyProposalInput): Promise<WeeklyProposal> {
+  async composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr, validateExcludedIngredients = true }: WeeklyProposalInput): Promise<WeeklyProposal> {
     let raw: string;
     try {
       raw = await this.gemini.generateMealPlan(profile, weekStart);
@@ -61,7 +62,8 @@ export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
     }
 
     const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
-    const { days, results, summary } = await this.validateGeneratedDays(raw, profile, run);
+    const validationProfile = validateExcludedIngredients ? profile : { ...profile, excludedIngredients: [] };
+    const { days, results, summary } = await this.validateGeneratedDays(raw, validationProfile, run);
 
     // Envoltorio del plan (7 días, fechas, mealType, macros de la comida) con las recetas ya
     // normalizadas, también las de los duplicados que se van a reutilizar.

@@ -31,19 +31,43 @@ function week(title = 'Ensalada de quinoa') {
   }));
 }
 
-function setup(raw: string | Error = JSON.stringify({ days: week() })) {
+function setup(raw: string | Error = JSON.stringify({ days: week() }), inputProfile: any = profile, validateExcludedIngredients?: boolean) {
   const repository = { transitionGenerationRun: jest.fn().mockResolvedValue(1) };
   const recipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
   const gemini = { generateMealPlan: raw instanceof Error ? jest.fn().mockRejectedValue(raw) : jest.fn().mockResolvedValue(raw) };
   const validation = new RecipeValidationService(recipes as any, repository as any);
   const composer = new GeminiWeeklyProposalComposer(repository as any, gemini as any, validation);
   const compose = () => composer.composeWeeklyProposal({
-    userId: 'user-1', runId: 'run-1', profile, weekStart: new Date('2026-09-14T00:00:00Z'), weekStartStr: '2026-09-14',
-  });
+    userId: 'user-1', runId: 'run-1', profile: inputProfile, validateExcludedIngredients, weekStart: new Date('2026-09-14T00:00:00Z'), weekStartStr: '2026-09-14',
+  } as any);
   return { repository, recipes, gemini, compose };
 }
 
 describe('GeminiWeeklyProposalComposer.composeWeeklyProposal (NUT-78, generación semanal de NUT-74)', () => {
+  it('bypasses exclusion checks only when opted in and preserves the original Gemini profile', async () => {
+    const inputProfile = { ...profile, excludedIngredients: ['DAIRY'] };
+    const originalProfile = structuredClone(inputProfile);
+    const raw = JSON.stringify({ days: week('Crema de cacahuate') });
+    const { gemini, compose } = setup(raw, inputProfile, false);
+
+    const proposal = await compose();
+
+    expect(proposal.dto.days).toHaveLength(7);
+    expect(gemini.generateMealPlan).toHaveBeenCalledWith(inputProfile, new Date('2026-09-14T00:00:00Z'));
+    expect(gemini.generateMealPlan.mock.calls[0][0]).toBe(inputProfile);
+    expect(inputProfile).toEqual(originalProfile);
+  });
+
+  it.each([undefined, true])('enforces exclusions by default or with explicit true (%p)', async (enforce) => {
+    const inputProfile = { ...profile, excludedIngredients: ['DAIRY'] };
+    const { repository, compose } = setup(JSON.stringify({ days: week('Queso parmesano') }), inputProfile, enforce);
+
+    await expect(compose()).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', 'user-1', ['PENDING'], 'REJECTED', expect.objectContaining({
+      errorCode: 'EXCLUDED_INGREDIENT',
+    }));
+  });
+
   it('devuelve el plan validado y normalizado, las comidas para comparar y el resumen de validación', async () => {
     const { compose } = setup();
 

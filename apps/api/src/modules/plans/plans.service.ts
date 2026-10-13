@@ -185,7 +185,7 @@ export class PlansService {
   }
 
   private async generateForRun(userId: string, weekStartStr: string, weekStart: Date, profile: NutritionProfile, runId: string) {
-    const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr });
+    const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr, validateExcludedIngredients: false });
     return this.validateAndPersistPlan(userId, proposal.dto, runId, { ...proposal.summary });
   }
 
@@ -231,7 +231,10 @@ export class PlansService {
     }
 
     try {
-      this.validateRestrictions(dto.days, user.nutritionProfile);
+      const validationProfile = generationRunId
+        ? { ...user.nutritionProfile, excludedIngredients: [] }
+        : user.nutritionProfile;
+      this.validateRestrictions(dto.days, validationProfile);
     } catch (error) {
       if (generationRunId) {
         await this.failRun(generationRunId, userId, 'REJECTED', 'RESTRICTION_VIOLATION');

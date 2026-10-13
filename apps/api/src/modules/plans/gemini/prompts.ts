@@ -39,6 +39,32 @@ const mealContentProperties = {
   },
 } as const;
 
+const weeklyMealContentProperties = {
+  ...mealContentProperties,
+  title: { ...mealContentProperties.title, description: 'Brief, descriptive dish name.' },
+  nutritionalValues: {
+    ...mealContentProperties.nutritionalValues,
+    required: ['Protein', 'Fiber', 'Calories', 'Description'],
+  },
+  recipe: {
+    ...mealContentProperties.recipe,
+    properties: {
+      ...mealContentProperties.recipe.properties,
+      title: { ...mealContentProperties.recipe.properties.title, description: 'Brief, descriptive recipe name.' },
+      ingredients: {
+        ...mealContentProperties.recipe.properties.ingredients,
+        minItems: 1,
+        items: {
+          ...mealContentProperties.recipe.properties.ingredients.items,
+          required: ['name', 'quantity', 'unit'],
+        },
+      },
+      instructions: { ...mealContentProperties.recipe.properties.instructions, minItems: 1 },
+    },
+    required: ['title', 'description', 'prepMinutes', 'cookMinutes', 'ingredients', 'instructions'],
+  },
+};
+
 function profileLines(profile: any): string {
   return `
         - Dieta: ${profile.diet || 'Sin dieta específica'}
@@ -49,8 +75,8 @@ function profileLines(profile: any): string {
 
 export const PROMPT_VERSIONS = {
   v1: {
-    version: '1.0.0',
-    schemaVersion: '1.0.0',
+    version: '1.1.0-local-schema-tightening',
+    schemaVersion: '1.1.0-local-schema-tightening',
 
     getPrompt(profile: any, startDate: string): string {
       return `
@@ -62,6 +88,7 @@ export const PROMPT_VERSIONS = {
         2. NUNCA incluyas ingredientes que estén en la lista de excluidos (y sus derivados).
         3. Proporciona macros coherentes.
         4. Los días deben ser desde el día 1 al día 7 de la semana solicitada.
+        5. Usa títulos breves y descriptivos para las comidas y sus recetas.
       `;
     },
 
@@ -71,6 +98,8 @@ export const PROMPT_VERSIONS = {
         properties: {
           days: {
             type: SchemaType.ARRAY,
+            minItems: 7,
+            maxItems: 7,
             items: {
               type: SchemaType.OBJECT,
               properties: {
@@ -90,11 +119,13 @@ export const PROMPT_VERSIONS = {
                         format: 'enum',
                         enum: ['BREAKFAST', 'LUNCH', 'DINNER', 'SNACK'],
                       },
-                      ...mealContentProperties,
+                      ...weeklyMealContentProperties,
                     },
+                    required: ['mealType', 'title', 'nutritionalValues', 'recipe'],
                   },
                 },
               },
+              required: ['day', 'date', 'meals'],
             },
           },
         },

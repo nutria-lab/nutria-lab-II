@@ -65,7 +65,10 @@ export class GeminiService {
         { signal: abortController.signal },
       );
       return result.response.text();
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `Gemini request failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       // Al abortar, el SDK lanza GoogleGenerativeAIAbortError (su name no es 'AbortError'): se mira la señal.
       throw new AiProviderUnavailableError(abortController.signal.aborted ? 'AI_TIMEOUT' : 'AI_PROVIDER_ERROR');
     } finally {
