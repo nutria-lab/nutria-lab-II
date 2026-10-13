@@ -3,6 +3,8 @@
 // - La espera acotada del negocio (KPI_WRITE_WAIT_MS = 250) no cambia: si la conexión tarda (~600 ms), la promesa
 //   de insertHttpPending resuelve a los 250 ms con KPI_WRITE_WAIT_EXCEEDED y el insert termina después, en vuelo.
 // - closeHttp del MISMO id se aplica después del insert (insert y luego update) ⇒ UNA fila terminal, nunca 0 filas.
+//   El cliente falso modela un pool de 2 conexiones independientes (la primera fría, la segunda caliente): sin el
+//   encadenamiento del cierre detrás del insert, el UPDATE correría primero y afectaría 0 filas.
 // - drain espera a que terminen ambas escrituras.
 // - Middleware real + PrismaKpiEventWriter real sobre ese cliente lento: respuesta de negocio ≤ 2×250 + margen y
 //   al final un único evento cerrado con el status correcto.
@@ -29,13 +31,17 @@ type Statement =
   | { kind: 'update'; id: string; operation: string; outcome: string; httpStatus: number | null };
 
 /**
- * Base KPI falsa con estado: la primera conexión del pool tarda `coldMs` en abrir (arranque en frío) y toda
- * transacción espera a que esté lista. INSERT crea la fila pending; UPDATE sólo afecta filas pending (como el SQL real).
+ * Base KPI falsa con estado que modela un pool real de 2 conexiones independientes (sin cola común):
+ * la PRIMERA transacción toma una conexión nueva y tarda `coldMs` en abrirla (arranque en frío); las siguientes
+ * toman la segunda conexión, ya caliente, y corren de inmediato. Por eso, si el cierre no esperara al insert del
+ * mismo id, su UPDATE correría ANTES que el INSERT y afectaría 0 filas. INSERT crea la fila pending; UPDATE sólo
+ * afecta filas pending (como el SQL real). `timeline` registra el inicio y el fin de cada escritura.
  */
 function coldStartDb(coldMs: number) {
   const rows = new Map<string, FakeRow>();
   const applied: Array<{ kind: 'insert' | 'update'; id: string; affected: number }> = [];
-  let connection: Promise<void> | undefined;
+  const timeline: Array<{ phase: 'start' | 'end'; kind: 'insert' | 'update'; id: string }> = [];
+  let transactions = 0;
 
   const parse = (strings: TemplateStringsArray | string, values: unknown[]): Statement => {
     const sql = typeof strings === 'string' ? strings : strings.join('?');
@@ -79,13 +85,26 @@ function coldStartDb(coldMs: number) {
     $executeRaw: raw,
     $executeRawUnsafe: raw,
     $transaction: async (batch: Statement[]) => {
-      connection ??= new Promise<void>(resolve => setTimeout(resolve, coldMs));
-      await connection;
-      return batch.map(apply);
+      const writes = batch.filter(
+        (statement): statement is Exclude<Statement, { kind: 'set_local' }> => statement.kind !== 'set_local',
+      );
+      writes.forEach(write => timeline.push({ phase: 'start', kind: write.kind, id: write.id }));
+      // Conexión 1: fría (coldMs). Conexión 2 y siguientes: caliente, sin espera ni cola compartida.
+      if (transactions++ === 0) await new Promise<void>(resolve => setTimeout(resolve, coldMs));
+      const result = batch.map(apply);
+      writes.forEach(write => timeline.push({ phase: 'end', kind: write.kind, id: write.id }));
+      return result;
     },
   } as unknown as KpiWriterClient;
 
-  return { client, rows, applied };
+  /** El UPDATE del id empieza después de que TERMINA el INSERT del mismo id. */
+  const updateStartedAfterInsertEnded = (id: string): boolean => {
+    const insertEnd = timeline.findIndex(e => e.phase === 'end' && e.kind === 'insert' && e.id === id);
+    const updateStart = timeline.findIndex(e => e.phase === 'start' && e.kind === 'update' && e.id === id);
+    return insertEnd !== -1 && updateStart !== -1 && updateStart > insertEnd;
+  };
+
+  return { client, rows, applied, timeline, updateStartedAfterInsertEnded };
 }
 
 function captureLogs() {
@@ -168,7 +187,8 @@ describe('PrismaKpiEventWriter — arranque en frío (Fix 2)', () => {
     expect(drained).toBe(true);
     expect(writer.inFlightCount()).toBe(0);
 
-    // Orden: insert y luego update del MISMO id, y el update afectó la fila.
+    // Orden: el UPDATE empieza después de que TERMINA el insert del MISMO id, y afectó la fila.
+    expect(db.updateStartedAfterInsertEnded(ID)).toBe(true);
     expect(db.applied).toEqual([
       { kind: 'insert', id: ID, affected: 1 },
       { kind: 'update', id: ID, affected: 1 },
@@ -226,10 +246,12 @@ describe('KpiHttpMiddleware + PrismaKpiEventWriter real — arranque en frío (F
       expect(db.rows.size).toBe(1);
       const [[id, row]] = [...db.rows.entries()];
       expect(row).toEqual({ outcome: 'success', operation: 'GET /cold/ok', httpStatus: 200 });
+      expect(db.updateStartedAfterInsertEnded(id)).toBe(true);
       expect(db.applied).toEqual([
         { kind: 'insert', id, affected: 1 },
         { kind: 'update', id, affected: 1 },
       ]);
+      expect(logs.text()).not.toContain('KPI_CLOSE_NOT_PENDING');
     } finally {
       await app.close();
       logs.restore();
