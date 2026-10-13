@@ -4,8 +4,9 @@
 //   PURGE_TABLES = ['kpi_http_event', 'kpi_dependency_event', 'kpi_health_sample', 'kpi_snapshot'] (nunca kpi_publication)
 //   interface PurgeCutoff { date: string /* YYYY-MM-DD local */; start: Date /* 00:00 local de date, en UTC */ }
 //   computePurgeCutoff(now): PurgeCutoff | null
-//     null si la fecha local de hoy < 2027-01-01; si no, min(primer día del trimestre local, día en preparación),
-//     donde día en preparación = D del último corte de las 21:00 locales ya ocurrido.
+//     null si la fecha local de hoy < 2027-01-01; si no, min(primer día del trimestre local, día ANTERIOR al día en
+//     preparación), donde día en preparación = D del último corte de las 21:00 locales ya ocurrido. Así nunca se borra
+//     el último éxito previo al start de D (corrección post-review: cambio de trimestre).
 //   interface PurgePort { purgeBatch(table, environment, cutoff, limit): Promise<number> }
 //   runPurge(port, environment, cutoff): Promise<{ cutoff: string; deleted: Record<PurgeTable, number>; batches: number }>
 //     bucle por tabla hasta 0 filas (o un lote incompleto), lotes de 1000, tope total de 100 lotes por corrida.
@@ -18,7 +19,7 @@ import {
   runPurge,
 } from '../cli/purge-policy';
 import type { PurgeCutoff } from '../cli/purge-policy';
-import { resolveFinalizeDate } from '../window/kpi-window';
+import { resolveFinalizeDate, windowForDate } from '../window/kpi-window';
 
 describe('computePurgeCutoff (H6)', () => {
   it('constantes del contrato', () => {
@@ -39,19 +40,29 @@ describe('computePurgeCutoff (H6)', () => {
     expect(computePurgeCutoff(new Date('2027-01-01T00:10:00.000Z'))).toBeNull();
   });
 
-  it('2027-04-02 ⇒ corte = 2027-04-01 local (00:00 AR en UTC)', () => {
+  it('2027-04-02 al mediodía (D en preparación = 2027-04-01) ⇒ corte = 2027-03-31 local (00:00 AR en UTC)', () => {
     expect(computePurgeCutoff(new Date('2027-04-02T15:00:00.000Z'))).toEqual({
-      date: '2027-04-01',
-      start: new Date('2027-04-01T03:00:00.000Z'),
+      date: '2027-03-31',
+      start: new Date('2027-03-31T03:00:00.000Z'),
     });
+  });
+
+  it('cambio de trimestre: now = 2027-04-02T00:05Z (D = 2027-04-01) ⇒ corte ≤ 2027-03-31 00:00 local', () => {
+    const now = new Date('2027-04-02T00:05:00.000Z');
+    expect(resolveFinalizeDate(now).date).toBe('2027-04-01');
+    const cutoff = computePurgeCutoff(now) as PurgeCutoff;
+    expect(cutoff).not.toBeNull();
+    expect(cutoff.date <= '2027-03-31').toBe(true);
+    expect(cutoff.start.getTime()).toBeLessThanOrEqual(new Date('2027-03-31T03:00:00.000Z').getTime());
+    expect(cutoff.start).toEqual(windowForDate(cutoff.date).start);
   });
 
   it('mitad de trimestre ⇒ corte = primer día del trimestre', () => {
     expect(computePurgeCutoff(new Date('2027-05-20T15:00:00.000Z'))?.date).toBe('2027-04-01');
   });
 
-  it('2027-01-01 al mediodía: el día en preparación (2026-12-31) acota el corte', () => {
-    expect(computePurgeCutoff(new Date('2027-01-01T15:00:00.000Z'))?.date).toBe('2026-12-31');
+  it('2027-01-01 al mediodía: el día anterior al día en preparación (2026-12-31) acota el corte', () => {
+    expect(computePurgeCutoff(new Date('2027-01-01T15:00:00.000Z'))?.date).toBe('2026-12-30');
   });
 
   it.each([
@@ -60,12 +71,15 @@ describe('computePurgeCutoff (H6)', () => {
     '2027-04-02T00:30:00.000Z',
     '2027-07-01T23:59:00.000Z',
     '2027-10-01T02:59:00.000Z',
-  ])('nunca alcanza el día en preparación (%s)', now => {
+  ])('nunca alcanza el día anterior al día en preparación (%s)', now => {
     const instant = new Date(now);
     const cutoff = computePurgeCutoff(instant);
     const preparing = resolveFinalizeDate(instant).date;
+    const dayBefore = new Date(Date.parse(`${preparing}T12:00:00.000Z`) - 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
     expect(cutoff).not.toBeNull();
-    expect((cutoff as PurgeCutoff).date <= preparing).toBe(true);
+    expect((cutoff as PurgeCutoff).date <= dayBefore).toBe(true);
   });
 });
 

@@ -123,6 +123,14 @@ export class TelemetrySnapshotService {
     throw new KpiSnapshotError('KPI_FINALIZE_CONFLICT');
   }
 
+  /** Sólo lectura: los 8 finales del corte si están completos; si no, null. Nunca calcula ni inserta. */
+  readCompleteFinals(cut: SnapshotCut): Promise<KpiResult[] | null> {
+    return this.store.transaction('ReadCommitted', async tx => {
+      const finals = await tx.readFinals(cut);
+      return finals.length === TELEMETRY_KPI_IDS.length ? finals : null;
+    });
+  }
+
   private async finalizeAttempt(tx: SnapshotTx, cut: SnapshotCut, attempt: number): Promise<SnapshotRun> {
     const finals = await tx.readFinals(cut);
     if (finals.length === TELEMETRY_KPI_IDS.length) return { results: finals, reused: true, aggregates: null };

@@ -311,7 +311,7 @@ describe('KpiHttpMiddleware (app Nest real, escritor falso)', () => {
       ['/probe/not-found', 404, 'client_error', 'GET /probe/not-found'],
       ['/no/existe/esta/ruta', 404, 'client_error', 'UNMATCHED'],
       ['/probe/boom', 500, 'server_error', 'GET /probe/boom'],
-      ['/probe/status-408', 408, 'timeout', 'GET /probe/status-408'],
+      ['/probe/status-408', 408, 'client_error', 'GET /probe/status-408'], // 4xx no es timeout
       ['/probe/status-504', 504, 'timeout', 'GET /probe/status-504'],
     ])('%s ⇒ %p %s (%s)', async (path, status, outcome, operation) => {
       const response = await fetch(`${baseUrl(app)}${path}`);

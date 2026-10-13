@@ -28,7 +28,7 @@ export function classifyHttpOutcome(input: HttpOutcomeInput): HttpOutcomeResult 
 
   const status = input.statusCode;
   if (status === null) return { outcome: 'other', httpStatus: null };
-  if (status === 408 || status === 504) return { outcome: 'timeout', httpStatus: status };
+  if (status === 504) return { outcome: 'timeout', httpStatus: status };
   if (status >= 200 && status <= 299) return { outcome: 'success', httpStatus: status };
   if (status >= 400 && status <= 499) return { outcome: 'client_error', httpStatus: status };
   if (status >= 500 && status <= 599) return { outcome: 'server_error', httpStatus: status };

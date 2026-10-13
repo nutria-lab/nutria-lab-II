@@ -2,9 +2,11 @@
 // - Cada escritura se espera como máximo KPI_WRITE_WAIT_MS y nunca rechaza.
 // - Fallos ⇒ log con código técnico + SQLSTATE; nunca el mensaje del error ni la URL de conexión.
 // - Las queries que exceden la espera quedan registradas "en vuelo"; drain(ms) las espera acotado al cerrar la app.
+// - Cada escritura corre en su propia transacción con `SET LOCAL statement_timeout` previo (D27): nada de
+//   parámetros de arranque (el pooler PgBouncer de Neon puede rechazarlos) y el límite no queda pegado a la conexión.
 // - El cierre es un UPDATE condicional (outcome = 'pending') del mismo id: nunca INSERT (un segundo cierre afecta 0 filas).
 import { Logger } from '@nestjs/common';
-import type { PrismaClient } from '../../../generated/prisma/client';
+import type { Prisma, PrismaClient } from '../../../generated/prisma/client';
 import type { KpiEnvironment } from '../kpi-contract';
 import type { HttpTerminalOutcome } from '../http/http-outcome';
 import type { DependencyTerminalOutcome, KpiDependency } from '../dependencies/dependency-instrumentation';
@@ -57,8 +59,11 @@ export interface KpiEventWriter {
   dispose?(): Promise<void>;
 }
 
-/** Sólo se usa $executeRaw (tagged template, parametrizado). */
-export type KpiWriterClient = Pick<PrismaClient, '$executeRaw'>;
+/** $executeRaw (tagged template, parametrizado), el SET LOCAL sin parámetros y $transaction en forma batch. */
+export type KpiWriterClient = Pick<PrismaClient, '$executeRaw' | '$executeRawUnsafe' | '$transaction'>;
+
+/** SET LOCAL no admite parámetros; el valor sale de una constante numérica, nunca de entrada externa. */
+const SET_LOCAL_STATEMENT_TIMEOUT = `SET LOCAL statement_timeout = '${KPI_SQL_STATEMENT_TIMEOUT_MS}ms'`;
 
 const logger = new Logger('KpiEventWriter');
 
@@ -142,8 +147,8 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
 
   insertHttpPending(event: HttpPendingEvent): Promise<void> {
     return this.insertPending(event.id, 'insert_http', () =>
-      Promise.resolve(
-        this.client.$executeRaw`
+      this.withLocalTimeout(
+        () => this.client.$executeRaw`
           INSERT INTO kpi_http_event (id, environment, operation, started_at, outcome)
           VALUES (${event.id}::uuid, ${event.environment}, ${event.operation}, ${event.startedAt}::timestamptz, 'pending')`,
       ),
@@ -152,8 +157,8 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
 
   insertDependencyPending(event: DependencyPendingEvent): Promise<void> {
     return this.insertPending(event.id, 'insert_dependency', () =>
-      Promise.resolve(
-        this.client.$executeRaw`
+      this.withLocalTimeout(
+        () => this.client.$executeRaw`
           INSERT INTO kpi_dependency_event (id, environment, operation_id, dependency, attempt, started_at, outcome)
           VALUES (${event.id}::uuid, ${event.environment}, ${event.operationId}::uuid, ${event.dependency},
                   ${event.attempt}::integer, ${event.startedAt}::timestamptz, 'pending')`,
@@ -165,12 +170,14 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     const priorInsert = this.pendingInserts.get(event.id);
     const settled = this.track('close_dependency', async () => {
       if (priorInsert) await priorInsert;
-      const updated = await this.client.$executeRaw`
+      const updated = await this.withLocalTimeout(
+        () => this.client.$executeRaw`
         UPDATE kpi_dependency_event
            SET outcome = ${event.outcome},
                finished_at = ${event.finishedAt}::timestamptz,
                duration_ms = ${event.durationMs}::double precision
-         WHERE id = ${event.id}::uuid AND outcome = 'pending'`;
+         WHERE id = ${event.id}::uuid AND outcome = 'pending'`,
+      );
       if (updated === 0) logger.debug('KPI_CLOSE_NOT_PENDING op=close_dependency');
     });
     return awaitWriteBounded(() => settled, 'close_dependency');
@@ -180,14 +187,16 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     const priorInsert = this.pendingInserts.get(event.id);
     const settled = this.track('close_http', async () => {
       if (priorInsert) await priorInsert;
-      const updated = await this.client.$executeRaw`
+      const updated = await this.withLocalTimeout(
+        () => this.client.$executeRaw`
         UPDATE kpi_http_event
            SET operation = ${event.operation},
                outcome = ${event.outcome},
                http_status = ${event.httpStatus}::smallint,
                finished_at = ${event.finishedAt}::timestamptz,
                duration_ms = ${event.durationMs}::double precision
-         WHERE id = ${event.id}::uuid AND outcome = 'pending'`;
+         WHERE id = ${event.id}::uuid AND outcome = 'pending'`,
+      );
       if (updated === 0) logger.debug('KPI_CLOSE_NOT_PENDING op=close_http');
     });
     return awaitWriteBounded(() => settled, 'close_http');
@@ -214,6 +223,13 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
 
   async dispose(): Promise<void> {
     await this.onDispose?.().catch(() => undefined);
+  }
+
+  /** Corre la escritura en su propia transacción (batch), precedida por el SET LOCAL del límite SQL. */
+  private async withLocalTimeout(write: () => Prisma.PrismaPromise<number>): Promise<number> {
+    const setLocal = this.client.$executeRawUnsafe(SET_LOCAL_STATEMENT_TIMEOUT);
+    const [, affected] = await this.client.$transaction([setLocal, write()]);
+    return affected;
   }
 
   /** INSERT pending registrado por id, para que el cierre del mismo id espere al insert. */

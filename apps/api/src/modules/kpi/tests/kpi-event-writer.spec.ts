@@ -6,8 +6,11 @@
 //   + SQLSTATE; nunca el mensaje del error ni la URL.
 // - Registro en vuelo: inFlightCount() cuenta queries no terminadas; drain(ms) espera acotado a que se vacíe.
 // - NoopKpiEventWriter no toca nada.
-// - createKpiPrismaClient(url, overrides) arma un Pool propio: max 2, statement_timeout 100, query_timeout ≤ 150,
-//   connectionTimeoutMillis ≤ 150, sin conectar al construirse.
+// - Cada escritura (insert pending y cierre, HTTP y dependencia) corre en una transacción Prisma (batch o interactiva)
+//   que aplica `SET LOCAL statement_timeout = '100ms'` (o set_config('statement_timeout','100ms', true)) ANTES de la
+//   escritura y en la MISMA transacción (corrección post-review: nada de parámetros de arranque, PgBouncer de Neon).
+// - createKpiPrismaClient(url, overrides) arma un Pool propio: max 2, SIN statement_timeout de arranque,
+//   query_timeout ≤ 150, connectionTimeoutMillis ≤ 150, sin conectar al construirse.
 import { Logger } from '@nestjs/common';
 import { createKpiPrismaClient } from '../db/kpi-prisma';
 import {
@@ -17,7 +20,13 @@ import {
   NoopKpiEventWriter,
   PrismaKpiEventWriter,
 } from '../events/kpi-event-writer';
-import type { HttpCloseEvent, HttpPendingEvent, KpiWriterClient } from '../events/kpi-event-writer';
+import type {
+  DependencyCloseEvent,
+  DependencyPendingEvent,
+  HttpCloseEvent,
+  HttpPendingEvent,
+  KpiWriterClient,
+} from '../events/kpi-event-writer';
 
 const ID = '3f1c2b7e-9d4a-4c1e-8f2a-0b6d5e4c3a21';
 const STARTED_AT = new Date('2026-10-09T12:00:00.000Z');
@@ -38,18 +47,111 @@ const CLOSE: HttpCloseEvent = {
   durationMs: 12.5,
 };
 
+const DEP_ID = '7a2d4c1e-5b3f-4e8a-9c0d-1f2e3d4c5b6a';
+const OPERATION_ID = '0c9b8a7d-6e5f-4a3b-8c2d-1e0f9a8b7c6d';
+
+const DEP_PENDING: DependencyPendingEvent = {
+  id: DEP_ID,
+  environment: 'dev',
+  operationId: OPERATION_ID,
+  dependency: 'gemini',
+  attempt: 1,
+  startedAt: STARTED_AT,
+};
+
+const DEP_CLOSE: DependencyCloseEvent = {
+  id: DEP_ID,
+  outcome: 'success',
+  finishedAt: new Date(STARTED_AT.getTime() + 40),
+  durationMs: 40,
+};
+
 interface RecordedQuery {
   sql: string;
   values: unknown[];
+  /** Transacción en la que corrió la query; null si fue fuera de una transacción. */
+  tx: number | null;
+  /** true si es `SET LOCAL statement_timeout = '100ms'` o set_config('statement_timeout', '100ms', true). */
+  isTimeoutSetting: boolean;
 }
 
+const QUERY_TAG = Symbol('recordedQuery');
+
+function renderSql(strings: readonly string[] | string, values: unknown[]): string {
+  if (typeof strings === 'string') return `${strings} ${values.map(value => `'${String(value)}'`).join(' ')}`;
+  return strings.reduce(
+    (acc, part, index) => acc + part + (index < values.length ? `'${String(values[index])}'` : ''),
+    '',
+  );
+}
+
+const SET_LOCAL_RE = /SET\s+LOCAL\s+statement_timeout\s*(=|TO)\s*'?100ms'?/i;
+const SET_CONFIG_RE = /set_config\(\s*'statement_timeout'\s*,\s*'100ms'\s*,\s*'?true'?\s*\)/i;
+
+function isTimeoutSettingSql(rendered: string): boolean {
+  return SET_LOCAL_RE.test(rendered) || SET_CONFIG_RE.test(rendered);
+}
+
+/**
+ * Cliente Prisma falso: $executeRaw / $executeRawUnsafe / $queryRaw / $queryRawUnsafe y $transaction en forma
+ * batch (array) o interactiva (callback). `behavior` aplica sólo a las escrituras; el SET LOCAL resuelve 0.
+ */
 function fakeClient(behavior: () => Promise<number>) {
   const queries: RecordedQuery[] = [];
-  const $executeRaw = jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
-    queries.push({ sql: strings.join('?'), values });
-    return behavior();
+  let txSeq = 0;
+
+  const makeRaw = (txId: number | null) =>
+    jest.fn((strings: TemplateStringsArray | string, ...values: unknown[]) => {
+      const raw = strings as readonly string[] | string;
+      const query: RecordedQuery = {
+        sql: typeof raw === 'string' ? raw : raw.join('?'),
+        values,
+        tx: txId,
+        isTimeoutSetting: isTimeoutSettingSql(renderSql(raw, values)),
+      };
+      queries.push(query);
+      const result = query.isTimeoutSetting ? Promise.resolve(0) : behavior();
+      return Object.assign(result, { [QUERY_TAG]: query });
+    });
+
+  const rawMethods = (txId: number | null) => ({
+    $executeRaw: makeRaw(txId),
+    $executeRawUnsafe: makeRaw(txId),
+    $queryRaw: makeRaw(txId),
+    $queryRawUnsafe: makeRaw(txId),
   });
-  return { client: { $executeRaw } as unknown as KpiWriterClient, queries, $executeRaw };
+
+  const top = rawMethods(null);
+  const $transaction = jest.fn((arg: unknown) => {
+    const txId = ++txSeq;
+    if (typeof arg === 'function') {
+      return Promise.resolve().then(() => (arg as (tx: unknown) => Promise<unknown>)(rawMethods(txId)));
+    }
+    const batch = arg as Array<Promise<unknown> & { [QUERY_TAG]?: RecordedQuery }>;
+    for (const item of batch) {
+      if (item[QUERY_TAG]) item[QUERY_TAG].tx = txId;
+    }
+    return Promise.all(batch);
+  });
+
+  return {
+    client: { ...top, $transaction } as unknown as KpiWriterClient,
+    queries,
+    /** Sólo las escrituras (sin el SET LOCAL del límite). */
+    writes: () => queries.filter(query => !query.isTimeoutSetting),
+    $executeRaw: top.$executeRaw,
+    $transaction,
+  };
+}
+
+/** La escritura corrió en una transacción y, antes, en esa MISMA transacción se aplicó el SET LOCAL de 100 ms. */
+function expectBoundedByLocalTimeout(queries: RecordedQuery[], write: RecordedQuery): void {
+  expect(write.tx).not.toBeNull();
+  const writeIndex = queries.indexOf(write);
+  const setting = queries.find(
+    (query, index) => query.isTimeoutSetting && query.tx === write.tx && index < writeIndex,
+  );
+  expect(setting).toBeDefined();
 }
 
 function captureLogs() {
@@ -95,11 +197,12 @@ describe('PrismaKpiEventWriter (unit)', () => {
   });
 
   it('insertHttpPending hace un INSERT parametrizado en kpi_http_event con outcome pending', async () => {
-    const { client, queries } = fakeClient(async () => 1);
+    const { client, writes } = fakeClient(async () => 1);
     const writer = new PrismaKpiEventWriter(client);
 
     await writer.insertHttpPending(PENDING);
 
+    const queries = writes();
     expect(queries).toHaveLength(1);
     expect(queries[0].sql).toMatch(/INSERT\s+INTO\s+"?kpi_http_event"?/i);
     expect(queries[0].values).toEqual(expect.arrayContaining([ID, 'dev', 'UNRESOLVED']));
@@ -107,12 +210,13 @@ describe('PrismaKpiEventWriter (unit)', () => {
   });
 
   it('closeHttp es sólo un UPDATE condicional del mismo id con outcome = pending (B3: nunca INSERT)', async () => {
-    const { client, queries } = fakeClient(async () => 1);
+    const { client, writes } = fakeClient(async () => 1);
     const writer = new PrismaKpiEventWriter(client);
 
     await writer.closeHttp(CLOSE);
     await writer.closeHttp({ ...CLOSE, outcome: 'server_error', httpStatus: 500 });
 
+    const queries = writes();
     expect(queries).toHaveLength(2);
     for (const query of queries) {
       expect(query.sql).toMatch(/UPDATE\s+"?kpi_http_event"?/i);
@@ -124,11 +228,52 @@ describe('PrismaKpiEventWriter (unit)', () => {
   });
 
   it('cierre que afecta 0 filas (ya cerrado) no lanza ni reintenta', async () => {
-    const { client, queries } = fakeClient(async () => 0);
+    const { client, writes } = fakeClient(async () => 0);
     const writer = new PrismaKpiEventWriter(client);
 
     await expect(writer.closeHttp(CLOSE)).resolves.toBeUndefined();
-    expect(queries).toHaveLength(1);
+    expect(writes()).toHaveLength(1);
+  });
+
+  it.each([
+    ['insertHttpPending', /INSERT\s+INTO\s+"?kpi_http_event"?/i, (w: PrismaKpiEventWriter) => w.insertHttpPending(PENDING)],
+    ['closeHttp', /UPDATE\s+"?kpi_http_event"?/i, (w: PrismaKpiEventWriter) => w.closeHttp(CLOSE)],
+    [
+      'insertDependencyPending',
+      /INSERT\s+INTO\s+"?kpi_dependency_event"?/i,
+      (w: PrismaKpiEventWriter) => w.insertDependencyPending(DEP_PENDING),
+    ],
+    ['closeDependency', /UPDATE\s+"?kpi_dependency_event"?/i, (w: PrismaKpiEventWriter) => w.closeDependency(DEP_CLOSE)],
+  ])(
+    '%s aplica SET LOCAL statement_timeout = 100ms en la MISMA transacción, antes de la escritura',
+    async (_name, writeRe, run) => {
+      const { client, queries, writes } = fakeClient(async () => 1);
+      const writer = new PrismaKpiEventWriter(client);
+
+      await run(writer);
+
+      const written = writes();
+      expect(written).toHaveLength(1);
+      expect(written[0].sql).toMatch(writeRe);
+      expectBoundedByLocalTimeout(queries, written[0]);
+      // Nunca un SET de sesión (sin LOCAL), que quedaría pegado a la conexión del pool.
+      for (const query of queries) {
+        expect(renderSql(query.sql, query.values)).not.toMatch(/SET\s+(SESSION\s+)?statement_timeout/i);
+      }
+    },
+  );
+
+  it('cada escritura abre su propia transacción con su SET LOCAL (el límite no se hereda entre escrituras)', async () => {
+    const { client, queries, writes } = fakeClient(async () => 1);
+    const writer = new PrismaKpiEventWriter(client);
+
+    await writer.insertHttpPending(PENDING);
+    await writer.closeHttp(CLOSE);
+
+    const written = writes();
+    expect(written).toHaveLength(2);
+    expect(written[0].tx).not.toBe(written[1].tx);
+    for (const write of written) expectBoundedByLocalTimeout(queries, write);
   });
 
   it('nunca rechaza ante error del cliente y loguea KPI_WRITE_FAILED con SQLSTATE, sin mensaje', async () => {
@@ -264,7 +409,7 @@ describe('NoopKpiEventWriter', () => {
 });
 
 describe('createKpiPrismaClient (pool propio, D3)', () => {
-  it('pool dedicado chico con statement_timeout 100 ms y timeouts de cliente ≤ 150 ms, sin conectar', async () => {
+  it('pool dedicado chico SIN statement_timeout de arranque (PgBouncer) y timeouts de cliente ≤ 150 ms, sin conectar', async () => {
     const handle = createKpiPrismaClient('postgresql://kpi:kpi@127.0.0.1:1/kpi', {
       options: '-c search_path=kpi_x,public',
     });
@@ -272,7 +417,10 @@ describe('createKpiPrismaClient (pool propio, D3)', () => {
       const options = (handle.pool as unknown as { options: Record<string, unknown> }).options;
 
       expect(options.max).toBe(2);
-      expect(options.statement_timeout).toBe(100);
+      // Sin parámetros de startup: el límite SQL va como SET LOCAL dentro de cada escritura.
+      expect(options.statement_timeout).toBeUndefined();
+      expect(String(options.options ?? '')).not.toMatch(/statement_timeout/i);
+      expect(String(options.connectionString ?? '')).not.toMatch(/statement_timeout/i);
       expect(options.query_timeout).toBeLessThanOrEqual(150);
       expect(options.connectionTimeoutMillis).toBeLessThanOrEqual(150);
       expect(options.connectionTimeoutMillis).toBeGreaterThan(0);

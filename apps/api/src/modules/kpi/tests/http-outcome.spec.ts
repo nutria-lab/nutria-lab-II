@@ -16,7 +16,7 @@ describe('classifyHttpOutcome (D6)', () => {
     [401, 'client_error'],
     [404, 'client_error'],
     [422, 'client_error'],
-    [408, 'timeout'],
+    [408, 'client_error'], // 4xx nunca es timeout: sólo 504 o el timeout confirmado del socket del servidor
     [500, 'server_error'],
     [503, 'server_error'],
     [504, 'timeout'],

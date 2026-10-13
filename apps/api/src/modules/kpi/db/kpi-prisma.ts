@@ -1,11 +1,11 @@
 // NUT-85 — Cliente Prisma propio del escritor KPI (design D3): pool dedicado y chico, separado del de negocio.
-// statement_timeout es parámetro de sesión del pool (no un SET LOCAL por escritura). No conecta al construirse.
+// Sin parámetros de arranque (PgBouncer de Neon): el statement_timeout va como SET LOCAL en cada escritura (D27).
+// No conecta al construirse.
 import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import type { PoolConfig } from 'pg';
 import { PrismaClient } from '../../../generated/prisma/client';
-import { KPI_SQL_STATEMENT_TIMEOUT_MS } from '../events/kpi-event-writer';
 
 export const KPI_POOL_MAX = 2;
 export const KPI_CLIENT_TIMEOUT_MS = 150;
@@ -27,7 +27,6 @@ export function createKpiPrismaClient(connectionString: string, overrides: KpiPo
     ...overrides,
     connectionString,
     max: KPI_POOL_MAX,
-    statement_timeout: KPI_SQL_STATEMENT_TIMEOUT_MS,
     query_timeout: KPI_CLIENT_TIMEOUT_MS,
     connectionTimeoutMillis: KPI_CLIENT_TIMEOUT_MS,
   });

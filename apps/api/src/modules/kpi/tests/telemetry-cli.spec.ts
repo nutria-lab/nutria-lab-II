@@ -179,6 +179,24 @@ describe('runTelemetryCli — argumentos y configuración (exit 2)', () => {
     expectNoSideEffects(h);
     expect(h.diagnostics().error_codes).toContain('FUTURE_CUT');
   });
+
+  it('finalize --date de una fecha ya purgada ⇒ exit 2 PURGED_WINDOW sin efectos', async () => {
+    const h = harness('2027-05-20T15:00:00.000Z'); // corte de purga vigente: 2027-04-01
+    await expect(runTelemetryCli(finalizeArgs(['--date', '2027-02-10']), BASE_ENV, h.deps)).resolves.toBe(2);
+    expectNoSideEffects(h);
+    expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
+    expect(h.store.purgeBatch).not.toHaveBeenCalled();
+    const diag = h.diagnostics();
+    expect(diag.exit_code).toBe(2);
+    expect(diag.error_codes).toContain('PURGED_WINDOW');
+  });
+
+  it('finalize --date del día del corte (no purgado) sigue funcionando', async () => {
+    const h = harness('2027-05-20T15:00:00.000Z');
+    await expect(runTelemetryCli(finalizeArgs(['--date', '2027-04-01']), BASE_ENV, h.deps)).resolves.toBe(0);
+    expect(h.store.calls.insertFinals).toHaveBeenCalledTimes(1);
+    expect(h.diagnostics().error_codes).not.toContain('PURGED_WINDOW');
+  });
 });
 
 describe('runTelemetryCli — sample (H1, H2, H3)', () => {
@@ -236,6 +254,27 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(diag.sample.inserted).toBe(false);
     expect(JSON.stringify(diag)).toContain('SAMPLE_BUCKET_ALREADY_RECORDED');
     expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
+  });
+
+  it('sample --date D explícito recalcula el preview de D aunque el bucket actual ya esté registrado (D25 sólo sin --date)', async () => {
+    const h = harness();
+    h.store.insertHealthSample.mockResolvedValue(false);
+
+    await expect(runTelemetryCli(sampleArgs('dev', ['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(0);
+
+    expect(h.store.calls.upsertPreviews).toHaveBeenCalledTimes(1);
+    const [cut, results] = h.store.calls.upsertPreviews.mock.calls[0];
+    expect(cut).toEqual({
+      environment: 'dev',
+      date: '2026-10-11',
+      start: new Date('2026-10-11T03:00:00.000Z'),
+      end: new Date('2026-10-12T00:00:00.000Z'),
+    });
+    expect(results.map((r: { kpi_id: string }) => r.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
+    const diag = h.diagnostics();
+    expect(diag.exit_code).toBe(0);
+    expect(diag.report_date).toBe('2026-10-11');
+    expect(diag.preview?.skip_reason).not.toBe('SAMPLE_BUCKET_ALREADY_RECORDED');
   });
 
   it('nunca crea buckets anteriores: una sola muestra, la del bucket actual (H1)', async () => {
@@ -472,14 +511,14 @@ describe('runTelemetryCli — purga (H6)', () => {
       expect(PURGE_TABLES).toContain(table);
       expect(table).not.toBe('kpi_publication');
       expect(env).toBe('dev');
-      expect(cutoff).toMatchObject({ date: '2027-04-01' });
+      expect(cutoff).toMatchObject({ date: '2027-03-31' }); // día anterior al D en preparación (2027-04-01)
       expect(limit).toBe(1000);
     }
     expect(h.store.insertHealthSample.mock.invocationCallOrder[0]).toBeLessThan(
       h.store.purgeBatch.mock.invocationCallOrder[0],
     );
     const diag = h.diagnostics();
-    expect(diag.purge).toMatchObject({ executed: true, cutoff: '2027-04-01' });
+    expect(diag.purge).toMatchObject({ executed: true, cutoff: '2027-03-31' });
   });
 
   it('falla de purga ⇒ exit 1 con la muestra ya guardada', async () => {

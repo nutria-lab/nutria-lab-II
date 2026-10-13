@@ -28,7 +28,7 @@ on:
           - sample
           - finalize
       date:
-        description: Fecha UTC YYYY-MM-DD (opcional)
+        description: Fecha local America/Argentina/Buenos_Aires YYYY-MM-DD (opcional)
         type: string
         required: false
 

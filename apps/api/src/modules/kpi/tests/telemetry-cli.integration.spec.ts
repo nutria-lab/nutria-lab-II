@@ -103,7 +103,9 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
 
   describe('purga (H6)', () => {
     const OLD = '2027-02-01T12:00:00.000Z';
-    const KEEP = '2027-04-01T12:00:00.000Z'; // ya dentro del día de corte (2027-04-01 local)
+    const KEEP = '2027-04-01T12:00:00.000Z'; // dentro del día en preparación (2027-04-01 local)
+    // Día anterior a D: guarda el último éxito previo a start de D y no se purga (corte = 2027-03-31).
+    const PREVIOUS_DAY = '2027-03-31T12:00:00.000Z';
 
     async function seed(environment: string, startedAt: string, reportDate: string, n = 1): Promise<void> {
       const finished = new Date(Date.parse(startedAt) + 1000).toISOString();
@@ -139,6 +141,7 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
     it('borra en lotes de 1000 lo anterior al corte; publicación, otro ambiente y día en preparación intactos', async () => {
       await seed('dev', OLD, '2027-02-01', 2500);
       await seed('dev', KEEP, '2027-04-01');
+      await seed('dev', PREVIOUS_DAY, '2027-03-31');
       await seed('prod', OLD, '2027-02-01');
       const purgeSpy = jest.spyOn(TelemetryRepository.prototype, 'purgeBatch');
 
@@ -154,24 +157,27 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
       expect(code).toBe(0);
 
       // dev anterior al corte: borrado de las 4 tablas
-      expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at < '2027-04-01T03:00:00Z'`)).toBe(0);
-      expect(await count(`kpi_dependency_event WHERE environment = 'dev' AND started_at < '2027-04-01T03:00:00Z'`)).toBe(0);
-      expect(await count(`kpi_health_sample WHERE environment = 'dev' AND scheduled_for < '2027-04-01T03:00:00Z'`)).toBe(0);
-      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date < '2027-04-01'`)).toBe(0);
+      expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at < '2027-03-31T03:00:00Z'`)).toBe(0);
+      expect(await count(`kpi_dependency_event WHERE environment = 'dev' AND started_at < '2027-03-31T03:00:00Z'`)).toBe(0);
+      expect(await count(`kpi_health_sample WHERE environment = 'dev' AND scheduled_for < '2027-03-31T03:00:00Z'`)).toBe(0);
+      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date < '2027-03-31'`)).toBe(0);
       // día en preparación / desde el corte: intacto
       expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at >= '2027-04-01T03:00:00Z'`)).toBe(1);
       expect(await count(`kpi_dependency_event WHERE environment = 'dev' AND started_at >= '2027-04-01T03:00:00Z'`)).toBe(1);
       expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date = '2027-04-01' AND snapshot_kind = 'final'`)).toBe(1);
+      // día anterior a D (2027-03-31 local): intacto
+      expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at >= '2027-03-31T03:00:00Z' AND started_at < '2027-04-01T03:00:00Z'`)).toBe(1);
+      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date = '2027-03-31'`)).toBe(1);
       // otro ambiente: intacto
       expect(await count(`kpi_http_event WHERE environment = 'prod'`)).toBe(1);
       expect(await count(`kpi_dependency_event WHERE environment = 'prod'`)).toBe(1);
       expect(await count(`kpi_health_sample WHERE environment = 'prod'`)).toBe(1);
       expect(await count(`kpi_snapshot WHERE environment = 'prod'`)).toBe(1);
       // kpi_publication nunca se toca
-      expect(await count('kpi_publication')).toBe(3);
+      expect(await count('kpi_publication')).toBe(4);
 
       const diag = d.diagnostics[0];
-      expect(diag.purge).toMatchObject({ executed: true, cutoff: '2027-04-01' });
+      expect(diag.purge).toMatchObject({ executed: true, cutoff: '2027-03-31' });
       expect(diag.purge.deleted.kpi_http_event).toBe(2500);
     });
 

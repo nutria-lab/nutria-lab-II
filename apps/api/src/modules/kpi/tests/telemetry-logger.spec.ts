@@ -7,6 +7,9 @@
 //     | 'KPI_CONTEXT_WINDOW_MISMATCH' | 'FUTURE_CUT' | 'INVALID_DATE' }  (los errores de contrato se propagan)
 //   Falla de la fuente ⇒ 8 unavailable, reason 'SOURCE_UNAVAILABLE', value null, sample_count 0, measured_at = reloj, sin persistir.
 //   KpiModule provee y exporta TelemetryLogger.
+//   Corrección post-review: SQLSTATE clase 42 y clase 23 (salvo 23505), directos o envueltos (Prisma P2010/meta,
+//   adapter cause.originalCode), se propagan. report_date < computePurgeCutoff(clock) ⇒ 8 unavailable 'PURGED_WINDOW'
+//   sin recalcular ni insertar (o los 8 finales existentes).
 import 'reflect-metadata';
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { CollectionContext, KpiId, KpiLogger, KpiResult } from '../kpi-contract';
@@ -175,6 +178,135 @@ describe('TelemetryLogger.collect (G4)', () => {
       }
       expect(store.calls.insertFinals).not.toHaveBeenCalled();
       expect(store.calls.upsertPreviews).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('fallas de conexión/timeout/conflicto siguen siendo SOURCE_UNAVAILABLE', () => {
+    it.each([
+      ['08006 connection failure', pgError('08006')],
+      ['08001 no se pudo conectar', pgError('08001')],
+      ['57014 statement_timeout', pgError('57014')],
+      ['ETIMEDOUT', pgError('ETIMEDOUT')],
+      ['23505 hasta agotar reintentos', pgError('23505')],
+      ['40001 hasta agotar reintentos', pgError('40001')],
+    ])('%s ⇒ 8 unavailable SOURCE_UNAVAILABLE', async (_name, failure) => {
+      const { logger, store } = makeLogger();
+      store.transactionError = failure;
+
+      const results = await logger.collect(context());
+
+      expect(results).toHaveLength(8);
+      for (const result of results) expect(result).toMatchObject({ quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE' });
+      expect(store.calls.insertFinals).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('errores de programación/estructura (SQLSTATE clase 42, clase 23 salvo 23505) se PROPAGAN', () => {
+    const prismaWrapped = (sqlState: string) =>
+      Object.assign(new Error('Raw query failed'), {
+        name: 'PrismaClientKnownRequestError',
+        code: 'P2010',
+        clientVersion: '7.0.0',
+        meta: { code: sqlState, message: 'secret detail' },
+      });
+    const adapterWrapped = (sqlState: string) =>
+      Object.assign(new Error('driver adapter error'), {
+        name: 'DriverAdapterError',
+        cause: { kind: 'postgres', originalCode: sqlState, originalMessage: 'secret detail' },
+      });
+
+    it.each([
+      ['42P01 tabla inexistente (pg)', pgError('42P01')],
+      ['42703 columna inexistente (pg)', pgError('42703')],
+      ['42601 error de sintaxis (pg)', pgError('42601')],
+      ['23514 CHECK violado (pg)', pgError('23514')],
+      ['23502 NOT NULL violado (pg)', pgError('23502')],
+      ['42P01 envuelto por Prisma (P2010 + meta.code)', prismaWrapped('42P01')],
+      ['23514 envuelto por Prisma (P2010 + meta.code)', prismaWrapped('23514')],
+      ['42703 envuelto por adapter-pg (cause.originalCode)', adapterWrapped('42703')],
+      ['23514 envuelto por adapter-pg (cause.originalCode)', adapterWrapped('23514')],
+    ])('%s ⇒ collect rechaza con el mismo error, sin 8 unavailable', async (_name, failure) => {
+      const { logger, store } = makeLogger();
+      store.transactionError = failure;
+
+      await expect(logger.collect(context())).rejects.toBe(failure);
+      expect(store.calls.insertFinals).not.toHaveBeenCalled();
+    });
+
+    it('también si el error estructural aparece al calcular (loadAggregates), no sólo al abrir la transacción', async () => {
+      const { logger, store } = makeLogger();
+      const failure = pgError('42703');
+      store.calls.loadAggregates.mockRejectedValue(failure);
+
+      await expect(logger.collect(context())).rejects.toBe(failure);
+    });
+  });
+
+  describe('fecha ya purgada (report_date < computePurgeCutoff(now)) ⇒ PURGED_WINDOW sin recalcular', () => {
+    const NOW_2027 = new Date('2027-05-20T15:00:00.000Z'); // corte vigente 2027-04-01 (mitad del trimestre)
+    const contextFor = (day: string): CollectionContext => {
+      const w = windowForDate(day);
+      return context({ date: day, window_start: w.start.toISOString(), window_end: w.end.toISOString() });
+    };
+
+    it('día anterior al corte ⇒ 8 unavailable reason PURGED_WINDOW, sin leer agregados ni insertar', async () => {
+      const { logger, store } = makeLogger(() => new Date(NOW_2027));
+
+      const results = await logger.collect(contextFor('2027-02-10'));
+
+      expect(results.map(r => r.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
+      for (const result of results) {
+        expect(result).toEqual({
+          kpi_id: result.kpi_id,
+          value: null,
+          quality: 'unavailable',
+          reason: 'PURGED_WINDOW',
+          sample_count: 0,
+          measured_at: NOW_2027.toISOString(),
+        });
+      }
+      expect(store.calls.loadAggregates).not.toHaveBeenCalled();
+      expect(store.calls.insertFinals).not.toHaveBeenCalled();
+      expect(store.calls.upsertPreviews).not.toHaveBeenCalled();
+    });
+
+    it('justo el día anterior al corte (2027-03-31) también es PURGED_WINDOW', async () => {
+      const { logger, store } = makeLogger(() => new Date(NOW_2027));
+
+      const results = await logger.collect(contextFor('2027-03-31'));
+
+      for (const result of results) expect(result).toMatchObject({ quality: 'unavailable', reason: 'PURGED_WINDOW' });
+      expect(store.calls.loadAggregates).not.toHaveBeenCalled();
+      expect(store.calls.insertFinals).not.toHaveBeenCalled();
+    });
+
+    it('si los 8 finales ya existen, los devuelve tal cual (sin recalcular ni insertar)', async () => {
+      const { logger, store } = makeLogger(() => new Date(NOW_2027));
+      const existing = storedFinals('2027-02-11T00:05:00.000Z');
+      store.readFinalsQueue = [existing];
+
+      await expect(logger.collect(contextFor('2027-02-10'))).resolves.toEqual(existing);
+      expect(store.calls.loadAggregates).not.toHaveBeenCalled();
+      expect(store.calls.insertFinals).not.toHaveBeenCalled();
+    });
+
+    it('el día del corte (2027-04-01) no está purgado: calcula normalmente', async () => {
+      const { logger, store } = makeLogger(() => new Date(NOW_2027));
+
+      const results = await logger.collect(contextFor('2027-04-01'));
+
+      expect(store.calls.loadAggregates).toHaveBeenCalledTimes(1);
+      expect(store.calls.insertFinals).toHaveBeenCalledTimes(1);
+      expect(results.every(r => r.reason !== 'PURGED_WINDOW')).toBe(true);
+    });
+
+    it('antes de 2027 no hay corte: una fecha vieja de 2026 se calcula normalmente', async () => {
+      const { logger, store } = makeLogger(() => new Date('2026-12-20T15:00:00.000Z'));
+
+      const results = await logger.collect(contextFor('2026-01-15'));
+
+      expect(store.calls.loadAggregates).toHaveBeenCalledTimes(1);
+      expect(results.every(r => r.reason !== 'PURGED_WINDOW')).toBe(true);
     });
   });
 

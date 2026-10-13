@@ -198,6 +198,9 @@ function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
     if (error instanceof KpiWindowError) throw new CliUsageError(error.code);
     throw error;
   }
+  // Un día ya purgado no se recalcula (D29): sus eventos ya no existen.
+  const purgeCutoff = args.mode === 'finalize' ? computePurgeCutoff(now) : null;
+  if (purgeCutoff !== null && window.date < purgeCutoff.date) throw new CliUsageError('PURGED_WINDOW');
   return {
     args,
     databaseUrl,
@@ -240,8 +243,9 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     diag.error_codes.push('SAMPLE_WRITE_FAILED');
     return EXIT_FAILURE;
   }
-  // Re-ejecución del mismo bucket: la corrida original ya hizo preview y purga; no se agregan cortes nuevos.
-  if (!diag.sample.inserted) {
+  // Re-ejecución del mismo bucket sin --date: la corrida original ya hizo preview y purga (D25).
+  // Con --date explícito se recalcula igual el preview de ese día.
+  if (!diag.sample.inserted && args.date === undefined) {
     diag.preview = { executed: false, skip_reason: 'SAMPLE_BUCKET_ALREADY_RECORDED' };
     return EXIT_OK;
   }

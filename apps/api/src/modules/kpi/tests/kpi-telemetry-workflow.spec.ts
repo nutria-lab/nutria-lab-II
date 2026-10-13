@@ -315,6 +315,17 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(scalarValue(date, 'default') ?? '').toBe('');
     });
 
+    it('workflow_dispatch: la descripción de date habla de la fecha local de Argentina, no de UTC', () => {
+      const wf = loadWorkflow();
+      const date = inputBlock(workflowDispatchInputs(wf), 'date');
+      expect(scalarValue(date, 'description')).toBeDefined();
+      // Bloque completo por si la descripción es multilínea (| o >).
+      const descriptionText = date.join('\n');
+      expect(descriptionText).toMatch(/America\/Argentina\/Buenos_Aires/);
+      expect(descriptionText).toMatch(/YYYY-MM-DD/);
+      expect(descriptionText).not.toMatch(/\bUTC\b/i);
+    });
+
     it('el job usa GitHub Environments con el ambiente efectivo (input o prod en schedule)', () => {
       const wf = loadWorkflow();
       const environment = jobScalar(wf, 'environment');

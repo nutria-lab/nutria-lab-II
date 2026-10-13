@@ -77,9 +77,23 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
     return result.rows;
   }
 
-  it('el pool KPI tiene statement_timeout = 100ms como parámetro de sesión', async () => {
+  it('el pool KPI NO fija statement_timeout como parámetro de sesión/arranque (compatible con PgBouncer)', async () => {
     const result = await handle.pool.query<{ statement_timeout: string }>('SHOW statement_timeout');
-    expect(result.rows[0].statement_timeout).toBe('100ms');
+    expect(result.rows[0].statement_timeout).not.toBe('100ms');
+  });
+
+  it('el SET LOCAL de una escritura no queda pegado a la conexión del pool', async () => {
+    await writer.insertHttpPending({ id: randomUUID(), environment: 'dev', operation: 'UNRESOLVED', startedAt: new Date() });
+    // max 2: con dos clientes simultáneos se inspeccionan todas las conexiones del pool.
+    const clients = await Promise.all([handle.pool.connect(), handle.pool.connect()]);
+    try {
+      for (const client of clients) {
+        const result = await client.query<{ statement_timeout: string }>('SHOW statement_timeout');
+        expect(result.rows[0].statement_timeout).not.toBe('100ms');
+      }
+    } finally {
+      clients.forEach(client => client.release());
+    }
   });
 
   it('B1: pending + close actualizan la misma fila (una sola fila, mismo id, duration ≥ 0)', async () => {
@@ -190,5 +204,37 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
       locker.release();
     }
     expect(await rowsFor(id)).toHaveLength(0);
+  });
+
+  it('B6: el cierre (UPDATE) con la tabla bloqueada también da KPI_WRITE_TIMEOUT (SET LOCAL 57014) acotado', async () => {
+    const id = randomUUID();
+    const startedAt = new Date();
+    await writer.insertHttpPending({ id, environment: 'dev', operation: 'UNRESOLVED', startedAt });
+
+    const locker = await db.createPool({ max: 1 }).connect();
+    await locker.query('BEGIN');
+    await locker.query('LOCK TABLE kpi_http_event IN ACCESS EXCLUSIVE MODE');
+    try {
+      const began = Date.now();
+      await expect(
+        writer.closeHttp({
+          id,
+          operation: 'GET /recipes',
+          outcome: 'success',
+          httpStatus: 200,
+          durationMs: 3,
+          finishedAt: new Date(startedAt.getTime() + 3),
+        }),
+      ).resolves.toBeUndefined();
+      expect(Date.now() - began).toBeLessThanOrEqual(KPI_WRITE_WAIT_MS + 50);
+      await writer.drain(1000);
+      expect(logLines.join('\n')).toContain('KPI_WRITE_TIMEOUT');
+      expect(logLines.join('\n')).toContain('57014');
+    } finally {
+      await locker.query('ROLLBACK');
+      locker.release();
+    }
+    const [row] = await rowsFor(id);
+    expect(row.outcome).toBe('pending');
   });
 });
