@@ -10,7 +10,9 @@
 //     openStore(databaseUrl: string): TelemetryCliStore;
 //     writeDiagnostics(dir: string, diagnostics: TelemetryDiagnostics): Promise<void>;
 //   }
-//   type ApiProbeOutcome = { kind: 'response'; status: number; body: unknown } | { kind: 'timeout' } | { kind: 'network_error' }
+//   type ApiProbeOutcome = { kind: 'response'; status: number; body: unknown; instrumentation?: 'enabled' | 'disabled' | null }
+//     | { kind: 'timeout' } | { kind: 'network_error' }
+//     (Fix 1: instrumentation = header X-KPI-Instrumentation de /health; ausente o desconocido ⇒ null/undefined)
 //   type DbProbeOutcome = 'ok' | 'timeout' | 'error'
 //   interface HealthSampleInput { environment; scheduledFor: Date; measuredAt: Date; apiOk: boolean | null;
 //     databaseOk: boolean | null; outcome: 'healthy' | 'unhealthy' | 'unknown'; reason: string | null }
@@ -25,7 +27,7 @@
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { PurgeCutoff } from '../cli/purge-policy';
 import { PURGE_TABLES } from '../cli/purge-policy';
-import { runTelemetryCli } from '../cli/telemetry-cli';
+import { probeApiHealth, runTelemetryCli } from '../cli/telemetry-cli';
 import type {
   ApiProbeOutcome,
   DbProbeOutcome,
@@ -33,6 +35,8 @@ import type {
   TelemetryCliDeps,
   TelemetryCliStore,
 } from '../cli/telemetry-cli';
+import * as http from 'http';
+import type { AddressInfo } from 'node:net';
 import type { KpiEnvironment } from '../kpi-contract';
 import { KpiSnapshotError, TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
 import { FakeSnapshotStore, pgError, sampleAggregates, storedFinals } from './telemetry-fakes.fixture';
@@ -529,6 +533,128 @@ describe('runTelemetryCli — purga (H6)', () => {
 
     expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
     expect(h.diagnostics().error_codes).toContain('PURGE_FAILED');
+  });
+});
+
+// Fix 1 (goal-fixes): /health con X-KPI-Instrumentation: disabled ⇒ la muestra se guarda igual (misma salud)
+// con reason 'INSTRUMENTATION_DISABLED' (también si es unhealthy). Header ausente o enabled ⇒ reason como antes.
+describe('runTelemetryCli — sample con instrumentación apagada (X-KPI-Instrumentation)', () => {
+  const okBody = { status: 'ok', database: 'ok' };
+
+  it.each<[string, ApiProbeOutcome, DbProbeOutcome, Partial<HealthSampleInput>]>([
+    [
+      'API y DB ok',
+      { kind: 'response', status: 200, body: okBody, instrumentation: 'disabled' },
+      'ok',
+      { outcome: 'healthy', apiOk: true, databaseOk: true },
+    ],
+    [
+      'API 503',
+      { kind: 'response', status: 503, body: { status: 'error', database: 'error' }, instrumentation: 'disabled' },
+      'ok',
+      { outcome: 'unhealthy', apiOk: false, databaseOk: true },
+    ],
+    [
+      'API 200 con body no ok',
+      { kind: 'response', status: 200, body: { status: 'error' }, instrumentation: 'disabled' },
+      'ok',
+      { outcome: 'unhealthy', apiOk: false, databaseOk: true },
+    ],
+    [
+      'DB con error',
+      { kind: 'response', status: 200, body: okBody, instrumentation: 'disabled' },
+      'error',
+      { outcome: 'unhealthy', apiOk: true, databaseOk: false },
+    ],
+    [
+      'DB con timeout',
+      { kind: 'response', status: 200, body: okBody, instrumentation: 'disabled' },
+      'timeout',
+      { outcome: 'unhealthy', apiOk: true, databaseOk: false },
+    ],
+  ])('header disabled con %s ⇒ muestra guardada con reason INSTRUMENTATION_DISABLED', async (_name, api, db, expected) => {
+    const h = harness();
+    h.probeApi.mockResolvedValue(api);
+    h.probeDatabase.mockResolvedValue(db);
+
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
+
+    expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
+    expect(h.store.insertHealthSample.mock.calls[0][0]).toMatchObject({
+      environment: 'dev',
+      scheduledFor: new Date(BUCKET_MIDDAY),
+      ...expected,
+      reason: 'INSTRUMENTATION_DISABLED',
+    });
+    const diag = h.diagnostics();
+    expect(diag.sample).toMatchObject({
+      outcome: expected.outcome,
+      inserted: true,
+      reason: 'INSTRUMENTATION_DISABLED',
+      result: 'SAMPLE_RECORDED',
+    });
+  });
+
+  it.each<[string, ApiProbeOutcome, DbProbeOutcome, Partial<HealthSampleInput>]>([
+    ['header enabled y todo ok', { kind: 'response', status: 200, body: okBody, instrumentation: 'enabled' }, 'ok', { outcome: 'healthy', reason: null }],
+    ['header ausente (null) y todo ok', { kind: 'response', status: 200, body: okBody, instrumentation: null }, 'ok', { outcome: 'healthy', reason: null }],
+    ['header ausente (sin campo) y todo ok', okApi(), 'ok', { outcome: 'healthy', reason: null }],
+    [
+      'header enabled y DB timeout',
+      { kind: 'response', status: 200, body: okBody, instrumentation: 'enabled' },
+      'timeout',
+      { outcome: 'unhealthy', databaseOk: false, reason: 'DB_TIMEOUT' },
+    ],
+    [
+      'header ausente y API 503',
+      { kind: 'response', status: 503, body: {}, instrumentation: null },
+      'ok',
+      { outcome: 'unhealthy', apiOk: false, reason: 'API_HTTP_5XX' },
+    ],
+  ])('%s ⇒ reason como antes', async (_name, api, db, expected) => {
+    const h = harness();
+    h.probeApi.mockResolvedValue(api);
+    h.probeDatabase.mockResolvedValue(db);
+
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
+
+    expect(h.store.insertHealthSample.mock.calls[0][0]).toMatchObject(expected);
+  });
+});
+
+describe('probeApiHealth — expone X-KPI-Instrumentation', () => {
+  let server: http.Server | undefined;
+
+  afterEach(async () => {
+    await new Promise<void>(resolve => (server ? server.close(() => resolve()) : resolve()));
+    server = undefined;
+  });
+
+  async function serve(status: number, header: string | null): Promise<string> {
+    server = http.createServer((_req, res) => {
+      const headers: Record<string, string> = { 'content-type': 'application/json' };
+      if (header !== null) headers['X-KPI-Instrumentation'] = header;
+      res.writeHead(status, headers);
+      res.end(JSON.stringify(status === 200 ? { status: 'ok', database: 'ok' } : { status: 'error', database: 'error' }));
+    });
+    await new Promise<void>(resolve => server?.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    return `http://127.0.0.1:${port}/health`;
+  }
+
+  it.each<[number, string | null, 'enabled' | 'disabled' | null]>([
+    [200, 'disabled', 'disabled'],
+    [200, 'enabled', 'enabled'],
+    [503, 'disabled', 'disabled'],
+    [200, null, null],
+    [200, 'garbage', null],
+  ])('status %p con header %p ⇒ instrumentation %p', async (status, header, expected) => {
+    const url = await serve(status, header);
+
+    const outcome = await probeApiHealth(url, 2000);
+
+    expect(outcome).toMatchObject({ kind: 'response', status });
+    expect(outcome.kind === 'response' ? (outcome.instrumentation ?? null) : 'not-a-response').toBe(expected);
   });
 });
 

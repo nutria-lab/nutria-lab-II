@@ -114,6 +114,28 @@ describeIfKpiDb('telemetry-aggregates (integración Postgres)', () => {
     );
   }
 
+  async function insertHealthAt(
+    outcome: 'healthy' | 'unhealthy',
+    measuredAtMs: number,
+    reason: string | null,
+    env: Env = 'dev',
+  ): Promise<void> {
+    await db.client.query(
+      `INSERT INTO kpi_health_sample (id, environment, scheduled_for, measured_at, api_ok, database_ok, outcome, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        randomUUID(),
+        env,
+        iso(measuredAtMs - (measuredAtMs % (30 * MINUTE_MS))),
+        iso(measuredAtMs),
+        true,
+        outcome === 'healthy',
+        outcome,
+        reason,
+      ],
+    );
+  }
+
   async function results(env: Env = 'dev'): Promise<KpiResult[]> {
     const aggregates = await repo.loadAggregates(env, WINDOW);
     return buildTelemetryResults(aggregates, WINDOW, new Date('2026-10-10T00:05:00.000Z'));
@@ -274,5 +296,47 @@ describeIfKpiDb('telemetry-aggregates (integración Postgres)', () => {
     expect(pick(qa, 'last_success_age_seconds').value).toBe(60);
     expect(pick(qa, 'dependency_error_rate').value).toBe(100);
     expect(pick(qa, 'health_status').value).toBe(0);
+  });
+
+  // Fix 1 (goal-fixes): TelemetryAggregates.instrumentationDisabledSamples = muestras con measured_at en
+  // [start, end), del ambiente, con reason 'INSTRUMENTATION_DISABLED'.
+  it('sin muestras INSTRUMENTATION_DISABLED ⇒ instrumentationDisabledSamples 0 y operations_count 0 observed', async () => {
+    await insertHealthAt('healthy', IN_WINDOW_MS, null);
+    await insertHealthAt('unhealthy', IN_WINDOW_MS + 30 * MINUTE_MS, 'API_TIMEOUT');
+
+    const aggregates = await repo.loadAggregates('dev', WINDOW);
+    expect(aggregates.instrumentationDisabledSamples).toBe(0);
+    expect(pick(await results(), 'operations_count')).toMatchObject({ value: 0, quality: 'observed', reason: null });
+  });
+
+  it('cuenta sólo las INSTRUMENTATION_DISABLED dentro de [start, end) y del ambiente; los 6 KPI de eventos unavailable', async () => {
+    const lastBucket = Date.parse('2026-10-09T23:30:00.000Z');
+    await insertHealthAt('healthy', WINDOW.start.getTime(), 'INSTRUMENTATION_DISABLED'); // = start ⇒ cuenta
+    await insertHealthAt('unhealthy', IN_WINDOW_MS, 'INSTRUMENTATION_DISABLED'); // unhealthy también cuenta
+    await insertHealthAt('healthy', lastBucket + 1000, null); // otra razón ⇒ no cuenta
+    await insertHealthAt('healthy', WINDOW.start.getTime() - 1000, 'INSTRUMENTATION_DISABLED'); // antes de start
+    await insertHealthAt('healthy', WINDOW.end.getTime(), 'INSTRUMENTATION_DISABLED'); // = end ⇒ excluida
+    await insertHealthAt('healthy', IN_WINDOW_MS + 60 * MINUTE_MS, 'INSTRUMENTATION_DISABLED', 'qa'); // otro ambiente
+    for (let i = 0; i < 3; i += 1) await insertHttp('success');
+    await insertDependency('success');
+
+    const dev = await repo.loadAggregates('dev', WINDOW);
+    expect(dev.instrumentationDisabledSamples).toBe(2);
+    expect((await repo.loadAggregates('qa', WINDOW)).instrumentationDisabledSamples).toBe(1);
+    expect((await repo.loadAggregates('prod', WINDOW)).instrumentationDisabledSamples).toBe(0);
+
+    const rs = await results();
+    for (const kpiId of [
+      'operations_count',
+      'error_rate',
+      'timeout_rate',
+      'latency_p95_ms',
+      'last_success_age_seconds',
+      'dependency_error_rate',
+    ] as const) {
+      expect(pick(rs, kpiId)).toMatchObject({ value: null, quality: 'unavailable', reason: 'INSTRUMENTATION_DISABLED' });
+    }
+    expect(pick(rs, 'health_status')).toMatchObject({ value: 1, quality: 'observed' });
+    expect(pick(rs, 'availability_rate')).toMatchObject({ quality: 'observed', sample_count: 3 });
   });
 });

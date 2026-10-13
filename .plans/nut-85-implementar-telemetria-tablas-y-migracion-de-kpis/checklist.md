@@ -23,7 +23,7 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] C2 ★ Cada intento genera su propia fila con attempt incremental (incluye las 2 llamadas de la regeneración); outcome success/error/timeout; sin URL ni claves. → `tests/dependency-instrumentation.spec.ts` (attempts, concurrencia, sin secretos); `tests/regeneration-dependency-attempts.spec.ts` › attempts 1 y 2; `tests/dependency-event.integration.spec.ts`
 
 ## D. GET /health
-- [x] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales. → `health/`; `tests/health.controller.spec.ts`; `tests/health.integration.spec.ts`
+- [x] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales. → `health/`; `tests/health.controller.spec.ts` (incl. header `X-KPI-Instrumentation`, D31); `tests/health-single-flight.spec.ts`; `tests/health.integration.spec.ts`
 
 ## E. Ventana temporal
 - [x] E1 ★ D=2026-10-09 ⇒ start=2026-10-09T03:00:00Z, end=2026-10-10T00:00:00Z (America/Argentina/Buenos_Aires, 00:00–21:00). → `window/kpi-window.ts`; `tests/kpi-window.spec.ts`
@@ -36,7 +36,7 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] F4 ★ last_success_age_seconds usa un éxito anterior a start; sin éxito conocido ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
 - [x] F5 ★ health_status toma la última muestra por tiempo real; si tiene más de 60 min antes del corte o es unknown ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
 - [x] F6 ★ Dos healthy + una unhealthy ⇒ availability 66.666…; unknown no cuenta; sin muestras válidas ⇒ unavailable. → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
-- [x] F7 ★ unavailable ⇒ value null + reason no vacío; un 0 medido queda `observed`; NaN/Infinity lanza error (no se oculta). → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`
+- [x] F7 ★ unavailable ⇒ value null + reason no vacío; un 0 medido queda `observed`; NaN/Infinity lanza error (no se oculta). → `calc/telemetry-formulas.ts`, `repo/telemetry.repository.ts`; `tests/telemetry-formulas.spec.ts` y `tests/telemetry-aggregates.integration.spec.ts`; `tests/telemetry-formulas.spec.ts` › INSTRUMENTATION_DISABLED ⇒ 6 KPIs de eventos unavailable (D31); `tests/telemetry-aggregates.integration.spec.ts` › instrumentationDisabledSamples; `tests/telemetry-cli.spec.ts` › header disabled
 
 ## G. Snapshots y collect
 - [x] G1 ★ Los 8 previews se guardan en UNA transacción e idempotentes por corte; los previews de distintos cortes coexisten. → `snapshots/telemetry-snapshot.service.ts`; `src/modules/kpi/tests/telemetry-snapshot.service.spec.ts`; `src/modules/kpi/tests/telemetry-snapshots.integration.spec.ts` › G1

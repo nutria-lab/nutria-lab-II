@@ -143,6 +143,35 @@ describe('GET /health (D1)', () => {
     expect(JSON.parse(text)).toEqual(OK_BODY);
   });
 
+  // Fix 1 (goal-fixes): header X-KPI-Instrumentation según la config KPI efectiva; body y status sin cambios.
+  it.each([
+    ['habilitada', { enabled: true, environment: 'dev', disabledReason: null }, 'enabled'],
+    ['apagada por switch false', { enabled: false, environment: 'dev', disabledReason: 'KPI_SWITCH_OFF' }, 'disabled'],
+    ['switch inválido', { enabled: false, environment: 'qa', disabledReason: 'KPI_SWITCH_INVALID' }, 'disabled'],
+    ['sin KPI_ENV', { enabled: false, environment: null, disabledReason: 'KPI_ENV_MISSING' }, 'disabled'],
+    ['KPI_ENV inválido', { enabled: false, environment: null, disabledReason: 'KPI_ENV_INVALID' }, 'disabled'],
+  ])('instrumentación %s ⇒ 200, body exacto y X-KPI-Instrumentation: %s', async (_name, config, expected) => {
+    app = await createApp(async () => undefined, config);
+    const { response, text } = await getHealth(app);
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(text)).toEqual(OK_BODY);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('x-kpi-instrumentation')).toBe(expected);
+  });
+
+  it.each([
+    ['habilitada', { enabled: true, environment: 'prod', disabledReason: null }, 'enabled'],
+    ['apagada', { enabled: false, environment: 'prod', disabledReason: 'KPI_SWITCH_OFF' }, 'disabled'],
+  ])('DB caída con instrumentación %s ⇒ 503, body exacto y X-KPI-Instrumentation: %s', async (_name, config, expected) => {
+    app = await createApp(() => Promise.reject(new Error('down')), config);
+    const { response, text } = await getHealth(app);
+
+    expect(response.status).toBe(503);
+    expect(JSON.parse(text)).toEqual(ERROR_BODY);
+    expect(response.headers.get('x-kpi-instrumentation')).toBe(expected);
+  });
+
   it('el código de health no depende de IA ni de módulos de negocio', () => {
     const dir = path.resolve(__dirname, '../health');
     const sources = fs

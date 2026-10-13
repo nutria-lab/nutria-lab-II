@@ -5,6 +5,7 @@
 // Diagnóstico (D24): siempre se intenta escribir (finally); nunca URLs, credenciales, rutas ni mensajes de excepción.
 import * as fs from 'fs';
 import * as path from 'path';
+import { INSTRUMENTATION_DISABLED } from '../calc/telemetry-formulas';
 import type { TelemetryAggregates } from '../calc/telemetry-formulas';
 import { resolveKpiConfig } from '../config/kpi-config';
 import type { KpiEnvSource } from '../config/kpi-config';
@@ -30,7 +31,11 @@ export const DIAGNOSTICS_FILE_NAME = 'kpi-telemetry-diagnostics.json';
 const TOOL_NAME = 'nutria-kpi-telemetry';
 
 export type CliMode = 'sample' | 'finalize';
-export type ApiProbeOutcome = { kind: 'response'; status: number; body: unknown } | { kind: 'timeout' } | { kind: 'network_error' };
+/** instrumentation = header X-KPI-Instrumentation de /health; ausente o desconocido ⇒ null (backend viejo, D31). */
+export type ApiProbeOutcome =
+  | { kind: 'response'; status: number; body: unknown; instrumentation?: 'enabled' | 'disabled' | null }
+  | { kind: 'timeout' }
+  | { kind: 'network_error' };
 export type DbProbeOutcome = 'ok' | 'timeout' | 'error';
 
 export interface TelemetryCliDeps {
@@ -123,6 +128,14 @@ function apiFailureReason(outcome: ApiProbeOutcome): string | null {
     return 'API_HTTP_NON_OK';
   }
   return null;
+}
+
+function instrumentationDisabled(outcome: ApiProbeOutcome): boolean {
+  return outcome.kind === 'response' && outcome.instrumentation === 'disabled';
+}
+
+function instrumentationOf(value: string | null): 'enabled' | 'disabled' | null {
+  return value === 'enabled' || value === 'disabled' ? value : null;
 }
 
 function dbFailureReason(outcome: DbProbeOutcome): string | null {
@@ -231,7 +244,8 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     apiOk: apiReason === null,
     databaseOk: dbReason === null,
     outcome: apiReason === null && dbReason === null ? 'healthy' : 'unhealthy',
-    reason: apiReason ?? dbReason,
+    // D31: instrumentación apagada tiene prioridad; el detalle de salud queda en api_ok/database_ok.
+    reason: instrumentationDisabled(api) ? INSTRUMENTATION_DISABLED : (apiReason ?? dbReason),
   };
   diag.sample = { outcome: sample.outcome, inserted: false, reason: sample.reason, result: 'SAMPLE_WRITE_FAILED' };
 
@@ -371,7 +385,8 @@ export async function probeApiHealth(healthUrl: string, timeoutMs: number): Prom
     const response = await fetch(healthUrl, { signal: controller.signal, headers: { accept: 'application/json' } });
     const body: unknown = await response.json().catch(() => null);
     if (timedOut) return { kind: 'timeout' };
-    return { kind: 'response', status: response.status, body };
+    const instrumentation = instrumentationOf(response.headers.get('x-kpi-instrumentation'));
+    return { kind: 'response', status: response.status, body, instrumentation };
   } catch {
     return timedOut ? { kind: 'timeout' } : { kind: 'network_error' };
   } finally {

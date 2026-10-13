@@ -40,7 +40,21 @@ export interface TelemetryAggregates {
   latestHealth: { outcome: HealthOutcome; measuredAt: Date; scheduledFor: Date } | null;
   /** Muestras de salud con measured_at en ventana, por outcome. */
   health: { healthy: number; unhealthy: number; unknown: number };
+  /** Muestras de salud con measured_at en ventana y reason INSTRUMENTATION_DISABLED (D31). */
+  instrumentationDisabledSamples: number;
 }
+
+export const INSTRUMENTATION_DISABLED = 'INSTRUMENTATION_DISABLED';
+
+/** KPI que dependen de eventos: sin instrumentación en la ventana no se publican como observed (D31). */
+const EVENT_KPI_IDS = [
+  'operations_count',
+  'error_rate',
+  'timeout_rate',
+  'latency_p95_ms',
+  'last_success_age_seconds',
+  'dependency_error_rate',
+] as const satisfies readonly TelemetryKpiId[];
 
 export interface TelemetryWindow {
   start: Date;
@@ -116,6 +130,10 @@ export function buildTelemetryResults(
         ? unavailable('NO_VALID_HEALTH_SAMPLES')
         : observed('availability_rate', percentage(a.health.healthy, validHealth), validHealth),
   };
+
+  if (a.instrumentationDisabledSamples > 0) {
+    for (const kpiId of EVENT_KPI_IDS) drafts[kpiId] = unavailable(INSTRUMENTATION_DISABLED);
+  }
 
   const measuredAtIso = measuredAt.toISOString();
   return TELEMETRY_KPI_IDS.map(kpiId => ({ kpi_id: kpiId, ...drafts[kpiId], measured_at: measuredAtIso }));

@@ -5,6 +5,7 @@
 import { randomUUID } from 'crypto';
 import type { PrismaClient } from '../../../generated/prisma/client';
 import type { KpiEnvironment, KpiId, KpiResult } from '../kpi-contract';
+import { INSTRUMENTATION_DISABLED } from '../calc/telemetry-formulas';
 import type { HealthOutcome, TelemetryAggregates, TelemetryWindow } from '../calc/telemetry-formulas';
 import type { PurgeCutoff, PurgeTable } from '../cli/purge-policy';
 import type { SnapshotCut, SnapshotTx } from '../snapshots/telemetry-snapshot.service';
@@ -134,6 +135,14 @@ export class TelemetryRepository implements SnapshotTx {
         AND measured_at >= ${start}::timestamptz
         AND measured_at < ${end}::timestamptz`;
 
+    const [disabled] = await this.prisma.$queryRaw<{ count: number }[]>`
+      SELECT count(*)::int AS count
+      FROM kpi_health_sample
+      WHERE environment = ${environment}
+        AND reason = ${INSTRUMENTATION_DISABLED}
+        AND measured_at >= ${start}::timestamptz
+        AND measured_at < ${end}::timestamptz`;
+
     return {
       http: {
         success: http.success,
@@ -155,6 +164,7 @@ export class TelemetryRepository implements SnapshotTx {
           }
         : null,
       health: { healthy: health.healthy, unhealthy: health.unhealthy, unknown: health.unknown },
+      instrumentationDisabledSamples: disabled.count,
     };
   }
 

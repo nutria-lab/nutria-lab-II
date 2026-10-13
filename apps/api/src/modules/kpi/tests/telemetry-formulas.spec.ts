@@ -31,6 +31,7 @@ function emptyAggregates(): TelemetryAggregates {
     dependency: { success: 0, error: 0, timeout: 0 },
     latestHealth: null,
     health: { healthy: 0, unhealthy: 0, unknown: 0 },
+    instrumentationDisabledSamples: 0,
   };
 }
 
@@ -386,5 +387,87 @@ describe('telemetry-formulas — F7 calidad y valores no finitos', () => {
   it('assertFinite deja pasar 0 y valores finitos', () => {
     expect(() => assertFinite('operations_count', 0)).not.toThrow();
     expect(() => assertFinite('availability_rate', 66.66666666666667)).not.toThrow();
+  });
+});
+
+// Fix 1 (goal-fixes): instrumentación apagada ⇒ no publicar "observed 0".
+// TelemetryAggregates.instrumentationDisabledSamples: number = muestras de salud con measured_at en [start, end)
+// y reason 'INSTRUMENTATION_DISABLED'. Si > 0, los 6 KPI que dependen de eventos salen unavailable.
+describe('telemetry-formulas — instrumentación apagada (INSTRUMENTATION_DISABLED)', () => {
+  const EVENT_KPIS = [
+    'operations_count',
+    'error_rate',
+    'timeout_rate',
+    'latency_p95_ms',
+    'last_success_age_seconds',
+    'dependency_error_rate',
+  ] as const;
+
+  function withTraffic(disabledSamples: number): TelemetryAggregates {
+    return aggregates(a => {
+      a.http.success = 8;
+      a.http.timeout = 1;
+      a.http.serverError = 1;
+      a.http.p95DurationMs = 120;
+      a.lastSuccessFinishedAt = new Date(WINDOW.end.getTime() - 10 * MINUTE_MS);
+      a.dependency = { success: 3, error: 1, timeout: 0 };
+      a.latestHealth = {
+        outcome: 'healthy',
+        measuredAt: new Date(WINDOW.end.getTime() - 10 * MINUTE_MS),
+        scheduledFor: new Date(WINDOW.end.getTime() - 30 * MINUTE_MS),
+      };
+      a.health = { healthy: 3, unhealthy: 1, unknown: 0 };
+      a.instrumentationDisabledSamples = disabledSamples;
+    });
+  }
+
+  it('sin datos y una muestra INSTRUMENTATION_DISABLED ⇒ los 6 KPI de eventos unavailable (no observed 0)', () => {
+    const results = build(aggregates(a => (a.instrumentationDisabledSamples = 1)));
+
+    for (const kpiId of EVENT_KPIS) {
+      const result = pick(results, kpiId);
+      expectUnavailable(result, 'INSTRUMENTATION_DISABLED');
+      expect(result.sample_count).toBe(0);
+    }
+  });
+
+  it('con tráfico y alguna muestra INSTRUMENTATION_DISABLED ⇒ los 6 KPI de eventos igual unavailable', () => {
+    const results = build(withTraffic(2));
+
+    for (const kpiId of EVENT_KPIS) {
+      const result = pick(results, kpiId);
+      expectUnavailable(result, 'INSTRUMENTATION_DISABLED');
+      expect(result.sample_count).toBe(0);
+    }
+  });
+
+  it('health_status y availability_rate no cambian por la instrumentación apagada', () => {
+    const disabled = build(withTraffic(1));
+    const enabled = build(withTraffic(0));
+
+    expect(pick(disabled, 'health_status')).toEqual(pick(enabled, 'health_status'));
+    expect(pick(disabled, 'availability_rate')).toEqual(pick(enabled, 'availability_rate'));
+    expectObserved(pick(disabled, 'health_status'), 1, 1);
+    expectObserved(pick(disabled, 'availability_rate'), 75, 4);
+  });
+
+  it('con 0 muestras INSTRUMENTATION_DISABLED: operations_count 0 sigue observed y el resto como antes', () => {
+    const results = build(emptyAggregates());
+
+    expectObserved(pick(results, 'operations_count'), 0, 0);
+    expectUnavailable(pick(results, 'error_rate'), 'NO_OPERATIONS');
+    expectUnavailable(pick(results, 'last_success_age_seconds'), 'NO_SUCCESS_KNOWN');
+    expectUnavailable(pick(results, 'dependency_error_rate'), 'NO_DEPENDENCY_ATTEMPTS');
+  });
+
+  it('con 0 muestras INSTRUMENTATION_DISABLED y tráfico: los 6 KPI de eventos siguen observed', () => {
+    const results = build(withTraffic(0));
+
+    expectObserved(pick(results, 'operations_count'), 10, 10);
+    expectObserved(pick(results, 'error_rate'), 20, 10);
+    expectObserved(pick(results, 'timeout_rate'), 10, 10);
+    expectObserved(pick(results, 'latency_p95_ms'), 120, 10);
+    expectObserved(pick(results, 'last_success_age_seconds'), 600, 1);
+    expectObserved(pick(results, 'dependency_error_rate'), 25, 4);
   });
 });

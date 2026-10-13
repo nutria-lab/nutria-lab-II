@@ -1,15 +1,19 @@
 // NUT-85 — GET /health (design D10, §6.3). 200 tras SELECT 1; 503 si la DB falla o tarda más de 2 s.
-// Body exacto, Cache-Control: no-store, sin detalle del error ni credenciales. No depende de la config KPI.
+// Body exacto, Cache-Control: no-store, sin detalle del error ni credenciales. El resultado no depende de la
+// config KPI; sólo el header X-KPI-Instrumentation la refleja (D31): enabled|disabled, en 200, 503 y reutilizados.
 // Single-flight + caché corta (D28): requests concurrentes comparten una sonda y su resultado se reutiliza
 // HEALTH_RESULT_TTL_MS; cada request igual responde dentro de los 2 s desde que llegó.
 import { Controller, Get, Header, Inject, Logger, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { DB_HEALTH_PROBE } from '../kpi.tokens';
+import type { KpiConfig } from '../config/kpi-config';
+import { DB_HEALTH_PROBE, KPI_CONFIG } from '../kpi.tokens';
 import { HEALTH_DB_TIMEOUT_MS, HEALTH_RESULT_TTL_MS } from './db-health-probe';
 import type { DbHealthProbe } from './db-health-probe';
 
 const OK_BODY = { status: 'ok', database: 'ok' } as const;
 const ERROR_BODY = { status: 'error', database: 'error' } as const;
+
+export const KPI_INSTRUMENTATION_HEADER = 'X-KPI-Instrumentation';
 
 type ProbeResult = 'ok' | 'HEALTH_DB_ERROR' | 'HEALTH_DB_TIMEOUT';
 
@@ -17,12 +21,16 @@ type ProbeResult = 'ok' | 'HEALTH_DB_ERROR' | 'HEALTH_DB_TIMEOUT';
 export class HealthController {
   private readonly logger = new Logger('HealthController');
 
-  constructor(@Inject(DB_HEALTH_PROBE) private readonly probe: DbHealthProbe) {}
+  constructor(
+    @Inject(DB_HEALTH_PROBE) private readonly probe: DbHealthProbe,
+    @Inject(KPI_CONFIG) private readonly config: KpiConfig,
+  ) {}
 
   @Get()
   @Header('Cache-Control', 'no-store')
   async check(@Res({ passthrough: true }) res: Response) {
     const result = await this.pingWithDeadline();
+    res.setHeader(KPI_INSTRUMENTATION_HEADER, this.config.enabled ? 'enabled' : 'disabled');
     if (result === 'ok') return OK_BODY;
     this.logger.warn(result);
     res.status(503);

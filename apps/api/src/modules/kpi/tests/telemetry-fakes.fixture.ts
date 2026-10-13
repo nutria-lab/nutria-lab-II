@@ -31,6 +31,7 @@ export function sampleAggregates(windowEnd: Date): TelemetryAggregates {
       scheduledFor: new Date(windowEnd.getTime() - 30 * 60_000),
     },
     health: { healthy: 3, unhealthy: 1, unknown: 0 },
+    instrumentationDisabledSamples: 0,
   };
 }
 
