@@ -12,6 +12,7 @@ import {
   describeIfKpiDb,
   kpiTestDatabaseUrl,
 } from './kpi-test-db.fixture';
+import { createWideTimeoutKpiPrismaClient } from './kpi-writer-client.fixture';
 
 jest.setTimeout(60_000);
 
@@ -207,9 +208,15 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
   });
 
   it('B6: el cierre (UPDATE) con la tabla bloqueada también da KPI_WRITE_TIMEOUT (SET LOCAL 57014) acotado', async () => {
+    // D32: este caso fija que el límite lo corta Postgres (SET LOCAL ⇒ 57014). Con el query_timeout de 150 ms del
+    // pool de producción, bajo carga el temporizador del cliente puede ganar y el log sale sin SQLSTATE; por eso
+    // usa un cliente con query_timeout amplio. El otro caso B6 cubre el pool real (acepta cualquiera de las vías).
+    const wide = createWideTimeoutKpiPrismaClient(db);
+    const writer = new PrismaKpiEventWriter(wide.prisma);
     const id = randomUUID();
     const startedAt = new Date();
     await writer.insertHttpPending({ id, environment: 'dev', operation: 'UNRESOLVED', startedAt });
+    await writer.drain(1000);
 
     const locker = await db.createPool({ max: 1 }).connect();
     await locker.query('BEGIN');
@@ -229,11 +236,14 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
       expect(Date.now() - began).toBeLessThanOrEqual(KPI_WRITE_WAIT_MS + 50);
       await writer.drain(1000);
       expect(logLines.join('\n')).toContain('KPI_WRITE_TIMEOUT');
-      expect(logLines.join('\n')).toContain('57014');
+      expect(logLines.join('\n')).toMatch(/KPI_WRITE_TIMEOUT op=close_http sqlstate=57014$/m);
     } finally {
       await locker.query('ROLLBACK');
       locker.release();
     }
+    await writer.drain(1000);
+    await wide.prisma.$disconnect().catch(() => undefined);
+    await wide.pool.end().catch(() => undefined);
     const [row] = await rowsFor(id);
     expect(row.outcome).toBe('pending');
   });

@@ -3,9 +3,11 @@
 // Contrato fijado: insertDependencyPending INSERT 'pending'; closeDependency UPDATE condicional (outcome = 'pending')
 // del mismo id; UNIQUE (environment, operation_id, dependency, attempt) ⇒ el 2º insert falla, se loguea sin
 // mensaje y nunca rechaza.
+// D32: el escritor de esta suite usa un cliente con query_timeout amplio (kpi-writer-client.fixture) y se drena
+// antes de cada lectura, para que el resultado dependa de Postgres y no de la carga del runner. El query_timeout
+// de producción (150 ms) está fijado en el unit test de createKpiPrismaClient.
 import { randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
-import { createKpiPrismaClient } from '../db/kpi-prisma';
 import type { KpiPrismaHandle } from '../db/kpi-prisma';
 import { PrismaKpiEventWriter } from '../events/kpi-event-writer';
 import {
@@ -13,8 +15,8 @@ import {
   applyMigrations,
   createDisposableSchema,
   describeIfKpiDb,
-  kpiTestDatabaseUrl,
 } from './kpi-test-db.fixture';
+import { createWideTimeoutKpiPrismaClient } from './kpi-writer-client.fixture';
 
 jest.setTimeout(60_000);
 
@@ -27,7 +29,7 @@ describeIfKpiDb('PrismaKpiEventWriter — kpi_dependency_event (integración Pos
   beforeAll(async () => {
     db = await createDisposableSchema();
     await applyMigrations(db.client);
-    handle = createKpiPrismaClient(kpiTestDatabaseUrl() as string, { options: db.poolConfig().options });
+    handle = createWideTimeoutKpiPrismaClient(db);
     writer = new PrismaKpiEventWriter(handle.prisma);
   });
 
@@ -62,6 +64,7 @@ describeIfKpiDb('PrismaKpiEventWriter — kpi_dependency_event (integración Pos
     const startedAt = new Date();
 
     await writer.insertDependencyPending({ id, environment: 'dev', operationId, dependency: 'gemini', attempt: 1, startedAt });
+    await writer.drain(1000);
     expect(await rowsOf(operationId)).toEqual([
       expect.objectContaining({ id, environment: 'dev', dependency: 'gemini', attempt: 1, outcome: 'pending', finished_at: null, duration_ms: null }),
     ]);
@@ -83,6 +86,8 @@ describeIfKpiDb('PrismaKpiEventWriter — kpi_dependency_event (integración Pos
     const base = { environment: 'dev' as const, operationId, dependency: 'unsplash_search' as const, attempt: 1, startedAt: new Date() };
 
     await writer.insertDependencyPending({ ...base, id: randomUUID() });
+    await writer.drain(1000);
+    expect(await rowsOf(operationId)).toHaveLength(1);
     await expect(writer.insertDependencyPending({ ...base, id: randomUUID() })).resolves.toBeUndefined();
     await writer.drain(1000);
 
@@ -91,6 +96,7 @@ describeIfKpiDb('PrismaKpiEventWriter — kpi_dependency_event (integración Pos
     expect(logLines.join('\n')).not.toMatch(/duplicate key|postgresql:/i);
 
     await writer.insertDependencyPending({ ...base, id: randomUUID(), attempt: 2 });
+    await writer.drain(1000);
     expect((await rowsOf(operationId)).map(r => r.attempt)).toEqual([1, 2]);
   });
 });

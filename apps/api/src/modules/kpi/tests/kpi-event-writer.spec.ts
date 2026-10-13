@@ -390,6 +390,67 @@ describe('PrismaKpiEventWriter (unit)', () => {
     expect(drained).toBe(true);
   });
 
+  describe('fallos sin SQLSTATE: código técnico estable, nunca el mensaje (D32)', () => {
+    const cases: Array<[string, () => Error, RegExp, string]> = [
+      [
+        'query_timeout del cliente pg (Error("Query read timeout"), sin code)',
+        () => new Error('Query read timeout'),
+        /^KPI_WRITE_TIMEOUT op=insert_dependency sqlstate=none code=CLIENT_QUERY_TIMEOUT$/m,
+        'Query read timeout',
+      ],
+      [
+        'connect timeout del pool pg',
+        () => new Error('timeout exceeded when trying to connect'),
+        /^KPI_WRITE_FAILED op=insert_dependency sqlstate=none code=CLIENT_CONNECT_TIMEOUT$/m,
+        'timeout exceeded',
+      ],
+      [
+        'error Prisma P2028 sin SQLSTATE',
+        () =>
+          Object.assign(new Error('Transaction API error: secret-tx-detail'), {
+            code: 'P2028',
+            clientVersion: '7.0.0',
+          }),
+        /^KPI_WRITE_FAILED op=insert_dependency sqlstate=none code=P2028$/m,
+        'secret-tx-detail',
+      ],
+    ];
+
+    it.each(cases)('%s', async (_name, makeError, expected, secret) => {
+      const { client } = fakeClient(() => Promise.reject(makeError()));
+      const writer = new PrismaKpiEventWriter(client);
+
+      await expect(writer.insertDependencyPending(DEP_PENDING)).resolves.toBeUndefined();
+
+      expect(logs.text()).toMatch(expected);
+      expect(logs.text()).not.toContain(secret);
+    });
+
+    it('P2010 con driverAdapterError.cause.originalCode 23505 ⇒ sqlstate=23505 y sin code=', async () => {
+      const error = Object.assign(new Error('Raw query failed: duplicate key value violates unique constraint'), {
+        code: 'P2010',
+        clientVersion: '7.0.0',
+        meta: {
+          driverAdapterError: Object.assign(new Error('UniqueConstraintViolation'), {
+            cause: {
+              kind: 'UniqueConstraintViolation',
+              originalCode: '23505',
+              originalMessage: 'duplicate key value violates unique constraint secret-idx',
+            },
+          }),
+        },
+      });
+      const { client } = fakeClient(() => Promise.reject(error));
+      const writer = new PrismaKpiEventWriter(client);
+
+      await expect(writer.insertDependencyPending(DEP_PENDING)).resolves.toBeUndefined();
+
+      expect(logs.text()).toMatch(/^KPI_WRITE_FAILED op=insert_dependency sqlstate=23505$/m);
+      expect(logs.text()).not.toContain('code=');
+      expect(logs.text()).not.toMatch(/duplicate key|secret-idx|Raw query failed/);
+    });
+  });
+
   it('drain sin escrituras en vuelo resuelve de inmediato', async () => {
     const { client } = fakeClient(async () => 1);
     const writer = new PrismaKpiEventWriter(client);

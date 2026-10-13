@@ -98,10 +98,33 @@ export function sqlStateOf(error: unknown): string | null {
   return fallback;
 }
 
+const PRISMA_CODE_RE = /^P\d{4}$/;
+export const CLIENT_QUERY_TIMEOUT_CODE = 'CLIENT_QUERY_TIMEOUT';
+export const CLIENT_CONNECT_TIMEOUT_CODE = 'CLIENT_CONNECT_TIMEOUT';
+
+/**
+ * Código técnico de un fallo sin SQLSTATE (D32): el `query_timeout`/connect timeout del cliente pg llega como
+ * `Error` sin `code` (Prisma no lo envuelve), así que se reconoce por su texto fijo; el mensaje nunca se loguea.
+ */
+export function technicalCodeOf(error: unknown): string | null {
+  if (error === null || typeof error !== 'object') return null;
+  const record = error as Record<string, unknown>;
+  if (typeof record.code === 'string' && PRISMA_CODE_RE.test(record.code)) return record.code;
+  const message = typeof record.message === 'string' ? record.message : '';
+  if (message === 'Query read timeout') return CLIENT_QUERY_TIMEOUT_CODE;
+  if (/timeout exceeded when trying to connect|terminated due to connection timeout/i.test(message)) {
+    return CLIENT_CONNECT_TIMEOUT_CODE;
+  }
+  return null;
+}
+
 function logWriteFailure(operation: string, error: unknown): void {
   const sqlState = sqlStateOf(error);
-  const code = sqlState === STATEMENT_TIMEOUT_SQLSTATE ? 'KPI_WRITE_TIMEOUT' : 'KPI_WRITE_FAILED';
-  logger.warn(`${code} op=${operation} sqlstate=${sqlState ?? 'none'}`);
+  const technicalCode = sqlState === null ? technicalCodeOf(error) : null;
+  const isTimeout = sqlState === STATEMENT_TIMEOUT_SQLSTATE || technicalCode === CLIENT_QUERY_TIMEOUT_CODE;
+  const code = isTimeout ? 'KPI_WRITE_TIMEOUT' : 'KPI_WRITE_FAILED';
+  const suffix = technicalCode ? ` code=${technicalCode}` : '';
+  logger.warn(`${code} op=${operation} sqlstate=${sqlState ?? 'none'}${suffix}`);
 }
 
 /**
