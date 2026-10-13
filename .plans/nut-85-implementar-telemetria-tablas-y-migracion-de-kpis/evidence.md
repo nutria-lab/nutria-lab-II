@@ -27,6 +27,15 @@ exit: 0
 ```
 Las 7 suites salteadas son las de integración: sin `KPI_TEST_DATABASE_URL` hacen skip limpio.
 
+Suite completa con integración incluida (sesión de cierre, 2026-10-12):
+```
+$ KPI_TEST_DATABASE_URL=postgresql://kpitest:***@localhost:55432/kpitest   pnpm --filter api test -- --runInBand
+Test Suites: 81 passed, 81 total
+Tests:       1566 passed, 1566 total
+Time:        86.1 s
+exit: 0
+```
+
 ```
 $ KPI_TEST_DATABASE_URL=postgresql://kpitest:***@localhost:55432/kpitest \
   pnpm --filter api exec jest src/modules/kpi/tests --runInBand

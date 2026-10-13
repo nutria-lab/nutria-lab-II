@@ -60,7 +60,7 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 ## J. Límites
 - [x] J1 ★ No se modificaron package.json ni los archivos de Lara (salvo un kpi-contract.ts mínimo con los tipos textuales del ticket, si no existía). → `git diff --stat origin/main...HEAD` sin package.json; `kpi-contract.ts` mínimo (no existía); ver `evidence.md` › J1
 - [x] J2 ★ Ninguna tabla kpi_ guarda PII, URLs, claves ni datos de dominio. → `tests/kpi-schema.spec.ts` (PII/URL/claves), `tests/http-outcome.spec.ts` (B4), `tests/dependency-instrumentation.spec.ts` (sin secretos)
-- [x] J3 ★ `pnpm --filter api test`, `pnpm --filter api lint` y `pnpm --filter api build` terminan con exit 0 (salida en evidence.md). → `evidence.md` › Comandos finales (test 1369 passed, lint y build exit 0, 2026-10-12)
+- [x] J3 ★ `pnpm --filter api test`, `pnpm --filter api lint` y `pnpm --filter api build` terminan con exit 0 (salida en evidence.md). → `evidence.md` › Comandos finales (test 1566/1566 con integración y 1369 sin DB, lint y build exit 0, 2026-10-12)
 
 ## Pendientes humanos esperados (no bloquean el /goal)
 - Aplicar la migración en dev/prod con aprobación del TL.
