@@ -105,3 +105,55 @@ Corregido en `f02a765` con tester → implementer:
 Riesgos aceptados y lo que necesita a una persona: [pending-human.md](pending-human.md).
 
 **Veredicto:** no queda ningún hallazgo blocker ni critical.
+
+## Correcciones post-revisión (goal-fixes.md, 2026-10-13)
+
+### Commits
+
+| Commit | Qué |
+|---|---|
+| `c361275` | **Fix 1 (D31).** `/health` agrega `X-KPI-Instrumentation: enabled\|disabled`. El CLI guarda la muestra con `reason = INSTRUMENTATION_DISABLED` cuando el header llega `disabled`. `loadAggregates` cuenta esas muestras, y si hay alguna en la ventana los 6 KPIs de eventos salen `unavailable`/`INSTRUMENTATION_DISABLED`. No hay cambios de esquema. |
+| `040d47e` | **Fix 2 (D32).** `KPI_CONNECT_TIMEOUT_MS = 1500` para `connectionTimeoutMillis`; `query_timeout` sigue en 150 y `SET LOCAL` en 100 ms. La espera de 250 ms del negocio no cambia. |
+| `85bb11c` | **Fix 2.** `kpi-cold-start.spec.ts` ahora modela un pool de 2 conexiones independientes. Se verificó por mutación que falla si se quita el encadenamiento cierre→insert, y que pasa con el código real. |
+| `923a4e1` | **Fix 2 (Hallazgo D32).** Durante la suite completa falló una vez `dependency-event.integration.spec.ts` con `sqlstate=none`. Causa: el `query_timeout` del cliente (150 ms) puede vencer bajo carga y lanza `Error('Query read timeout')` sin SQLSTATE (se reprodujo con `query_timeout: 1`). Cambios: `technicalCodeOf` agrega `code=CLIENT_QUERY_TIMEOUT\|CLIENT_CONNECT_TIMEOUT\|P\d{4}` sin loguear el mensaje, y los tests de integración UNIQUE y B6-cierre usan un cliente con `query_timeout` amplio (el valor de 150 ms de producción sigue fijado en el unit test del pool). |
+
+### Tests nuevos o ajustados (rutas bajo `apps/api/src/modules/kpi/tests/`)
+
+- **D1:** `health.controller.spec.ts` y `health-single-flight.spec.ts`. Header en 200/503/caché; body y status sin cambios.
+- **F7:**
+  - `telemetry-formulas.spec.ts`: con `INSTRUMENTATION_DISABLED`, los 6 KPIs de eventos salen `unavailable`; con 0 muestras así, F1–F7 intactos.
+  - `telemetry-aggregates.integration.spec.ts`: `instrumentationDisabledSamples` (bordes, ambiente, reason).
+  - `telemetry-cli.spec.ts`: header `disabled`/`enabled`/ausente/desconocido.
+- **B6:**
+  - `kpi-event-writer.spec.ts`: `KPI_CONNECT_TIMEOUT_MS = 1500`, `query_timeout = 150`, y los códigos técnicos sin SQLSTATE.
+  - `kpi-cold-start.spec.ts`: arranque en frío.
+  - `kpi-event-writer.integration.spec.ts` › B6 cierre `sqlstate=57014`.
+  - `dependency-event.integration.spec.ts` › UNIQUE `sqlstate=23505`.
+  - Fixture nueva: `kpi-writer-client.fixture.ts`.
+
+### Comandos finales (una corrida cada uno, `NODE_OPTIONS=--max-old-space-size=2048`, Postgres desechable `nutria-kpi-test-pg`)
+
+```
+$ KPI_TEST_DATABASE_URL=postgresql://kpitest:***@localhost:55432/kpitest pnpm --filter api test -- --runInBand
+Test Suites: 82 passed, 82 total
+Tests:       1604 passed, 1604 total
+Time:        52.87 s
+exit: 0
+
+$ pnpm --filter api lint     # prisma generate + tsc --noEmit
+exit: 0
+
+$ pnpm --filter api build    # prisma generate + nest build
+exit: 0
+```
+
+La corrida anterior de la suite completa (antes de `923a4e1`) dio 1 fallo intermitente en 1600 (el `sqlstate=none` de arriba). Corriendo esa suite sola 3 veces, pasó las 3. Se corrigió la causa en vez de reintentar.
+
+### Revisión
+
+| Reviewer | Fix 1 + Fix 2 (`c361275`, `040d47e`) | Re-revisión (`85bb11c`, `923a4e1`) |
+|---|---|---|
+| Confiabilidad | 0 blocker/critical. 1 major: el test de arranque en frío no detectaba la falta de encadenamiento → corregido en `85bb11c`. 3 minor y 2 nit. | 0 blocker/critical; 1 minor, 3 nit |
+| Resiliencia | 0 blocker/critical; 3 minor, 3 nit | 0 blocker/critical; 2 minor, 2 nit |
+
+Los minor y nit pendientes están en `pending-human.md`. **Veredicto:** no queda ningún blocker ni critical.
