@@ -19,8 +19,8 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] B8 ★ Existe un interruptor para desactivar la instrumentación (rollback operativo) y, desactivada, la app funciona sin tocar tablas. → `KPI_INSTRUMENTATION_ENABLED`; `tests/kpi-config.spec.ts` › interruptor; `tests/kpi-http.middleware.spec.ts` › instrumentación deshabilitada (B8)
 
 ## C. Dependencias externas
-- [ ] C1 ★ Wrapper aplicado donde se ejecuta la llamada: Gemini (`generateText`) y Unsplash (search y trackDownload), sin instrumentar también la capa superior.
-- [ ] C2 ★ Cada intento genera su propia fila con attempt incremental (incluye las 2 llamadas de la regeneración); outcome success/error/timeout; sin URL ni claves.
+- [x] C1 ★ Wrapper aplicado donde se ejecuta la llamada: Gemini (`generateText`) y Unsplash (search y trackDownload), sin instrumentar también la capa superior. → `dependencies/dependency-instrumentation.ts`, `gemini.service.ts` (solo generateContent), `unsplash.service.ts` (searchExchange, trackDownload); `tests/gemini-instrumentation.spec.ts`, `tests/unsplash-instrumentation.spec.ts`, `tests/regeneration-dependency-attempts.spec.ts` › ni composer ni regeneración llaman al wrapper
+- [x] C2 ★ Cada intento genera su propia fila con attempt incremental (incluye las 2 llamadas de la regeneración); outcome success/error/timeout; sin URL ni claves. → `tests/dependency-instrumentation.spec.ts` (attempts, concurrencia, sin secretos); `tests/regeneration-dependency-attempts.spec.ts` › attempts 1 y 2; `tests/dependency-event.integration.spec.ts`
 
 ## D. GET /health
 - [x] D1 ★ 200 `{"status":"ok","database":"ok"}` después de `SELECT 1`; 503 `{"status":"error","database":"error"}` si la DB falla o tarda más de 2s. No invoca IA ni expone excepciones o credenciales. → `health/`; `tests/health.controller.spec.ts`; `tests/health.integration.spec.ts`

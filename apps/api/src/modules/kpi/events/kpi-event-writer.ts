@@ -7,6 +7,7 @@ import { Logger } from '@nestjs/common';
 import type { PrismaClient } from '../../../generated/prisma/client';
 import type { KpiEnvironment } from '../kpi-contract';
 import type { HttpTerminalOutcome } from '../http/http-outcome';
+import type { DependencyTerminalOutcome, KpiDependency } from '../dependencies/dependency-instrumentation';
 
 export const KPI_WRITE_WAIT_MS = 250;
 export const KPI_SQL_STATEMENT_TIMEOUT_MS = 100;
@@ -28,9 +29,27 @@ export interface HttpCloseEvent {
   durationMs: number;
 }
 
+export interface DependencyPendingEvent {
+  id: string;
+  environment: KpiEnvironment;
+  operationId: string;
+  dependency: KpiDependency;
+  attempt: number;
+  startedAt: Date;
+}
+
+export interface DependencyCloseEvent {
+  id: string;
+  outcome: DependencyTerminalOutcome;
+  finishedAt: Date;
+  durationMs: number;
+}
+
 export interface KpiEventWriter {
   insertHttpPending(event: HttpPendingEvent): Promise<void>;
   closeHttp(event: HttpCloseEvent): Promise<void>;
+  insertDependencyPending(event: DependencyPendingEvent): Promise<void>;
+  closeDependency(event: DependencyCloseEvent): Promise<void>;
   /** Espera (acotado) a que terminen las escrituras en vuelo. Nunca rechaza. */
   drain(timeoutMs?: number): Promise<void>;
   inFlightCount(): number;
@@ -122,18 +141,39 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
   ) {}
 
   insertHttpPending(event: HttpPendingEvent): Promise<void> {
-    const settled = this.track('insert_http', () =>
+    return this.insertPending(event.id, 'insert_http', () =>
       Promise.resolve(
         this.client.$executeRaw`
           INSERT INTO kpi_http_event (id, environment, operation, started_at, outcome)
           VALUES (${event.id}::uuid, ${event.environment}, ${event.operation}, ${event.startedAt}::timestamptz, 'pending')`,
       ),
     );
-    this.pendingInserts.set(event.id, settled);
-    void settled.then(() => {
-      if (this.pendingInserts.get(event.id) === settled) this.pendingInserts.delete(event.id);
+  }
+
+  insertDependencyPending(event: DependencyPendingEvent): Promise<void> {
+    return this.insertPending(event.id, 'insert_dependency', () =>
+      Promise.resolve(
+        this.client.$executeRaw`
+          INSERT INTO kpi_dependency_event (id, environment, operation_id, dependency, attempt, started_at, outcome)
+          VALUES (${event.id}::uuid, ${event.environment}, ${event.operationId}::uuid, ${event.dependency},
+                  ${event.attempt}::integer, ${event.startedAt}::timestamptz, 'pending')`,
+      ),
+    );
+  }
+
+  closeDependency(event: DependencyCloseEvent): Promise<void> {
+    const priorInsert = this.pendingInserts.get(event.id);
+    const settled = this.track('close_dependency', async () => {
+      if (priorInsert) await priorInsert;
+      const updated = await this.client.$executeRaw`
+        UPDATE kpi_dependency_event
+           SET outcome = ${event.outcome},
+               finished_at = ${event.finishedAt}::timestamptz,
+               duration_ms = ${event.durationMs}::double precision
+         WHERE id = ${event.id}::uuid AND outcome = 'pending'`;
+      if (updated === 0) logger.debug('KPI_CLOSE_NOT_PENDING op=close_dependency');
     });
-    return awaitWriteBounded(() => settled, 'insert_http');
+    return awaitWriteBounded(() => settled, 'close_dependency');
   }
 
   closeHttp(event: HttpCloseEvent): Promise<void> {
@@ -176,6 +216,16 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     await this.onDispose?.().catch(() => undefined);
   }
 
+  /** INSERT pending registrado por id, para que el cierre del mismo id espere al insert. */
+  private insertPending(id: string, operation: string, run: () => Promise<unknown>): Promise<void> {
+    const settled = this.track(operation, run);
+    this.pendingInserts.set(id, settled);
+    void settled.then(() => {
+      if (this.pendingInserts.get(id) === settled) this.pendingInserts.delete(id);
+    });
+    return awaitWriteBounded(() => settled, operation);
+  }
+
   /** Ejecuta la query y la registra en vuelo hasta que termina; la promesa resultante nunca rechaza. */
   private track(operation: string, run: () => Promise<unknown>): Promise<void> {
     let settled: Promise<void>;
@@ -197,6 +247,8 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
 export class NoopKpiEventWriter implements KpiEventWriter {
   async insertHttpPending(_event: HttpPendingEvent): Promise<void> {}
   async closeHttp(_event: HttpCloseEvent): Promise<void> {}
+  async insertDependencyPending(_event: DependencyPendingEvent): Promise<void> {}
+  async closeDependency(_event: DependencyCloseEvent): Promise<void> {}
   async drain(_timeoutMs?: number): Promise<void> {}
   inFlightCount(): number {
     return 0;
