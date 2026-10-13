@@ -53,9 +53,9 @@ Fuente de verdad: `ticket.md` de esta carpeta. Cada ítem se marca `[x]` SOLO co
 - [x] H6 ★ Purga: no hace nada antes de 2027-01-01; desde ahí borra el trimestre cerrado de las 4 tablas crudas/snapshots en lotes de 1000; nunca toca kpi_publication ni el día en preparación. → `cli/purge-policy.ts`; `src/modules/kpi/tests/purge-policy.spec.ts`; `src/modules/kpi/tests/telemetry-cli.integration.spec.ts` › H6
 
 ## I. Workflow `.github/workflows/kpi-telemetry.yml`
-- [ ] I1 ★ cron `*/30 * * * *`; workflow_dispatch con environment (dev/prod), date opcional y mode (sample/finalize); el schedule siempre usa prod; usa GitHub Environments.
-- [ ] I2 ★ concurrency por ambiente con cancel-in-progress=false; permissions contents:read; timeout-minutes 10; checkout de la rama default; Node 24; pnpm --frozen-lockfile; prisma generate antes del script; sin migrate ni seed.
-- [ ] I3 ★ Sube el artifact de diagnóstico con retention-days 90; usa solo los secrets/variables del contrato. Verificado con un test que parsea el YAML o con actionlint.
+- [x] I1 ★ cron `*/30 * * * *`; workflow_dispatch con environment (dev/prod), date opcional y mode (sample/finalize); el schedule siempre usa prod; usa GitHub Environments. → `.github/workflows/kpi-telemetry.yml`; `src/modules/kpi/tests/kpi-telemetry-workflow.spec.ts` › I1
+- [x] I2 ★ concurrency por ambiente con cancel-in-progress=false; permissions contents:read; timeout-minutes 10; checkout de la rama default; Node 24; pnpm --frozen-lockfile; prisma generate antes del script; sin migrate ni seed. → `src/modules/kpi/tests/kpi-telemetry-workflow.spec.ts` › I2
+- [x] I3 ★ Sube el artifact de diagnóstico con retention-days 90; usa solo los secrets/variables del contrato. Verificado con un test que parsea el YAML o con actionlint. → `src/modules/kpi/tests/kpi-telemetry-workflow.spec.ts` › I3 (test que parsea el YAML como texto; actionlint no disponible localmente)
 
 ## J. Límites
 - [ ] J1 ★ No se modificaron package.json ni los archivos de Lara (salvo un kpi-contract.ts mínimo con los tipos textuales del ticket, si no existía).
