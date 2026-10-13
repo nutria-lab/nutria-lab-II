@@ -312,6 +312,6 @@ export function useRecipeSearch({
     clearFilters,
     loadMore,
     retry,
-    refetch: retry,
+    refetch: () => fetchRecipes(1),
   };
 }

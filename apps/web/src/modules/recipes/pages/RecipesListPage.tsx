@@ -9,6 +9,7 @@ import { RecipeForm } from '../components/RecipeForm';
 import { useIngredients } from '../hooks/useIngredients';
 import { useRecipes } from '../hooks/useRecipes';
 import { useRecipeSearch, type UseRecipeSearchResult } from '../hooks/useRecipeSearch';
+import { clearPersistedRecipeSearch } from '../hooks/useRecipeSearch';
 
 // NUT-20 (octava iteración) — adaptación tablet/desktop (design.md sección 9.4/9.5): en
 // escritorio, esta pantalla nunca se queda mostrando el listado "puro" si ya hay recetas
@@ -165,6 +166,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
           catalogStatus={catalogStatus}
           onSuccess={() => {
             setModalKind(null);
+            clearPersistedRecipeSearch();
             refetch();
             search?.refetch();
           }}

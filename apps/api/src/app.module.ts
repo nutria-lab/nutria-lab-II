@@ -6,7 +6,7 @@ import { PlansModule } from './modules/plans/plans.module';
 import { NutritionProfileModule } from '@/modules/nutrition-profile/nutrition-profile.module';
 import { RecipeModule } from '@/modules/recipe/recipe.module';
 import { IngredientModule } from '@/modules/ingredient/ingredient.module';
-import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-generation.module';
+import { RecipeGenerationModule } from './modules/recipe-generation/recipe-generation.module';
 
 @Module({
   imports: [

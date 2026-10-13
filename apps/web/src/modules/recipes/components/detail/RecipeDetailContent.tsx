@@ -1,5 +1,6 @@
 import type { Recipe } from '../../../../services/recipeService';
 import { RECIPE_CATEGORY_LABELS } from '../../labels';
+import { RecipeImage } from '../RecipeImage';
 
 // "150 g"; sin cantidad ("al gusto", NUT-74) sólo la unidad.
 function formatIngredientAmount(item: Recipe['ingredients'][number]): string {
@@ -14,6 +15,7 @@ export function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
 
   return (
     <div className="relative h-48 w-full overflow-hidden rounded-2xl bg-surface-container">
+      <RecipeImage image={recipe.image} title={recipe.title} className="absolute inset-0 h-full w-full" />
       <div
         aria-hidden="true"
         className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-on-surface/50 to-transparent"
@@ -138,9 +140,7 @@ export function DesktopRecipeHero({ recipe }: { recipe: Recipe }) {
   return (
     <div className="grid grid-cols-12 gap-5 items-center">
       <div className="col-span-5 h-44 rounded-xl overflow-hidden bg-surface-container relative shadow-xs flex items-center justify-center">
-        <span aria-hidden="true" className="material-symbols-outlined text-5xl text-outline-variant/60">
-          restaurant
-        </span>
+        <RecipeImage image={recipe.image} title={recipe.title} className="absolute inset-0 h-full w-full" />
         <span className="absolute bottom-2 left-2 rounded-md bg-brand-green-dark/90 px-2 py-0.5 text-[10px] font-bold text-white backdrop-blur-xs">
           {primaryCategory}
         </span>
