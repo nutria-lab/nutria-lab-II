@@ -10,9 +10,10 @@
 //   que aplica `SET LOCAL statement_timeout = '100ms'` (o set_config('statement_timeout','100ms', true)) ANTES de la
 //   escritura y en la MISMA transacción (corrección post-review: nada de parámetros de arranque, PgBouncer de Neon).
 // - createKpiPrismaClient(url, overrides) arma un Pool propio: max 2, SIN statement_timeout de arranque,
-//   query_timeout ≤ 150, connectionTimeoutMillis ≤ 150, sin conectar al construirse.
+//   query_timeout = 150, connectionTimeoutMillis = KPI_CONNECT_TIMEOUT_MS (1500, Fix 2: arranque en frío), sin conectar
+//   al construirse. La espera acotada del negocio sigue en KPI_WRITE_WAIT_MS (250) y el SET LOCAL en 100 ms.
 import { Logger } from '@nestjs/common';
-import { createKpiPrismaClient } from '../db/kpi-prisma';
+import { KPI_CONNECT_TIMEOUT_MS, createKpiPrismaClient } from '../db/kpi-prisma';
 import {
   KPI_DRAIN_TIMEOUT_MS,
   KPI_SQL_STATEMENT_TIMEOUT_MS,
@@ -409,7 +410,14 @@ describe('NoopKpiEventWriter', () => {
 });
 
 describe('createKpiPrismaClient (pool propio, D3)', () => {
-  it('pool dedicado chico SIN statement_timeout de arranque (PgBouncer) y timeouts de cliente ≤ 150 ms, sin conectar', async () => {
+  it('KPI_CONNECT_TIMEOUT_MS = 1500 (Fix 2): separado del timeout de consulta', () => {
+    expect(KPI_CONNECT_TIMEOUT_MS).toBe(1500);
+    // La protección del negocio no cambia: la espera acotada y el límite SQL siguen iguales.
+    expect(KPI_WRITE_WAIT_MS).toBe(250);
+    expect(KPI_SQL_STATEMENT_TIMEOUT_MS).toBe(100);
+  });
+
+  it('pool dedicado chico SIN statement_timeout de arranque (PgBouncer), query_timeout 150 y connect 1500, sin conectar', async () => {
     const handle = createKpiPrismaClient('postgresql://kpi:kpi@127.0.0.1:1/kpi', {
       options: '-c search_path=kpi_x,public',
     });
@@ -421,9 +429,10 @@ describe('createKpiPrismaClient (pool propio, D3)', () => {
       expect(options.statement_timeout).toBeUndefined();
       expect(String(options.options ?? '')).not.toMatch(/statement_timeout/i);
       expect(String(options.connectionString ?? '')).not.toMatch(/statement_timeout/i);
-      expect(options.query_timeout).toBeLessThanOrEqual(150);
-      expect(options.connectionTimeoutMillis).toBeLessThanOrEqual(150);
-      expect(options.connectionTimeoutMillis).toBeGreaterThan(0);
+      expect(options.query_timeout).toBe(150);
+      // Fix 2: una conexión nueva (arranque en frío Vercel+Neon) suele tardar más de 150 ms.
+      expect(options.connectionTimeoutMillis).toBe(KPI_CONNECT_TIMEOUT_MS);
+      expect(options.connectionTimeoutMillis).toBe(1500);
       expect(options.options).toBe('-c search_path=kpi_x,public');
       expect(handle.pool.totalCount).toBe(0);
       expect(typeof handle.prisma.$executeRaw).toBe('function');

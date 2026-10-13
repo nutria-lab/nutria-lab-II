@@ -9,6 +9,9 @@ import { PrismaClient } from '../../../generated/prisma/client';
 
 export const KPI_POOL_MAX = 2;
 export const KPI_CLIENT_TIMEOUT_MS = 150;
+// Conexión separada de la consulta (D32): abrir una conexión en frío suele tardar más de 150 ms. El negocio no
+// espera esto: lo protege la espera acotada del middleware; la escritura termina en vuelo.
+export const KPI_CONNECT_TIMEOUT_MS = 1500;
 
 export interface KpiPrismaHandle {
   prisma: PrismaClient;
@@ -28,7 +31,7 @@ export function createKpiPrismaClient(connectionString: string, overrides: KpiPo
     connectionString,
     max: KPI_POOL_MAX,
     query_timeout: KPI_CLIENT_TIMEOUT_MS,
-    connectionTimeoutMillis: KPI_CLIENT_TIMEOUT_MS,
+    connectionTimeoutMillis: KPI_CONNECT_TIMEOUT_MS,
   });
   // Un cliente inactivo que pierde la conexión no debe tirar el proceso; sólo código técnico.
   pool.on('error', (error: Error & { code?: unknown }) => {
