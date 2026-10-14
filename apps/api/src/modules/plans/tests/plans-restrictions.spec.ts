@@ -1,10 +1,9 @@
 import 'reflect-metadata';
-import { BadRequestException } from '@nestjs/common';
 import { PlansService } from '../plans.service';
 import { RecipeImagesService } from '../recipe-images.service';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 
-// Manual weekly plans retain exclusion enforcement during the initial AI experiment.
+// Dietary preferences are sent to the model; server checks retain only plan structure.
 const DAYS = [
   DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY,
   DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY,
@@ -46,7 +45,7 @@ function setup(excludedIngredients: string[]) {
   return { repository, service: new PlansService(repository, new RecipeImagesService(repository, unsplash), {} as any, {} as any) };
 }
 
-describe('Plan semanal - restricciones con ingredientes en español', () => {
+describe('Plan semanal - preferencias delegadas al modelo', () => {
   it('bypasses the persistence exclusion gate for an initial AI run without mutating the profile', async () => {
     const { repository, service } = setup(['DAIRY']);
     const user = await repository.getUserWithProfile();
@@ -85,19 +84,18 @@ describe('Plan semanal - restricciones con ingredientes en español', () => {
     ['GLUTEN', 'Pan de trigo', 'Trigo'],
     ['SHELLFISH', 'Arroz con camarones', 'Arroz'],
     ['SOY', 'Salteado con salsa de soja', 'Verduras'],
-  ])('rechaza el plan si un perfil con %s recibe "%s"', async (restriction, title, ingredient) => {
+  ])('accepts a plan containing %s ingredient "%s"', async (restriction, title, ingredient) => {
     const { repository, service } = setup([restriction]);
 
-    await expect(service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days: week(title, ingredient) } as any))
-      .rejects.toBeInstanceOf(BadRequestException);
-    expect(repository.createPlanTransaction).not.toHaveBeenCalled();
+    await service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days: week(title, ingredient) } as any);
+    expect(repository.createPlanTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it('rechaza un alérgeno que sólo aparece en los ingredientes', async () => {
-    const { service } = setup(['NUTS']);
+  it('accepts an excluded ingredient even when it appears only in the ingredient list', async () => {
+    const { repository, service } = setup(['NUTS']);
 
-    await expect(service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days: week('Ensalada verde', 'Almendras tostadas') } as any))
-      .rejects.toThrow('contains excluded ingredient/concept: nuts');
+    await service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days: week('Ensalada verde', 'Almendras tostadas') } as any);
+    expect(repository.createPlanTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('acepta un plan sin alérgenos del perfil', async () => {
@@ -108,12 +106,12 @@ describe('Plan semanal - restricciones con ingredientes en español', () => {
     expect(repository.createPlanTransaction).toHaveBeenCalledTimes(1);
   });
 
-  it('revisa también el título de la receta y los pasos (mismos textos que el validador)', async () => {
-    const { service } = setup(['NUTS']);
+  it('does not inspect recipe titles or instructions for excluded ingredients', async () => {
+    const { repository, service } = setup(['NUTS']);
     const days = week('Ensalada verde');
     days[0].meals[0].recipe.instructions = ['Mezclar', 'Agregar maní picado'];
 
-    await expect(service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days } as any))
-      .rejects.toThrow('contains excluded ingredient/concept: nuts');
+    await service.validateAndPersistPlan('user-1', { weekStart: '2026-09-14', days } as any);
+    expect(repository.createPlanTransaction).toHaveBeenCalledTimes(1);
   });
 });

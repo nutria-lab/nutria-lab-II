@@ -11,7 +11,7 @@ vi.mock('../../../services/mealPlanService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../services/mealPlanService')>();
   return {
     ...actual,
-    mealPlanService: { getCurrentMealPlan: vi.fn(), generateMealPlan: vi.fn() },
+    mealPlanService: { getCurrentMealPlan: vi.fn(), generateMealPlan: vi.fn(), regenerateMealPlan: vi.fn() },
   };
 });
 

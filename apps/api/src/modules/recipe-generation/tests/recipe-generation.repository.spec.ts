@@ -36,7 +36,7 @@ const readyRun = (overrides: Record<string, unknown> = {}) => ({
 
 const previewInput = () => ({
   userId: 'user-1', kind: 'RECIPE_SINGLE', idempotencyKey: previewKey,
-  provider: 'gemini', model: 'test-model', promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1',
+  provider: 'openai', model: 'test-model', promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1',
   requestSnapshot: { description: 'tomato lunch' }, profileSnapshot: { diet: 'VEGETARIAN' }, expiresAt,
 });
 
@@ -48,7 +48,7 @@ describe('RecipeGenerationRepository durable GenerationRun persistence (NUT-73)'
     const source = fs.readFileSync(repositoryFile, 'utf8');
 
     expect(source).toMatch(/confirmDraftsTransaction[\s\S]*?\$transaction/);
-    expect(source).not.toMatch(/unsplash|gemini|fetch\s*\(|axios|https?:/i);
+    expect(source).not.toMatch(/unsplash|openai|fetch\s*\(|axios|https?:/i);
   });
 
   it('creates a durable PENDING recipe preview run with a preview-key hash and no raw key', async () => {
@@ -59,7 +59,7 @@ describe('RecipeGenerationRepository durable GenerationRun persistence (NUT-73)'
 
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        userId: 'user-1', kind: 'RECIPE_SINGLE', status: 'PENDING', provider: 'gemini', model: 'test-model',
+        userId: 'user-1', kind: 'RECIPE_SINGLE', status: 'PENDING', provider: 'openai', model: 'test-model',
         promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1',
         requestSnapshot: { description: 'tomato lunch' }, profileSnapshot: { diet: 'VEGETARIAN' }, expiresAt,
         idempotencyKeyHash: expect.any(String),

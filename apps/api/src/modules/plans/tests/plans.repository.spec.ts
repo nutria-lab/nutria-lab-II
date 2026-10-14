@@ -186,8 +186,8 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
     const args = {
       userId,
       kind: 'MEAL_PLAN_INITIAL',
-      provider: 'google-generative-ai',
-      model: 'gemini-3.5-flash',
+      provider: 'openai',
+      model: 'openai-3.5-flash',
       promptVersion: '1.0.0',
       schemaVersion: '1.0.0',
       requestSnapshot: { kind: 'MEAL_PLAN_INITIAL', weekStart: '2026-09-14' },
@@ -697,13 +697,13 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
    * NUT-75 — Bug 1 (BLOQUEANTE, revisión externa de PR): `PUT /meal-plans`
    * (`PlansService.updatePlan` -> `PlansRepository.updatePlanTransaction`) es el endpoint de
    * edición MANUAL documentado en `.ai/meal-plans.md` ("Allow a user to edit a meal directly by
-   * overwriting the specific meal's fields") — nunca llama a Gemini, persiste `dto.days` tal
+   * overwriting the specific meal's fields") — nunca llama a OpenAI, persiste `dto.days` tal
    * cual lo manda el cliente. Sin embargo, `PlansService.updatePlan` SIEMPRE crea/recupera un
    * `GenerationRun` de kind `MEAL_PLAN_REGENERATION` y le pasa su `id` a
    * `updatePlanTransaction` como `generationRunId` — y `createDaysMealsAndRecipes`
    * (`plans.repository.ts:99-102`) estampa incondicionalmente `recipeData.origin = 'AI'` cada
    * vez que recibe un `generationRunId`, sin distinguir si ese run vino de una llamada real a
-   * Gemini (`createPlanTransaction`, camino de `generateAndPersistPlan`) o no
+   * OpenAI (`createPlanTransaction`, camino de `generateAndPersistPlan`) o no
    * (`updatePlanTransaction`, camino de edición manual). Resultado: toda receta creada/editada
    * a mano vía `PUT /meal-plans` queda mal etiquetada como `origin: 'AI'`.
    *
@@ -737,7 +737,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       mockPrisma.$transaction = jest.fn(async (cb: any) => cb(tx));
 
       // updatePlanTransaction recibe un generationRunId válido (el de MEAL_PLAN_REGENERATION,
-      // creado por PlansService.updatePlan) aunque este camino nunca llama a Gemini.
+      // creado por PlansService.updatePlan) aunque este camino nunca llama a OpenAI.
       await repository.updatePlanTransaction(userId, weekStart, newDays, 'run-manual-edit-1');
 
       expect(capturedRecipeData.length).toBeGreaterThan(0);
@@ -746,7 +746,7 @@ describe('PlansRepository - GenerationRun & supersede (unit, Prisma mockeado)', 
       }
     });
 
-    it('createPlanTransaction (camino de generación real vía Gemini) SÍ estampa origin: "AI" cuando recibe un generationRunId (contraste explícito con el camino manual)', async () => {
+    it('createPlanTransaction (camino de generación real vía OpenAI) SÍ estampa origin: "AI" cuando recibe un generationRunId (contraste explícito con el camino manual)', async () => {
       const capturedRecipeData: any[] = [];
       const tx = {
         mealPlan: { create: jest.fn().mockResolvedValue({ id: 'plan-1' }) },

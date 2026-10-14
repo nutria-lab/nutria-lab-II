@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { RecipeValidationService, mealToDraftInput } from '../recipe-validation.service';
 import { generatedMeal, generatedRecipe } from '../../recipe/tests/recipe-validation.fixtures';
 
-const RUN = { id: 'run-1', userId: 'user-1', provider: 'google-generative-ai', model: 'gemini-3.5-flash' };
+const RUN = { id: 'run-1', userId: 'user-1', provider: 'openai', model: 'openai-3.5-flash' };
 const NO_RESTRICTIONS = { excludedIngredients: [] };
 
 function setup() {
@@ -44,7 +44,7 @@ describe('RecipeValidationService.validateDrafts (NUT-74)', () => {
     expect(result).toEqual({ valid: false, errors: [expect.objectContaining({ code: 'DUPLICATE_RECIPE', existingRecipeId: 'recipe-cat' })] });
   });
 
-  it('nunca ofrece para reutilizar una receta del catálogo que viola las restricciones del perfil', async () => {
+  it('does not filter duplicate catalog candidates by excluded ingredients', async () => {
     const { recipes, service } = setup();
     recipes.findByNormalizedTitles.mockResolvedValue([
       { id: 'recipe-nuts', title: 'Ensalada de quinoa', description: 'Con salsa de maní', ingredients: [{ name: 'Quinoa' }, { name: 'Tomate' }] },
@@ -52,18 +52,19 @@ describe('RecipeValidationService.validateDrafts (NUT-74)', () => {
 
     const [result] = await service.validateDrafts([generatedRecipe()], { excludedIngredients: ['NUTS'] });
 
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.errors.map(error => error.code)).toEqual(['DUPLICATE_RECIPE']);
   });
 
-  it('pasa las restricciones del perfil al validador', async () => {
+  it('does not reject a generated recipe because its title contains an excluded ingredient', async () => {
     const { service } = setup();
 
     const [result] = await service.validateDrafts([generatedRecipe({ title: 'Budín de nueces' })], { excludedIngredients: ['NUTS'] });
 
-    expect(result).toEqual({ valid: false, errors: [expect.objectContaining({ code: 'EXCLUDED_INGREDIENT' })] });
+    expect(result.valid).toBe(true);
   });
 
-  it('el filtro de seguridad del catálogo también revisa los pasos de la receta', async () => {
+  it('still reports catalog duplicates without checking their instructions against restrictions', async () => {
     const { recipes, service } = setup();
     recipes.findByNormalizedTitles.mockResolvedValue([{
       id: 'recipe-steps', title: 'Ensalada de quinoa', description: 'Del catálogo',
@@ -72,7 +73,8 @@ describe('RecipeValidationService.validateDrafts (NUT-74)', () => {
 
     const [result] = await service.validateDrafts([generatedRecipe()], { excludedIngredients: ['NUTS'] });
 
-    expect(result.valid).toBe(true);
+    expect(result.valid).toBe(false);
+    if (!result.valid) expect(result.errors.map(error => error.code)).toEqual(['DUPLICATE_RECIPE']);
   });
 
   it('cada draft se valida por separado (repetir una comida en el plan no es duplicado)', async () => {

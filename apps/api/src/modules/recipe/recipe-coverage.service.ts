@@ -1,10 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import {
-  Diet,
-  DietaryRestriction,
-  CookTimePreference,
-  NutritionProfile,
-  NutritionGoal,
   Recipe,
   RecipeCategory,
 } from '@/generated/prisma/client';
@@ -33,7 +28,8 @@ export class RecipeCoverageService {
   async evaluate(request: RecipeCoverageRequest): Promise<RecipeCoverageEvaluation> {
     const criteria = this.normalizeRequest(request);
     const profile = await this.profiles.findByUserId(request.userId);
-    const requiredCategoryGroups = this.profileCategoryGroups(profile);
+    if (!profile) throw new InsufficientCoverageProfileError();
+    const requiredCategoryGroups: RecipeCategory[][] = [];
     const candidates = await this.recipes.findCoverageCandidates({ ...criteria, requiredCategoryGroups });
 
     const unique = new Map<string, RecipeCoverageCandidate>();
@@ -102,27 +98,6 @@ export class RecipeCoverageService {
       if (!unique.includes(category)) unique.push(category);
     }
     return unique;
-  }
-
-  private profileCategoryGroups(profile: NutritionProfile | null): RecipeCategory[][] {
-    if (!profile ||
-      !Object.values(Diet).includes(profile.diet) ||
-      !Object.values(NutritionGoal).includes(profile.goal) ||
-      !Object.values(CookTimePreference).includes(profile.cookTimePreference) ||
-      !Array.isArray(profile.excludedIngredients)) {
-      throw new InsufficientCoverageProfileError();
-    }
-    const groups: RecipeCategory[][] = [];
-    if (profile.diet === Diet.VEGAN) groups.push([RecipeCategory.VEGAN]);
-    else if (profile.diet === Diet.VEGETARIAN) groups.push([RecipeCategory.VEGETARIAN, RecipeCategory.VEGAN]);
-    else if (profile.diet !== Diet.ALL) throw new InsufficientCoverageProfileError();
-
-    for (const restriction of profile.excludedIngredients) {
-      if (restriction === DietaryRestriction.GLUTEN) groups.push([RecipeCategory.GLUTEN_FREE]);
-      else if (restriction === DietaryRestriction.DAIRY) groups.push([RecipeCategory.DAIRY_FREE]);
-      else throw new InsufficientCoverageProfileError();
-    }
-    return groups;
   }
 
   private score(recipe: Recipe, criteria: Omit<RecipeCoverageCriteria, 'requiredCategoryGroups'>): number {

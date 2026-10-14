@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { PlansController } from './plans.controller';
 import { PlansService } from './plans.service';
 import { PlansRepository } from './plans.repository';
-import { GeminiService } from './gemini/gemini.service';
+import { OpenAIModule } from '../openai/openai.module';
 import { PrismaModule } from '../../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
@@ -11,15 +11,15 @@ import { MealReplacementService } from './meal-replacement.service';
 import { RecipeValidationService } from './recipe-validation.service';
 import { MealPlanRegenerationService } from './meal-plan-regeneration.service';
 import { RecipeImagesService } from './recipe-images.service';
-import { GeminiWeeklyProposalComposer, WeeklyProposalComposer } from './weekly-proposal.composer';
+import { OpenAIWeeklyProposalComposer, WeeklyProposalComposer } from './weekly-proposal.composer';
 import { UnsplashModule } from '@/modules/unsplash/unsplash.module';
 
 @Module({
-  imports: [PrismaModule, ConfigModule, AuthModule, RecipeModule, UnsplashModule],
+  imports: [PrismaModule, ConfigModule, AuthModule, RecipeModule, UnsplashModule, OpenAIModule],
   controllers: [PlansController],
-  providers: [PlansService, GeminiService, PlansRepository, MealReplacementService, RecipeValidationService, MealPlanRegenerationService, RecipeImagesService,
+  providers: [PlansService, PlansRepository, MealReplacementService, RecipeValidationService, MealPlanRegenerationService, RecipeImagesService,
     // NUT-76 puede reemplazar la composición registrando otra implementación acá.
-    { provide: WeeklyProposalComposer, useClass: GeminiWeeklyProposalComposer },
+    { provide: WeeklyProposalComposer, useClass: OpenAIWeeklyProposalComposer },
   ],
   exports: [PlansService, PlansRepository]
 })

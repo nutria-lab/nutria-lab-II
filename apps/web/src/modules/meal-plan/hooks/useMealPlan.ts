@@ -10,6 +10,7 @@ type UseMealPlanResult = {
   errorMessage: string | null;
   retry: () => void;
   generate: () => Promise<void>;
+  regenerate: (planId: string) => Promise<void>;
 };
 
 function getCurrentWeekStart(): string {
@@ -145,6 +146,42 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
       });
   }, [weekStart]);
 
+  const regenerate = useCallback((planId: string) => {
+    if (generationInFlightRef.current) {
+      return Promise.resolve();
+    }
+    generationInFlightRef.current = true;
+    lastActionRef.current = 'load';
+
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const requestId = ++latestRequestIdRef.current;
+
+    setStatus('loading');
+    setErrorMessage(null);
+
+    return mealPlanService
+      .regenerateMealPlan(planId, controller.signal)
+      .then((data) => {
+        if (latestRequestIdRef.current !== requestId) {
+          return;
+        }
+        setMealPlan(data);
+        setStatus('success');
+      })
+      .catch(() => {
+        if (latestRequestIdRef.current !== requestId) {
+          return;
+        }
+        setStatus('error');
+        setErrorMessage('No pudimos regenerar tu plan semanal. Intentá de nuevo.');
+      })
+      .finally(() => {
+        generationInFlightRef.current = false;
+      });
+  }, [weekStart]);
+
   const retry = useCallback(() => {
     if (lastActionRef.current === 'generate') {
       generate();
@@ -160,5 +197,5 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     };
   }, [load]);
 
-  return { mealPlan, status, errorMessage, retry, generate };
+  return { mealPlan, status, errorMessage, retry, generate, regenerate };
 }

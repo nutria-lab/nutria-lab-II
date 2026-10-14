@@ -67,7 +67,7 @@ const MEAL_PLAN_REQUEST_TIMEOUT_MS = 10_000;
 // llamada a Gemini del lado del backend que puede tardar hasta 15s y sigue corriendo en el
 // servidor aunque el cliente aborte antes. Se le da un timeout propio, mayor a 15s, distinto
 // del que usa `getCurrentMealPlan` (consultar el plan actual es una operación rápida).
-const MEAL_PLAN_GENERATION_TIMEOUT_MS = 20_000;
+const MEAL_PLAN_GENERATION_TIMEOUT_MS = 360_000;
 
 export const mealPlanService = {
   async getCurrentMealPlan(
@@ -111,6 +111,28 @@ export const mealPlanService = {
     const response = await apiClient.post<MealPlan>('/meal-plans/generate', { weekStart }, {
       timeout: MEAL_PLAN_GENERATION_TIMEOUT_MS,
       signal,
+    });
+    const data = response.data;
+    if (!data || !Array.isArray(data.days)) {
+      throw new Error('La respuesta del servidor no tiene el formato esperado.');
+    }
+    return {
+      ...data,
+      days: data.days.map((day) => ({
+        ...day,
+        date: day.date.slice(0, 10),
+        meals: Array.isArray(day.meals) ? day.meals : [],
+      })),
+    };
+  },
+  async regenerateMealPlan(
+    planId: string,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<MealPlan> {
+    const response = await apiClient.post<MealPlan>(`/meal-plans/${planId}/regenerate`, { reason: 'USER_REQUESTED' }, {
+      timeout: MEAL_PLAN_GENERATION_TIMEOUT_MS,
+      signal,
+      headers: { 'Idempotency-Key': globalThis.crypto.randomUUID() },
     });
     const data = response.data;
     if (!data || !Array.isArray(data.days)) {

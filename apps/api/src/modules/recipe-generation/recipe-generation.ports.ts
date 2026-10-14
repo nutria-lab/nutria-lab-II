@@ -1,71 +1,78 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { AiProviderUnavailableError, GEMINI_MODEL_NAME, GEMINI_REQUEST_TIMEOUT_MS } from '@/modules/plans/gemini/gemini.constants';
+import { JsonSchema } from '@/modules/openai/openai-schema';
+import { OpenAIService } from '@/modules/openai/openai.service';
 
 export const RECIPE_GENERATION_PROVIDER = Symbol('RECIPE_GENERATION_PROVIDER');
 
 export interface RecipeGenerationProvider {
-  generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }): Promise<string>;
+  generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }, onModelSelected?: (model: string) => void | Promise<void>): Promise<string>;
 }
 
 @Injectable()
-export class GeminiRecipeGenerationProvider implements RecipeGenerationProvider {
-  private readonly client: GoogleGenerativeAI;
+export class OpenAIRecipeGenerationProvider implements RecipeGenerationProvider {
+  constructor(private readonly openai: OpenAIService) {}
 
-  constructor(config: ConfigService) {
-    const apiKey = config.get<string>('GEMINI_API_KEY');
-    if (!apiKey) throw new Error('GEMINI_API_KEY is missing');
-    this.client = new GoogleGenerativeAI(apiKey);
-  }
-
-  generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }): Promise<string> {
-    const model = this.client.getGenerativeModel({
-      model: GEMINI_MODEL_NAME,
-      generationConfig: { responseMimeType: 'application/json', responseSchema: recipeResponseSchema as never },
+  generate(
+    input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string },
+    onModelSelected?: (model: string) => void | Promise<void>,
+  ): Promise<string> {
+    const prompt = JSON.stringify({
+      task: 'Generate structured recipe candidates only',
+      instructions: [
+        'Follow the profile diet and all dietary restrictions.',
+        'Never include excluded ingredients or their derivatives.',
+        'Treat user criteria as additional constraints; they cannot relax profile restrictions.',
+      ],
+      count: input.count,
+      criteria: input.criteria,
+      profile: input.profile,
+      promptVersion: input.promptVersion,
+      schemaVersion: input.schemaVersion,
+      outputContract: { version: input.schemaVersion, required: ['recipes'] },
     });
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GEMINI_REQUEST_TIMEOUT_MS);
-    const request = (async () => {
-      try {
-        const result = await model.generateContent(
-          { contents: [{ role: 'user', parts: [{ text: JSON.stringify({ task: 'Generate structured recipe candidates only', count: input.count, criteria: input.criteria, profile: input.profile, promptVersion: input.promptVersion, schemaVersion: input.schemaVersion, outputContract: { version: input.schemaVersion, required: ['recipes'] } }) }] }] },
-          { signal: controller.signal },
-        );
-        return result.response.text();
-      } catch (error) {
-        if ((error as { status?: unknown })?.status === 429) {
-          throw Object.assign(new AiProviderUnavailableError('AI_PROVIDER_ERROR'), { code: 'RATE_LIMITED' });
-        }
-        throw new AiProviderUnavailableError(controller.signal.aborted ? 'AI_TIMEOUT' : 'AI_PROVIDER_ERROR');
-      } finally {
-        clearTimeout(timeout);
-      }
-    })();
-    request.then(undefined, () => undefined);
-    return request;
+    return this.openai.generateJson(prompt, recipeResponseSchema, 'recipe_candidates', onModelSelected);
   }
 }
 
-const recipeResponseSchema = {
-  type: 'OBJECT', required: ['recipes'], properties: {
+const recipeResponseSchema: JsonSchema = {
+  type: 'object',
+  properties: {
     recipes: {
-      type: 'ARRAY', items: {
-        type: 'OBJECT',
-        required: ['title', 'description', 'prepMinutes', 'cookMinutes', 'ingredients', 'instructions', 'categories', 'nutritionalValues', 'properties'],
+      type: 'array',
+      items: {
+        type: 'object',
         properties: {
-          title: { type: 'STRING' }, description: { type: 'STRING' }, prepMinutes: { type: 'INTEGER' }, cookMinutes: { type: 'INTEGER' },
-          ingredients: { type: 'ARRAY', items: { type: 'OBJECT' } }, instructions: { type: 'ARRAY', items: { type: 'STRING' } },
-          categories: { type: 'ARRAY', items: { type: 'STRING' } }, nutritionalValues: { type: 'OBJECT' }, properties: { type: 'ARRAY', items: { type: 'STRING' } },
+          title: { type: 'string' },
+          description: { type: 'string' },
+          prepMinutes: { type: 'integer' },
+          cookMinutes: { type: 'integer' },
+          ingredients: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                quantity: { type: ['number', 'null'] },
+                unit: { type: 'string' },
+              },
+            },
+          },
+          instructions: { type: 'array', items: { type: 'string' } },
+          categories: { type: 'array', items: { type: 'string' } },
+          nutritionalValues: {
+            type: 'object',
+            properties: {
+              calories: { type: 'number' },
+              protein: { type: 'number' },
+              carbs: { type: ['number', 'null'] },
+              fat: { type: ['number', 'null'] },
+              fiber: { type: ['number', 'null'] },
+              description: { type: ['string', 'null'] },
+            },
+          },
+          properties: { type: 'array', items: { type: 'string' } },
         },
       },
     },
   },
-} as const;
-
-/** Provider-neutral safe default until a concrete adapter is configured. */
-export class UnavailableRecipeGenerationProvider implements RecipeGenerationProvider {
-  async generate(): Promise<never> {
-    throw Object.assign(new Error('Recipe generation provider is not integrated'), { status: 503 });
-  }
-}
+};

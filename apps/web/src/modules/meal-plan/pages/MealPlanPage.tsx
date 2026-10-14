@@ -77,7 +77,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function MealPlanPage() {
-  const { mealPlan, status, errorMessage, retry, generate } = useMealPlan();
+  const { mealPlan, status, errorMessage, retry, generate, regenerate } = useMealPlan();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const dayParam = searchParams.get('day');
@@ -133,8 +133,10 @@ export function MealPlanPage() {
             type="button"
             title="Regenerar plan"
             aria-label="Regenerar plan"
-            onClick={() => generate?.()}
-            className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90"
+            onClick={() => regenerate?.(mealPlan.id)}
+            disabled={status === 'loading'}
+            aria-busy={status === 'loading'}
+            className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <span aria-hidden="true" className="material-symbols-outlined">autorenew</span>
           </button>

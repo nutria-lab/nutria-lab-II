@@ -1,39 +1,39 @@
-import { Schema, SchemaType } from '@google/generative-ai';
+import type { JsonSchema } from '../../openai/openai-schema';
 import { RecipeCategory } from '../../../generated/prisma/client';
 
 // Schema de una comida (título, macros y receta), compartido por el plan semanal y el reemplazo.
 const mealContentProperties = {
-  title: { type: SchemaType.STRING },
+  title: { type: 'string' },
   nutritionalValues: {
-    type: SchemaType.OBJECT,
+    type: 'object',
     properties: {
-      Protein: { type: SchemaType.INTEGER },
-      Fiber: { type: SchemaType.INTEGER },
-      Calories: { type: SchemaType.INTEGER },
-      Description: { type: SchemaType.STRING },
+      Protein: { type: 'integer' },
+      Fiber: { type: 'integer' },
+      Calories: { type: 'integer' },
+      Description: { type: 'string' },
     },
   },
   recipe: {
-    type: SchemaType.OBJECT,
+    type: 'object',
     properties: {
-      title: { type: SchemaType.STRING },
-      description: { type: SchemaType.STRING },
-      prepMinutes: { type: SchemaType.INTEGER },
-      cookMinutes: { type: SchemaType.INTEGER },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      prepMinutes: { type: 'integer' },
+      cookMinutes: { type: 'integer' },
       ingredients: {
-        type: SchemaType.ARRAY,
+        type: 'array',
         items: {
-          type: SchemaType.OBJECT,
+          type: 'object',
           properties: {
-            name: { type: SchemaType.STRING },
-            quantity: { type: SchemaType.STRING },
-            unit: { type: SchemaType.STRING },
+            name: { type: 'string' },
+            quantity: { type: 'string' },
+            unit: { type: 'string' },
           },
         },
       },
       instructions: {
-        type: SchemaType.ARRAY,
-        items: { type: SchemaType.STRING },
+        type: 'array',
+        items: { type: 'string' },
       },
     },
   },
@@ -53,13 +53,12 @@ const weeklyMealContentProperties = {
       title: { ...mealContentProperties.recipe.properties.title, description: 'Brief, descriptive recipe name.' },
       ingredients: {
         ...mealContentProperties.recipe.properties.ingredients,
-        minItems: 1,
         items: {
           ...mealContentProperties.recipe.properties.ingredients.items,
           required: ['name', 'quantity', 'unit'],
         },
       },
-      instructions: { ...mealContentProperties.recipe.properties.instructions, minItems: 1 },
+      instructions: { ...mealContentProperties.recipe.properties.instructions },
     },
     required: ['title', 'description', 'prepMinutes', 'cookMinutes', 'ingredients', 'instructions'],
   },
@@ -75,8 +74,8 @@ function profileLines(profile: any): string {
 
 export const PROMPT_VERSIONS = {
   v1: {
-    version: '1.1.0-local-schema-tightening',
-    schemaVersion: '1.1.0-local-schema-tightening',
+    version: '1.3.0-openai-structured-output',
+    schemaVersion: '1.3.0-openai-structured-output',
 
     getPrompt(profile: any, startDate: string): string {
       return `
@@ -89,34 +88,31 @@ export const PROMPT_VERSIONS = {
         3. Proporciona macros coherentes.
         4. Los días deben ser desde el día 1 al día 7 de la semana solicitada.
         5. Usa títulos breves y descriptivos para las comidas y sus recetas.
+        6. Cada día debe incluir exactamente una comida de cada tipo: BREAKFAST (desayuno), LUNCH (almuerzo), SNACK (merienda) y DINNER (cena), 28 comidas en total.
       `;
     },
 
-    getSchema(): Schema {
+    getSchema(): JsonSchema {
       return {
-        type: SchemaType.OBJECT,
+        type: 'object',
         properties: {
           days: {
-            type: SchemaType.ARRAY,
-            minItems: 7,
-            maxItems: 7,
+            type: 'array',
             items: {
-              type: SchemaType.OBJECT,
+              type: 'object',
               properties: {
                 day: {
-                  type: SchemaType.STRING,
-                  format: 'enum',
+                  type: 'string',
                   enum: ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
                 },
-                date: { type: SchemaType.STRING },
+                date: { type: 'string' },
                 meals: {
-                  type: SchemaType.ARRAY,
+                  type: 'array',
                   items: {
-                    type: SchemaType.OBJECT,
+                    type: 'object',
                     properties: {
                       mealType: {
-                        type: SchemaType.STRING,
-                        format: 'enum',
+                        type: 'string',
                         enum: ['BREAKFAST', 'LUNCH', 'DINNER', 'SNACK'],
                       },
                       ...weeklyMealContentProperties,
@@ -130,7 +126,7 @@ export const PROMPT_VERSIONS = {
           },
         },
         required: ['days'],
-      } as Schema;
+      } as JsonSchema;
     },
   },
 };
@@ -147,8 +143,8 @@ export interface ReplacementPromptCriteria {
 
 // Prompt para generar UNA comida que reemplaza a otra dentro de un plan (NUT-77).
 export const REPLACEMENT_PROMPT_VERSION = {
-  version: 'replacement-1.0.0',
-  schemaVersion: 'replacement-1.0.0',
+  version: 'replacement-1.1.0-openai',
+  schemaVersion: 'replacement-1.1.0-openai',
 
   getPrompt(profile: any, mealType: string, criteria: ReplacementPromptCriteria): string {
     const wishes = [
@@ -174,9 +170,9 @@ export const REPLACEMENT_PROMPT_VERSION = {
   },
 
   // Igual que una comida del plan, pero la receta además trae categories y properties para validarlas.
-  getSchema(): Schema {
+  getSchema(): JsonSchema {
     return {
-      type: SchemaType.OBJECT,
+      type: 'object',
       properties: {
         ...mealContentProperties,
         recipe: {
@@ -184,14 +180,14 @@ export const REPLACEMENT_PROMPT_VERSION = {
           properties: {
             ...mealContentProperties.recipe.properties,
             categories: {
-              type: SchemaType.ARRAY,
-              items: { type: SchemaType.STRING, format: 'enum', enum: Object.values(RecipeCategory) },
+              type: 'array',
+              items: { type: 'string', enum: Object.values(RecipeCategory) },
             },
-            properties: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            properties: { type: 'array', items: { type: 'string' } },
           },
         },
       },
       required: ['title', 'nutritionalValues', 'recipe'],
-    } as Schema;
+    } as JsonSchema;
   },
 };

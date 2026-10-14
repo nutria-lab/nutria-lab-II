@@ -77,27 +77,26 @@ describe('RecipeGenerationService preview with the real NUT-74 validator (NUT-73
     await service.preview(userId, key, { mode: 'BATCH', countMode: 'NEW_ONLY', count: 3, topic: 'cenas' });
 
     expect(coverage.evaluate).not.toHaveBeenCalled();
-    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }));
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ count: 3 }), expect.any(Function));
   });
 
-  it('records NUT-74 excluded-ingredient codes and summary, returns 422, and never resolves an image or persists a draft', async () => {
+  it('passes excluded ingredients to the model and accepts its recipe without a server-side rejection', async () => {
     const rawCandidate = generatedRecipe({ title: 'Pasta con maní', ingredients: [{ name: 'Maní', quantity: 100, unit: 'g' }] });
-    const validation = validateRecipe(rawCandidate, { excludedIngredients: ['nuts'] });
-    expect(validation.valid).toBe(false);
-    if (validation.valid) throw new Error('NUT-74 fixture must be rejected for its excluded ingredient');
+    const validation = validateRecipe(rawCandidate, { excludedIngredients: [] });
+    expect(validation.valid).toBe(true);
+    if (!validation.valid) throw new Error('Recipe structure should be valid independently of dietary restrictions');
     profiles.findByUserId.mockResolvedValue({ ...profile, excludedIngredients: ['NUTS'] });
     provider.generate.mockResolvedValue(jsonRecipes([rawCandidate]));
 
-    await expect(service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'Una cena vegana rápida y completa' }))
-      .rejects.toMatchObject({ status: 422 });
+    await service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'Una cena vegana rápida y completa' });
 
-    expect(images.searchAndSelectCandidate).not.toHaveBeenCalled();
-    expect(repository.persistReadyPreview).not.toHaveBeenCalled();
-    expect(repository.rejectPreview).toHaveBeenCalledWith(expect.objectContaining({
-      runId: 'run-1', userId,
-      rejected: [expect.objectContaining({ candidateIndex: 0, codes: ['EXCLUDED_INGREDIENT'] })],
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ excludedIngredients: ['nuts'] }) }), expect.any(Function));
+    expect(images.searchAndSelectCandidate).toHaveBeenCalledWith(validation.normalizedRecipe.title);
+    expect(repository.persistReadyPreview).toHaveBeenCalledWith(expect.objectContaining({
+      drafts: [expect.objectContaining({ recipe: validation.normalizedRecipe })],
       validationSnapshot: summarizeResults([validation]),
     }));
+    expect(repository.rejectPreview).not.toHaveBeenCalled();
   });
 
   it('does not retry or resolve an image when NUT-74 rejects an invalid category/range candidate', async () => {
