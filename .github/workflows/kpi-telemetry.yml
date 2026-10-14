@@ -1,0 +1,87 @@
+name: KPI Telemetry
+
+# Inactivo hasta que la variable de repo KPI_TELEMETRY_ENABLED sea 'true': requiere el script kpi:telemetry en apps/api/package.json.
+# Rollback: borrar esa variable o deshabilitar este workflow.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente objetivo
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - prod
+      mode:
+        description: Modo de ejecución
+        type: choice
+        required: true
+        default: sample
+        options:
+          - sample
+          - finalize
+      date:
+        description: Fecha local America/Argentina/Buenos_Aires YYYY-MM-DD (opcional)
+        type: string
+        required: false
+
+# Un único run por ambiente efectivo; nunca se cancela un run en curso.
+concurrency:
+  group: kpi-telemetry-${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  telemetry:
+    name: KPI Telemetry
+    if: ${{ vars.KPI_TELEMETRY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    # schedule => prod; workflow_dispatch => input elegido.
+    environment: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (default branch)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client (api)
+        run: pnpm --filter api run prisma:generate
+
+      # Los inputs llegan solo por env; ningún run interpola expresiones.
+      - name: Run KPI telemetry
+        env:
+          MODE: ${{ inputs.mode || 'sample' }}
+          TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+          DATE: ${{ inputs.date }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KPI_ENV: ${{ vars.KPI_ENV }}
+          KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
+        run: |
+          pnpm --filter api kpi:telemetry --mode "$MODE" --environment "$TARGET_ENV" ${DATE:+--date "$DATE"} --diagnostics-out "$RUNNER_TEMP/kpi-diagnostics"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kpi-diagnostics
+          if-no-files-found: warn
+          retention-days: 90

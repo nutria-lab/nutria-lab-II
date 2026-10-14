@@ -2,7 +2,7 @@ import { type FormEvent, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { BrandMark } from '../../common/components/BrandMark';
-import { validateLoginFields, type LoginFieldErrors } from './loginValidation';
+import { validateLoginFields, type LoginFieldErrors } from './validator/loginValidation';
 
 export type LoginPageStatus = 'idle' | 'restoring' | 'loading' | 'invalidCredentials' | 'networkError';
 

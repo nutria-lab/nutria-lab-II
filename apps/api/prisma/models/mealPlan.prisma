@@ -27,5 +27,6 @@ model MealPlan {
   @@index([userId, startDate])
   @@index([generationRunId])
   @@index([supersedesId])
+  @@index([createdAt])
   @@map("meal_plans")
 }

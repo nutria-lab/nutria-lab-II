@@ -1,7 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { GoogleGenerativeAI, Schema } from '@google/generative-ai';
 import { ConfigService } from '@nestjs/config';
 import { NutritionProfile, MealType } from '../../../generated/prisma/client';
+import { NOOP_DEPENDENCY_INSTRUMENTATION } from '../../kpi/dependencies/dependency-instrumentation';
+import type { DependencyInstrumentation } from '../../kpi/dependencies/dependency-instrumentation';
+import { DEPENDENCY_INSTRUMENTATION } from '../../kpi/kpi.tokens';
 import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCriteria } from './prompts';
 
 /**
@@ -22,7 +25,13 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI;
   private readonly logger = new Logger(GeminiService.name);
 
-  constructor(private configService: ConfigService) {
+  // La instrumentación KPI es opcional: sin KpiModule o en construcciones manuales es no-op.
+  constructor(
+    private configService: ConfigService,
+    @Optional()
+    @Inject(DEPENDENCY_INSTRUMENTATION)
+    private readonly instrumentation: DependencyInstrumentation = NOOP_DEPENDENCY_INSTRUMENTATION,
+  ) {
     const apiKey = this.configService.get<string>('GEMINI_API_KEY');
     if (!apiKey) {
       throw new Error('GEMINI_API_KEY is missing');
@@ -60,9 +69,15 @@ export class GeminiService {
 
     try {
       // El SDK lee `signal` en el primer nivel de las opciones (SingleRequestOptions).
-      const result = await model.generateContent(
-        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-        { signal: abortController.signal },
+      // Sólo la llamada de red se registra como intento KPI de 'gemini'.
+      const result = await this.instrumentation.run(
+        'gemini',
+        () =>
+          model.generateContent(
+            { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+            { signal: abortController.signal },
+          ),
+        outcome => (outcome.ok ? 'success' : abortController.signal.aborted ? 'timeout' : 'error'),
       );
       return result.response.text();
     } catch {

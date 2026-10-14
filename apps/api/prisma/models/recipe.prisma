@@ -35,5 +35,6 @@ model Recipe {
   plannedMeals PlannedMeal[]
 
   @@index([generationRunId])
+  @@index([createdAt])
   @@map("recipes")
 }
