@@ -1,8 +1,13 @@
+import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
 import { useMealPlan } from '../hooks/useMealPlan';
+import { useReplaceMeal } from '../hooks/useReplaceMeal';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
+import { ReplaceMealModal } from '../components/ReplaceMealModal';
+import { ScreenReaderAnnouncer } from '../components/ScreenReaderAnnouncer';
+import type { Meal } from '../../../services/mealPlanService';
 import {
   formatDayName,
   formatFullDate,
@@ -77,8 +82,32 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function MealPlanPage() {
-  const { mealPlan, status, errorMessage, retry, generate } = useMealPlan();
+  const { mealPlan, status, errorMessage, retry, generate, updateMeal } = useMealPlan();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const [announcement, setAnnouncement] = useState('');
+  const [modalMeal, setModalMeal] = useState<Meal | null>(null);
+
+  const {
+    replacingMealId,
+    replaceError,
+    replaceMeal,
+    retryReplace,
+    cancelReplaceError,
+    isSubmitting,
+  } = useReplaceMeal({
+    onSuccess: (updatedMeal, previousMeal) => {
+      updateMeal(updatedMeal);
+      setModalMeal(null);
+      const prevTitle = previousMeal.recipe?.title ?? previousMeal.title;
+      const newTitle = updatedMeal.recipe?.title ?? updatedMeal.title;
+      setAnnouncement(`${prevTitle} reemplazado por ${newTitle}.`);
+    },
+    onError: (err) => {
+      setModalMeal(null);
+      setAnnouncement(`Error al reemplazar ${err.mealTitle}. Podés reintentar o cancelar.`);
+    },
+  });
 
   const dayParam = searchParams.get('day');
   const todayKey = formatLocalDateKey(new Date());
@@ -100,6 +129,20 @@ export function MealPlanPage() {
     });
   }
 
+  function handleStartMobileReplace(meal: Meal) {
+    if (!mealPlan) return;
+    const title = meal.recipe?.title ?? meal.title;
+    setAnnouncement(`Reemplazando ${title}...`);
+    replaceMeal(mealPlan.id, meal);
+  }
+
+  function handleConfirmDesktopModal() {
+    if (!mealPlan || !modalMeal) return;
+    const title = modalMeal.recipe?.title ?? modalMeal.title;
+    setAnnouncement(`Reemplazando ${title}...`);
+    replaceMeal(mealPlan.id, modalMeal);
+  }
+
   if (status === 'loading' && !mealPlan) return <LoadingSkeleton />;
   if (status === 'empty' || (mealPlan && mealPlan.days.length === 0)) {
     return <EmptyState onGenerate={() => generate?.()} />;
@@ -111,6 +154,8 @@ export function MealPlanPage() {
 
   return (
     <main className="w-full max-w-lg xl:max-w-7xl mx-auto space-y-6 px-4 sm:px-6 lg:px-8 py-6">
+      <ScreenReaderAnnouncer message={announcement} />
+
       {/* Header */}
       <div className="flex items-end justify-between">
         <div>
@@ -153,7 +198,21 @@ export function MealPlanPage() {
 
         <div className="space-y-4">
           {selectedDay?.meals.map((meal, index) => (
-            <MealCard key={`${meal.mealType}-${index}`} meal={meal} />
+            <MealCard
+              key={`${meal.mealType}-${index}`}
+              meal={meal}
+              onReplace={handleStartMobileReplace}
+              isReplacing={replacingMealId === meal.id}
+              replaceError={
+                replaceError && replaceError.mealId === meal.id
+                  ? {
+                      message: replaceError.message,
+                      onRetry: retryReplace,
+                      onCancel: cancelReplaceError,
+                    }
+                  : null
+              }
+            />
           ))}
           {selectedDay?.meals.length === 0 && (
             <p className="py-8 text-center text-sm text-on-surface-variant">
@@ -184,7 +243,23 @@ export function MealPlanPage() {
                 </div>
                 <div className="flex flex-col gap-2.5">
                   {day.meals.map((meal, idx) => (
-                    <MealCard key={`${meal.mealType}-${idx}`} meal={meal} compact />
+                    <MealCard
+                      key={`${meal.mealType}-${idx}`}
+                      meal={meal}
+                      compact
+                      onReplace={(m) => setModalMeal(m)}
+                      onSwap={(m) => setModalMeal(m)}
+                      isReplacing={replacingMealId === meal.id}
+                      replaceError={
+                        replaceError && replaceError.mealId === meal.id
+                          ? {
+                              message: replaceError.message,
+                              onRetry: retryReplace,
+                              onCancel: cancelReplaceError,
+                            }
+                          : null
+                      }
+                    />
                   ))}
                   {day.meals.length === 0 && (
                     <p className="py-6 text-center text-xs text-on-surface-variant">Sin comidas</p>
@@ -195,6 +270,15 @@ export function MealPlanPage() {
           })}
         </div>
       )}
+
+      {/* Desktop Confirmation Modal */}
+      <ReplaceMealModal
+        isOpen={modalMeal !== null}
+        meal={modalMeal}
+        onCancel={() => setModalMeal(null)}
+        onConfirm={handleConfirmDesktopModal}
+        isSubmitting={isSubmitting}
+      />
     </main>
   );
 }
