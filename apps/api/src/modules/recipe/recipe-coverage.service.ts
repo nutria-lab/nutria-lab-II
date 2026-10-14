@@ -68,6 +68,13 @@ export class RecipeCoverageService {
     };
   }
 
+  // NUT-73 only uses this bounded catalog view to avoid generated duplicates; it never
+  // uses the entries as preview fill-ins for NEW_ONLY requests.
+  async findCompatibilityFingerprints(request: RecipeCoverageRequest): Promise<string[]> {
+    const evaluation = await this.evaluate({ ...request, desiredTotal: 10 });
+    return evaluation.result.compatibleRecipes.map(({ recipe }) => recipeFingerprint(recipe));
+  }
+
   private normalizeRequest(request: RecipeCoverageRequest): Omit<RecipeCoverageCriteria, 'requiredCategoryGroups'> {
     if (!Number.isInteger(request.desiredTotal) || request.desiredTotal < 1 || request.desiredTotal > 10) {
       throw new RangeError('desiredTotal must be an integer between 1 and 10');

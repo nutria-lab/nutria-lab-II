@@ -100,6 +100,32 @@ export function forbiddenRestrictions(profile: { excludedIngredients?: unknown }
   return excluded.map(String).map(restriction => restriction.toLowerCase());
 }
 
+/**
+ * The profile policy used by generated recipes.  Diet labels on a catalog or
+ * model response are intentionally not trusted: callers pass these groups to
+ * the same text/ingredient validation used for explicit exclusions.
+ */
+export function profileForbiddenRestrictions(profile: { diet?: unknown; excludedIngredients?: unknown }): string[] {
+  const restrictions = new Set(forbiddenRestrictions(profile));
+  switch (profile.diet) {
+    case 'VEGAN':
+      ['meat', 'fish', 'shellfish', 'dairy', 'egg', 'honey'].forEach(group => restrictions.add(group));
+      break;
+    case 'VEGETARIAN':
+      ['meat', 'fish', 'shellfish'].forEach(group => restrictions.add(group));
+      break;
+    case 'PESCATARIAN':
+      restrictions.add('meat');
+      break;
+  }
+  return [...restrictions];
+}
+
+/** KETO and PALEO have no approved deterministic ingredient policy yet. */
+export function hasSupportedProfilePolicy(profile: { diet?: unknown } | null | undefined): boolean {
+  return !!profile && profile.diet !== 'KETO' && profile.diet !== 'PALEO';
+}
+
 // Textos de una comida o receta que se revisan contra las restricciones: único lugar donde se decide
 // (validador, plan manual/editado y filtros del catálogo). Incluye los pasos.
 export interface RestrictionTextSource {

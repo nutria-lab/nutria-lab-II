@@ -7,6 +7,7 @@ import { NutritionProfileModule } from '@/modules/nutrition-profile/nutrition-pr
 import { RecipeModule } from '@/modules/recipe/recipe.module';
 import { IngredientModule } from '@/modules/ingredient/ingredient.module';
 import { KpiModule } from '@/modules/kpi/kpi.module';
+import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-generation.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { KpiModule } from '@/modules/kpi/kpi.module';
     RecipeModule,
     IngredientModule,
     KpiModule,
+    RecipeGenerationModule,
   ],
   controllers: [],
   providers: [],

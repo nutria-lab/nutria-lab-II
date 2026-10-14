@@ -5,6 +5,7 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { AiProviderUnavailableError, GeminiService } from '../../plans/gemini/gemini.service';
+import { GEMINI_REQUEST_TIMEOUT_MS } from '../../plans/gemini/gemini.constants';
 import type { KpiConfig } from '../config/kpi-config';
 import { KpiDependencyInstrumentation, NOOP_DEPENDENCY_INSTRUMENTATION } from '../dependencies/dependency-instrumentation';
 import type { DependencyInstrumentation } from '../dependencies/dependency-instrumentation';
@@ -116,7 +117,7 @@ describe('GeminiService + instrumentación de dependencias (C1, C2)', () => {
 
     const pending = inRequest(() => service.generateMealPlan(profile, startDate));
     const assertion = expect(pending).rejects.toMatchObject({ name: 'AiProviderUnavailableError', reason: 'AI_TIMEOUT' });
-    await jest.advanceTimersByTimeAsync(15000);
+    await jest.advanceTimersByTimeAsync(GEMINI_REQUEST_TIMEOUT_MS);
     await assertion;
     await jest.advanceTimersByTimeAsync(1000);
 
