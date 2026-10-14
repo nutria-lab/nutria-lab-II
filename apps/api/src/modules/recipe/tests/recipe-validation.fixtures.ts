@@ -30,7 +30,7 @@ export function recipeWithIngredient(name: string, overrides: Record<string, unk
   });
 }
 
-// Comida del plan semanal / del reemplazo, con los macros en la forma que devuelve Gemini.
+// Comida del plan semanal / del reemplazo, con los macros en el formato de respuesta del plan.
 export function generatedMeal(overrides: Record<string, unknown> = {}) {
   return {
     title: 'Wok de verduras',

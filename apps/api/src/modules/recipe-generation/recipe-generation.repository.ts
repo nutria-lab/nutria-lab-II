@@ -60,6 +60,13 @@ function parseOutputSnapshot(value: unknown): RecipePreviewOutputSnapshot {
 export class RecipeGenerationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  async updatePendingGenerationRunModel(id: string, userId: string, model: string): Promise<void> {
+    await this.prisma.generationRun.updateMany({
+      where: { id, userId, status: 'PENDING' },
+      data: { model },
+    });
+  }
+
   async createOrRecoverPreviewRun(input: PreviewRunInput): Promise<{ run: { id: string; status: string; outputSnapshot: unknown }; wasCreated: boolean }> {
     const requestSnapshot = input.requestSnapshot ?? input.criteria ?? {};
     const idempotencyKeyHash = previewHash(input);

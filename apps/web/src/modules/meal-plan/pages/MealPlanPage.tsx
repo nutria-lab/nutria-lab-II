@@ -5,7 +5,7 @@ import { useMealPlan } from '../hooks/useMealPlan';
 import { useReplaceMeal } from '../hooks/useReplaceMeal';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
-import { ReplaceMealModal } from '../components/ReplaceMealModal';
+import { RegenerateWeekDialog } from '../components/RegenerateWeekDialog';
 import { ScreenReaderAnnouncer } from '../components/ScreenReaderAnnouncer';
 import type { Meal } from '../../../services/mealPlanService';
 import {
@@ -82,8 +82,9 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function MealPlanPage() {
-  const { mealPlan, status, errorMessage, retry, generate, updateMeal } = useMealPlan();
+  const { mealPlan, status, errorMessage, retry, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration } = useMealPlan();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [isRegenerationDialogOpen, setIsRegenerationDialogOpen] = useState(false);
 
   const [announcement, setAnnouncement] = useState('');
   const [modalMeal, setModalMeal] = useState<Meal | null>(null);
@@ -120,6 +121,28 @@ export function MealPlanPage() {
     mealPlan && dayParam && mealPlan.days.some((day) => day.date === dayParam)
       ? dayParam
       : defaultDate;
+
+  function handleOpenRegeneration() {
+    if (!mealPlan) return;
+    openRegeneration(mealPlan.id);
+    setIsRegenerationDialogOpen(true);
+  }
+
+  function handleCloseRegeneration() {
+    setIsRegenerationDialogOpen(false);
+    cancelRegeneration();
+  }
+
+  async function handleConfirmRegeneration() {
+    const result = await confirmRegeneration();
+    if (result) {
+      setIsRegenerationDialogOpen(false);
+    }
+  }
+
+  async function handleRetryRegeneration() {
+    await retryRegeneration();
+  }
 
   function handleSelectDate(date: string) {
     setSearchParams((previousParams) => {
@@ -178,8 +201,10 @@ export function MealPlanPage() {
             type="button"
             title="Regenerar plan"
             aria-label="Regenerar plan"
-            onClick={() => generate?.()}
-            className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90"
+            onClick={handleOpenRegeneration}
+            disabled={status === 'loading' || regenerationStatus === 'submitting'}
+            aria-busy={status === 'loading' || regenerationStatus === 'submitting'}
+            className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-green text-on-primary shadow-md transition-all hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <span aria-hidden="true" className="material-symbols-outlined">autorenew</span>
           </button>
@@ -187,6 +212,16 @@ export function MealPlanPage() {
       </div>
 
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
+
+      {regenerationStatus === 'submitting' && !isRegenerationDialogOpen && (
+        <div role="status" aria-live="polite" className="rounded-xl bg-surface-container px-4 py-3 text-sm font-semibold text-on-surface">
+          Regenerando tu semana… El plan actual sigue disponible.
+        </div>
+      )}
+
+      {regenerationStatus === 'success' && (
+        <Banner variant="success" message="Tu semana fue regenerada correctamente." />
+      )}
 
       {/* Mobile / Compact view (<1280px or fallback when not 7 days) */}
       <div className={mealPlan.days.length === 7 ? 'xl:hidden space-y-6' : 'space-y-6'}>
@@ -270,15 +305,16 @@ export function MealPlanPage() {
           })}
         </div>
       )}
-
-      {/* Desktop Confirmation Modal */}
-      <ReplaceMealModal
-        isOpen={modalMeal !== null}
-        meal={modalMeal}
-        onCancel={() => setModalMeal(null)}
-        onConfirm={handleConfirmDesktopModal}
-        isSubmitting={isSubmitting}
+      <RegenerateWeekDialog
+        open={isRegenerationDialogOpen}
+        status={regenerationStatus === 'submitting' ? 'submitting' : regenerationStatus === 'error' ? 'error' : 'confirming'}
+        errorMessage={regenerationError}
+        onClose={handleCloseRegeneration}
+        onCancel={handleCloseRegeneration}
+        onConfirm={handleConfirmRegeneration}
+        onRetry={handleRetryRegeneration}
       />
+
     </main>
   );
 }

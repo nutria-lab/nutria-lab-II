@@ -230,7 +230,7 @@ describe('Regenerar la semana - flujo completo (NUT-78)', () => {
     const v1 = await seedVersionOne(db);
     const proposal = proposalReusing(db.state.meals[0].recipeId);
     composer.composeWeeklyProposal.mockImplementation(async () => {
-      // Mientras Gemini genera, otro request reemplaza una comida de v1 (actualiza su updatedAt).
+      // Mientras OpenAI genera, otro request reemplaza una comida de v1 (actualiza su updatedAt).
       await db.client.mealPlan.updateMany({ where: { id: v1.id }, data: {} });
       return proposal;
     });

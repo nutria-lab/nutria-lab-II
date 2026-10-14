@@ -8,15 +8,16 @@ import { UnsplashModule } from '@/modules/unsplash/unsplash.module';
 import { RecipeGenerationController } from './recipe-generation.controller';
 import { RecipeGenerationRepository } from './recipe-generation.repository';
 import { RecipeGenerationService } from './recipe-generation.service';
-import { GeminiRecipeGenerationProvider, RECIPE_GENERATION_PROVIDER } from './recipe-generation.ports';
+import { OpenAIRecipeGenerationProvider, RECIPE_GENERATION_PROVIDER } from './recipe-generation.ports';
+import { OpenAIModule } from '@/modules/openai/openai.module';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, AuthModule, RecipeModule, NutritionProfileModule, UnsplashModule],
+  imports: [ConfigModule, PrismaModule, AuthModule, RecipeModule, NutritionProfileModule, UnsplashModule, OpenAIModule],
   controllers: [RecipeGenerationController],
   providers: [
     RecipeGenerationRepository,
     RecipeGenerationService,
-    { provide: RECIPE_GENERATION_PROVIDER, useClass: GeminiRecipeGenerationProvider },
+    { provide: RECIPE_GENERATION_PROVIDER, useClass: OpenAIRecipeGenerationProvider },
   ],
 })
 export class RecipeGenerationModule {}

@@ -246,7 +246,7 @@ export class PlansRepository {
 
   /**
    * NUT-75 Bug 1: `createPlanTransaction` sólo se llama desde `validateAndPersistPlan`. Cuando
-   * ese método es invocado desde `generateAndPersistPlan` (camino real de Gemini) siempre trae
+   * ese método es invocado desde `generateAndPersistPlan` (camino real de OpenAI) siempre trae
    * un `generationRunId` definido, y en ese caso corresponde `recipeOrigin: 'AI'`. Cuando se
    * invoca directo desde `POST /meal-plans` (sin `generationRunId`), no corresponde ningún
    * `recipeOrigin` explícito, para que el `@default(MANUAL)` de Prisma siga aplicando sin
@@ -297,6 +297,9 @@ export class PlansRepository {
       }
 
       return { planId: plan.id, recipesForTracking };
+    }, {
+      maxWait: 10_000,
+      timeout: 30_000,
     });
   }
 
@@ -397,6 +400,9 @@ export class PlansRepository {
       });
 
       return { planId: newPlan.id, recipesForTracking };
+    }, {
+      maxWait: 10_000,
+      timeout: 30_000,
     });
   }
 
@@ -473,6 +479,14 @@ export class PlansRepository {
       data: { status: toStatus, completedAt: new Date(), ...data },
     });
 
+    return result.count;
+  }
+
+  async updatePendingGenerationRunModel(id: string, userId: string, model: string): Promise<number> {
+    const result = await (this.prisma.generationRun.updateMany as any)({
+      where: { id, userId, status: 'PENDING' },
+      data: { model },
+    });
     return result.count;
   }
 

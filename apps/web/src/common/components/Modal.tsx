@@ -1,39 +1,67 @@
-import { useEffect, useId, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type MouseEvent, type ReactNode } from 'react';
 
 type ModalProps = {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
-  // NUT-20 (séptima iteración, tester) — Hallazgo 2 (bloqueante) del cuarto review: cuando es
-  // `false`, ni el click en el overlay ni `Escape` invocan `onClose`. Usado por los
-  // formularios/confirmaciones envueltos en este `Modal` mientras hay un guardado/borrado en
-  // curso, para que cerrar el modal no abandone una mutación en vuelo. Default `true`
-  // (comportamiento previo, sin regresión).
   dismissible?: boolean;
 };
 
-// Componente de modal/overlay reutilizable (no existía ningún patrón previo en el proyecto,
-// ver plan.md sección 3 — "BRECHA confirmada"). Lo reutilizan el formulario de receta, el
-// formulario de ingrediente standalone y la confirmación de borrado en iteraciones
-// siguientes de este mismo ticket (NUT-20). API mínima y genérica a propósito.
+const FOCUSABLE_SELECTOR = [
+  'button:not([disabled])',
+  '[href]',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export function Modal({ open, onClose, title, children, dismissible = true }: ModalProps) {
   const titleId = useId();
+  const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) {
       return;
     }
 
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const focusableElements = () => Array.from(contentRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []);
+    const firstFocusable = focusableElements()[0];
+    firstFocusable?.focus();
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape' && dismissible) {
         onClose();
+        return;
+      }
+
+      if (event.key !== 'Tab') {
+        return;
+      }
+
+      const elements = focusableElements();
+      if (elements.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     }
 
     document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
+      previouslyFocused?.focus();
     };
   }, [open, onClose, dismissible]);
 
@@ -42,8 +70,6 @@ export function Modal({ open, onClose, title, children, dismissible = true }: Mo
   }
 
   function handleContentClick(event: MouseEvent<HTMLDivElement>) {
-    // Evita que un click dentro del contenido burbujee hasta el overlay y dispare un
-    // cierre no deseado (patrón estándar de click-fuera para diálogos).
     event.stopPropagation();
   }
 
@@ -65,6 +91,7 @@ export function Modal({ open, onClose, title, children, dismissible = true }: Mo
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
     >
       <div
+        ref={contentRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -1,12 +1,12 @@
 import { Injectable, Logger, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { NutritionProfile } from '../../generated/prisma/client';
+import { MealType, NutritionProfile } from '../../generated/prisma/client';
 import { parseJsonOutput } from '../recipe/validation/parse-generated-output';
 import type { RecipeDraft, ValidationResult, ValidationSummary } from '../recipe/validation/recipe-validation.types';
 import { reusableDuplicate, reusableRecipeId, summarizeParseFailure, summarizeResults } from '../recipe/validation/validate-recipe';
 import { CreateMealPlanDto, MealDto, MealPlanDayDto } from './dto';
-import { AiProviderUnavailableError, GEMINI_MODEL_NAME, GEMINI_PROVIDER, GeminiService } from './gemini/gemini.service';
+import { AiProviderUnavailableError, OPENAI_MODEL_NAME, OPENAI_PROVIDER, OpenAIService } from '../openai/openai.service';
 import { PlansRepository } from './plans.repository';
 import { RecipeValidationService, mealToDraftInput, type ValidatedRun } from './recipe-validation.service';
 
@@ -16,6 +16,7 @@ export interface WeeklyProposalInput {
   profile: NutritionProfile;
   weekStart: Date;
   weekStartStr: string;
+  onModelSelected?: (model: string) => void;
 }
 
 export interface WeeklyProposal {
@@ -34,23 +35,24 @@ export abstract class WeeklyProposalComposer {
   abstract composeWeeklyProposal(input: WeeklyProposalInput): Promise<WeeklyProposal>;
 }
 
-// Implementación actual: la generación semanal con Gemini validada por NUT-74.
+// Implementación actual: la generación semanal con OpenAI validada por NUT-74.
 @Injectable()
-export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
-  private readonly logger = new Logger(GeminiWeeklyProposalComposer.name);
+export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
+  private readonly logger = new Logger(OpenAIWeeklyProposalComposer.name);
 
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService,
+    private readonly openai: OpenAIService,
     private readonly validation: RecipeValidationService,
   ) {
     super();
   }
 
-  async composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr }: WeeklyProposalInput): Promise<WeeklyProposal> {
+  async composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr, onModelSelected }: WeeklyProposalInput): Promise<WeeklyProposal> {
     let raw: string;
+    let selectedModel: string = OPENAI_MODEL_NAME;
     try {
-      raw = await this.gemini.generateMealPlan(profile, weekStart);
+      raw = await this.openai.generateMealPlan(profile, weekStart, model => { selectedModel = model; });
     } catch (error) {
       // NUT-74: proveedor caído o timeout → 503; cualquier otro error es un bug y sigue de largo.
       if (error instanceof AiProviderUnavailableError) {
@@ -60,8 +62,14 @@ export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
       throw error;
     }
 
-    const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
-    const { days, results, summary } = await this.validateGeneratedDays(raw, profile, run);
+    if (selectedModel !== OPENAI_MODEL_NAME) {
+      const updated = await this.repository.updatePendingGenerationRunModel(runId, userId, selectedModel);
+      if (updated === 0) throw new Error(`GenerationRun ${runId} is no longer pending`);
+    }
+    // Invocation-local metadata lets regeneration attribute later caller-side rejections.
+    onModelSelected?.(selectedModel);
+    const run = { id: runId, userId, provider: OPENAI_PROVIDER, model: selectedModel };
+    const { days, results, summary } = await this.validateGeneratedDays(raw, run);
 
     // Envoltorio del plan (7 días, fechas, mealType, macros de la comida) con las recetas ya
     // normalizadas, también las de los duplicados que se van a reutilizar.
@@ -99,7 +107,6 @@ export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
    */
   private async validateGeneratedDays(
     raw: string,
-    profile: NutritionProfile,
     run: ValidatedRun,
   ): Promise<{ days: unknown[]; results: ValidationResult[]; summary: ValidationSummary }> {
     const parsed = parseJsonOutput(raw);
@@ -122,7 +129,26 @@ export class GeminiWeeklyProposalComposer extends WeeklyProposalComposer {
       throw new UnprocessableEntityException('The generated meal plan did not pass validation (COUNT_MISMATCH)');
     }
 
-    const results = await this.validation.validateDrafts(flattenMeals(days).map(mealToDraftInput), profile);
+    // Contrato semanal: cada día debe contener exactamente una comida de cada tipo.
+    // Validar antes del catálogo evita consultas para candidatos que ya son inválidos.
+    const expectedMealTypes = Object.values(MealType);
+    const hasInvalidMealTypes = days.some((day) => {
+      if (typeof day !== 'object' || day === null) return true;
+      const meals = (day as { meals?: unknown }).meals;
+      if (!Array.isArray(meals) || meals.length !== expectedMealTypes.length) return true;
+
+      const mealTypes = meals.map((meal) =>
+        typeof meal === 'object' && meal !== null ? (meal as { mealType?: unknown }).mealType : undefined,
+      );
+      return mealTypes.some((mealType) => !expectedMealTypes.includes(mealType as MealType)) ||
+        expectedMealTypes.some((mealType) => mealTypes.filter((candidate) => candidate === mealType).length !== 1);
+    });
+    if (hasInvalidMealTypes) {
+      await this.validation.rejectWithCode(run, 'AI_INVALID_SCHEMA');
+      throw new UnprocessableEntityException('The generated meal plan did not pass validation (AI_INVALID_SCHEMA)');
+    }
+
+    const results = await this.validation.validateDrafts(flattenMeals(days).map(mealToDraftInput));
 
     const rejected = results.filter(result => !result.valid && !reusableRecipeId(result));
     if (rejected.length > 0) {

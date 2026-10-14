@@ -6,7 +6,7 @@ export class IngredientDto {
   @IsString()
   name!: string;
 
-  // El contrato acepta número o string porque Gemini puede devolver "1/2" o 0.5.
+  // El contrato acepta número o string para representar cantidades fraccionarias como "1/2".
   // El campo NO se normaliza a un tipo fijo para no perder información.
   // null: ingrediente sin cantidad ("al gusto") que NUT-74 guarda así; un PUT tiene que poder reenviarlo.
   @ValidateIf((_, value) => value !== null)

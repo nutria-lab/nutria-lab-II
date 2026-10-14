@@ -72,6 +72,14 @@ const GROUP_EXCEPTIONS: Record<IngredientGroup, RegExp[]> = {
   honey: [/\bmiel\s+de\s+(agave|maple|arce|cana|maiz)\b/g],
 };
 
+// Exceptions that identify an included substitute, rather than a negation such as "sin leche".
+// These can resolve a generic reference in the title or steps to the ingredient actually listed.
+const SUBSTITUTE_EXCEPTIONS: Partial<Record<IngredientGroup, RegExp[]>> = {
+  dairy: [GROUP_EXCEPTIONS.dairy[0]],
+  gluten: [GROUP_EXCEPTIONS.gluten[0], GROUP_EXCEPTIONS.gluten[1]],
+  meat: [GROUP_EXCEPTIONS.meat[0]],
+};
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -84,14 +92,17 @@ function mentionsGroup(text: string, group: string): boolean {
   const keywords = (GROUP_KEYWORDS[group as IngredientGroup] ?? [normalizeRecipeText(group)]).map(escapeRegExp);
   const exceptions = GROUP_EXCEPTIONS[group as IngredientGroup] ?? [];
   const negations = keywords.map(keyword => new RegExp(`\\b(sin|libre de)\\s+${keyword}(s|es)?\\b`, 'g'));
-  const cleaned = [...exceptions, ...negations].reduce((current, pattern) => current.replace(pattern, ' '), text);
+  const coordinatedNegations = keywords.map(keyword =>
+    new RegExp(`\\b(sin|libre de)\\b[^,;.!?]{0,80}\\bni\\s+${keyword}(s|es)?\\b`, 'g'));
+  const cleaned = [...exceptions, ...negations, ...coordinatedNegations]
+    .reduce((current, pattern) => current.replace(pattern, ' '), text);
   return keywords.some(keyword => new RegExp(`\\b${keyword}(s|es)?\\b`).test(cleaned));
 }
 
-// Devuelve el primer grupo (en el orden recibido) que aparece en alguno de los textos, o null.
+// Evaluate each text separately so a negation in one field cannot affect another mention.
 export function findIngredientGroup(texts: readonly string[], groups: readonly string[]): string | null {
-  const text = normalizeRecipeText(texts.join(' | '));
-  return groups.find(group => mentionsGroup(text, group)) ?? null;
+  const normalizedTexts = texts.map(normalizeRecipeText);
+  return groups.find(group => normalizedTexts.some(text => mentionsGroup(text, group))) ?? null;
 }
 
 // Restricciones excluidas del perfil, en minúsculas (ej.: ['gluten', 'nuts']).
@@ -144,6 +155,52 @@ export function restrictionTexts(source: RestrictionTextSource): string[] {
     typeof ingredient === 'object' && ingredient !== null ? (ingredient as { name?: unknown }).name : undefined);
   const steps = Array.isArray(source.instructions) ? source.instructions : [source.instructions];
   return [source.mealTitle, source.title, source.description, source.nutritionDescription, ...names, ...steps].filter(isText);
+}
+
+/**
+ * Checks a structured recipe source without losing which terms are actual ingredients.
+ * A listed plant-based substitute can resolve a generic reference to that same item in
+ * prose (for example, "Yogur con frutos rojos" when the ingredient is "Yogur de soja").
+ * Ingredient names remain authoritative: an actual dairy ingredient still rejects the recipe.
+ */
+export function findExcludedIngredientInSource(
+  source: RestrictionTextSource,
+  excluded: readonly string[],
+): string | null {
+  const ingredients = Array.isArray(source.ingredients)
+    ? source.ingredients.map(ingredient =>
+      typeof ingredient === 'object' && ingredient !== null
+        ? (ingredient as { name?: unknown }).name
+        : undefined).filter((name): name is string => typeof name === 'string')
+    : [];
+  const instructions = Array.isArray(source.instructions) ? source.instructions : [source.instructions];
+  const prose = [source.mealTitle, source.title, source.description, source.nutritionDescription, ...instructions]
+    .filter((text): text is string => typeof text === 'string' && text.length > 0);
+
+  for (const group of excluded.map(value => value.toLowerCase())) {
+    if (findIngredientGroup(ingredients, [group])) return group;
+
+    const keywords = (GROUP_KEYWORDS[group as IngredientGroup] ?? [normalizeRecipeText(group)])
+      .map(escapeRegExp);
+    const substituteExceptions = SUBSTITUTE_EXCEPTIONS[group as IngredientGroup] ?? [];
+    const resolvedKeywords = new Set<string>();
+    for (const ingredient of ingredients) {
+      const normalized = normalizeRecipeText(ingredient);
+      const resolved = substituteExceptions.reduce((text, pattern) => text.replace(pattern, ' '), normalized);
+      for (const keyword of keywords) {
+        const keywordPattern = new RegExp(`\\b${keyword}(s|es)?\\b`);
+        if (keywordPattern.test(normalized) && !keywordPattern.test(resolved)) resolvedKeywords.add(keyword);
+      }
+    }
+
+    const contextualProse = prose.map(text => {
+      const normalized = normalizeRecipeText(text);
+      return [...resolvedKeywords].reduce((current, keyword) =>
+        current.replace(new RegExp(`\\b${keyword}(s|es)?\\b`, 'g'), ' '), normalized);
+    });
+    if (findIngredientGroup(contextualProse, [group])) return group;
+  }
+  return null;
 }
 
 // Primera restricción del perfil (en cualquier capitalización) que aparece en los textos, en minúsculas.

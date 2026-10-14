@@ -11,8 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { canonicalJson, computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
 import { RegenerateMealPlanDto } from './dto';
-import { GEMINI_MODEL_NAME, GEMINI_PROVIDER } from './gemini/gemini.service';
-import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
+import { OPENAI_MODEL_NAME, OPENAI_PROVIDER } from '../openai/openai.service';
+import { CURRENT_PROMPT_VERSION } from './openai/prompts';
 import { buildProfileSnapshot } from './generation-run-snapshot';
 import { isStalePendingRun } from './generation-run-ttl';
 import { toPublicMealPlan } from './meal-plan-response';
@@ -62,8 +62,8 @@ export class MealPlanRegenerationService {
     const createOrRecoverRun = () => this.repository.createOrRecoverGenerationRun(
       userId,
       KIND,
-      GEMINI_PROVIDER,
-      GEMINI_MODEL_NAME,
+      OPENAI_PROVIDER,
+      OPENAI_MODEL_NAME,
       CURRENT_PROMPT_VERSION.version,
       CURRENT_PROMPT_VERSION.schemaVersion,
       requestSnapshot,
@@ -115,14 +115,16 @@ export class MealPlanRegenerationService {
   }
 
   private async regenerateForRun(userId: string, runId: string, plan: any, profile: NutritionProfile, weekStartStr: string) {
-    const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
+    const run: { id: string; userId: string; provider: string; model: string } = { id: runId, userId, provider: OPENAI_PROVIDER, model: OPENAI_MODEL_NAME };
+    let selectedModel: string = OPENAI_MODEL_NAME;
 
     // 4. Propuesta nueva validada (NUT-74) y "materialmente nueva": al menos una franja distinta de la
     // versión anterior. Hasta 2 generaciones; un 422 de validación o un 503 cortan sin reintentar.
     const proposal = await firstDifferentProposal(
-      () => this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart: plan.startDate, weekStartStr }),
+      () => this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart: plan.startDate, weekStartStr, onModelSelected: model => { selectedModel = model; } }),
       candidate => hasMaterialChange(plan.days, candidate.comparableDays),
     );
+    run.model = selectedModel;
     if (!proposal) {
       await this.validation.rejectWithCode(run, 'NO_DIFFERENT_PROPOSAL');
       throw new UnprocessableEntityException('Could not produce a different valid proposal for this week (NO_DIFFERENT_PROPOSAL)');

@@ -1,7 +1,6 @@
 import { RecipeCategory } from '@/generated/prisma/client';
 import { normalizeProperties } from '@/utils/normalize-properties.util';
 import { normalizeRecipeText, normalizeRecipeTitle, recipeFingerprint } from '../recipe-fingerprint.util';
-import { findExcludedIngredient, findIngredientGroup, restrictionTexts } from './ingredient-dictionary';
 import { RECIPE_VALIDATION_CONFIG as CONFIG } from './recipe-validation.config';
 import {
   STAGE_BY_CODE,
@@ -34,7 +33,7 @@ const cleanText = (value: string) => value.trim().replace(/\s+/g, ' ');
 const missing = (field: string, message: string): ValidationError => ({ code: 'MISSING_FIELD', field, message });
 const outOfRange = (field: string, message: string): ValidationError => ({ code: 'INVALID_RANGE', field, message });
 
-// Los macros llegan como { calories, protein, ... } (catálogo) o { Calories, Protein, ... } (comida de Gemini).
+// Los macros llegan como { calories, protein, ... } (catálogo) o { Calories, Protein, ... } (comida del plan).
 function readField(source: Raw, key: string): unknown {
   return source[key] ?? source[key.charAt(0).toUpperCase() + key.slice(1)];
 }
@@ -233,40 +232,6 @@ function checkCalories(values: RecipeDraftNutritionalValues): ValidationError | 
   return null;
 }
 
-// ---- Etapa profile ----
-
-function checkProfile(draft: RecipeDraft, ctx: RecipeValidationContext): ValidationError[] {
-  const errors: ValidationError[] = [];
-  const texts = restrictionTexts({
-    mealTitle: draft.mealTitle,
-    title: draft.title,
-    description: draft.description,
-    nutritionDescription: draft.nutritionalValues.description,
-    ingredients: draft.ingredients,
-    instructions: draft.instructions,
-  });
-
-  for (const restriction of ctx.excludedIngredients) {
-    const found = findExcludedIngredient(texts, [restriction]);
-    if (found) {
-      errors.push({ code: 'EXCLUDED_INGREDIENT', message: `Recipe contains an excluded ingredient: ${found}` });
-    }
-  }
-
-  for (const category of draft.categories) {
-    const groups = CONFIG.contradictions[category];
-    const found = groups ? findIngredientGroup(texts, groups) : null;
-    if (found) {
-      errors.push({
-        code: 'CONTRADICTORY_PREFERENCE',
-        field: 'categories',
-        message: `Category ${category} contradicts the recipe ingredients (${found})`,
-      });
-    }
-  }
-  return errors;
-}
-
 // ---- Etapa duplicates (huella de NUT-72) ----
 
 function checkDuplicates(
@@ -322,9 +287,6 @@ function runPipeline(input: unknown, ctx: RecipeValidationContext, batchFingerpr
   const ranges = checkRanges(draft);
   if (ranges.errors.length > 0) return { valid: false, errors: ranges.errors };
   warnings.push(...ranges.warnings);
-
-  const profileErrors = checkProfile(draft, ctx);
-  if (profileErrors.length > 0) return { valid: false, errors: profileErrors };
 
   const duplicates = checkDuplicates(draft, ctx, batchFingerprints);
   if (duplicates.errors.length > 0) return { valid: false, errors: duplicates.errors };

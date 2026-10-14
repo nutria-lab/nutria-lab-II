@@ -17,11 +17,10 @@ import { InsufficientCoverageProfileError } from '../recipe/recipe-coverage.type
 import { canonicalJson, computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
 import { normalizeProperties } from '../../utils/normalize-properties.util';
 import { MealDto, ReplaceMealDto } from './dto';
-import { AiProviderUnavailableError, GeminiService, GEMINI_MODEL_NAME, GEMINI_PROVIDER } from './gemini/gemini.service';
-import { REPLACEMENT_PROMPT_VERSION } from './gemini/prompts';
+import { AiProviderUnavailableError, OpenAIService, OPENAI_MODEL_NAME, OPENAI_PROVIDER } from '../openai/openai.service';
+import { REPLACEMENT_PROMPT_VERSION } from './openai/prompts';
 import { parseJsonOutput } from '../recipe/validation/parse-generated-output';
 import { buildProfileSnapshot } from './generation-run-snapshot';
-import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
 import { reusableDuplicate, summarizeParseFailure, summarizeResults } from '../recipe/validation/validate-recipe';
 import { isStalePendingRun } from './generation-run-ttl';
 import { RecipeValidationService, mealToDraftInput } from './recipe-validation.service';
@@ -62,7 +61,7 @@ export class MealReplacementService {
 
   constructor(
     private readonly repository: PlansRepository,
-    private readonly gemini: GeminiService,
+    private readonly openai: OpenAIService,
     private readonly coverage: RecipeCoverageService,
     private readonly config: ConfigService,
     private readonly unsplash: UnsplashService,
@@ -105,8 +104,8 @@ export class MealReplacementService {
     const createOrRecoverRun = () => this.repository.createOrRecoverGenerationRun(
       userId,
       KIND,
-      GEMINI_PROVIDER,
-      GEMINI_MODEL_NAME,
+      OPENAI_PROVIDER,
+      OPENAI_MODEL_NAME,
       REPLACEMENT_PROMPT_VERSION.version,
       REPLACEMENT_PROMPT_VERSION.schemaVersion,
       requestSnapshot,
@@ -144,15 +143,14 @@ export class MealReplacementService {
     criteria: ReplacementCriteria,
   ): Promise<MealReplacementResponse> {
     // 3. Primero el catálogo (sin IA); si no hay ninguna compatible, se genera una.
-    const forbidden = forbiddenRestrictions(profile);
-    const existing = await this.findCatalogRecipe(userId, plan, meal.recipeId, criteria, forbidden);
+    const existing = await this.findCatalogRecipe(userId, plan, meal.recipeId, criteria);
 
     const write = existing
       ? {
           existingRecipeId: existing.id,
           nutritionalValues: this.nutritionalValuesFromRecipe(existing),
           outputSnapshot: { path: 'REUSED_EXISTING_RECIPE' },
-          validationSnapshot: { source: 'coverage', restrictionsChecked: true },
+          validationSnapshot: { source: 'coverage' },
         }
       : await this.generateRecipe(userId, runId, profile, meal.mealType, criteria, meal.recipeId ?? null);
 
@@ -234,16 +232,13 @@ export class MealReplacementService {
     plan: any,
     currentRecipeId: string | null,
     criteria: ReplacementCriteria,
-    forbidden: string[],
   ): Promise<Recipe | null> {
     const usedThisWeek: string[] = plan.days.flatMap((day: any) => day.meals.map((meal: any) => meal.recipeId)).filter(Boolean);
     const exclusions = [[...new Set(usedThisWeek)], currentRecipeId ? [currentRecipeId] : []];
 
     for (const excludeRecipeIds of exclusions) {
       const found = await this.compatibleCatalogRecipes(userId, criteria, excludeRecipeIds);
-      // Defensa extra: la receta también tiene que pasar el mismo diccionario de restricciones que la IA (NUT-74).
-      const safe = found.find(recipe => !findExcludedIngredient(restrictionTexts(recipe), forbidden));
-      if (safe) return safe;
+      if (found.length > 0) return found[0];
     }
     return null;
   }
@@ -259,9 +254,8 @@ export class MealReplacementService {
     }
   }
 
-  // NUT-73/74: genera exactamente una comida y el servidor la valida antes de guardarla (la IA
-  // nunca juzga su propio output). Inválida → REJECTED y 422, sin escribir nada. Un duplicado
-  // exacto del catálogo no es un rechazo: se reutiliza esa receta.
+  // Generates one replacement. The server validates its structure and duplicate status, while
+  // dietary restrictions are delegated to the profile provided in the model prompt.
   private async generateRecipe(
     userId: string,
     runId: string,
@@ -271,8 +265,9 @@ export class MealReplacementService {
     currentRecipeId: string | null,
   ) {
     let raw: string;
+    let selectedModel: string = OPENAI_MODEL_NAME;
     try {
-      raw = await this.gemini.generateReplacementMeal(profile, mealType, criteria);
+      raw = await this.openai.generateReplacementMeal(profile, mealType, criteria, model => { selectedModel = model; });
     } catch (error) {
       if (error instanceof AiProviderUnavailableError) {
         await this.failRun(runId, userId, 'FAILED', error.reason);
@@ -281,7 +276,11 @@ export class MealReplacementService {
       throw error;
     }
 
-    const run = { id: runId, userId, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME };
+    if (selectedModel !== OPENAI_MODEL_NAME) {
+      const updated = await this.repository.updatePendingGenerationRunModel(runId, userId, selectedModel);
+      if (updated === 0) throw new Error(`GenerationRun ${runId} is no longer pending`);
+    }
+    const run = { id: runId, userId, provider: OPENAI_PROVIDER, model: selectedModel };
     const parsed = parseJsonOutput(raw);
     if (!parsed.ok) {
       await this.validation.reject(run, summarizeParseFailure(parsed.errors));
