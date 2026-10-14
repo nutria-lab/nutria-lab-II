@@ -1,9 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { RecipeImage, PersistedRecipeImage } from './recipe-image.types';
 import { buildUnsplashQuery } from './unsplash-query.util';
 import { selectUnsplashCandidate, type UnsplashCandidate } from './unsplash-candidate-selector.util';
 import { isValidUnsplashUrl, UNSPLASH_API_HOST } from './unsplash-url-validator.util';
+import { NOOP_DEPENDENCY_INSTRUMENTATION } from '../kpi/dependencies/dependency-instrumentation';
+import type { DependencyInstrumentation } from '../kpi/dependencies/dependency-instrumentation';
+import { DEPENDENCY_INSTRUMENTATION } from '../kpi/kpi.tokens';
 // Import sólo de tipo: evita una dependencia circular en runtime con el módulo de planes.
 import type { MealPlanDayDto } from '@/modules/plans/dto';
 
@@ -56,6 +59,8 @@ const EPOCH_SECONDS_THRESHOLD = 1_000_000_000;
 
 type SearchResult = { query: string; candidate: UnsplashCandidate };
 
+type SearchExchange = { kind: 'status'; status: number } | { kind: 'invalid_json' } | { kind: 'body'; data: unknown };
+
 // Agrega la UTM de atribución que pide Unsplash conservando los demás parámetros.
 // `set` reemplaza un utm_* que ya existiera en vez de duplicarlo.
 function withAttributionUtm(url: string): string {
@@ -99,7 +104,13 @@ export class UnsplashService {
   // Hasta cuándo no se busca porque la cuota está agotada (null = hay cuota). Vive en memoria.
   private quotaExhaustedUntil: number | null = null;
 
-  constructor(private readonly configService: ConfigService) {}
+  // La instrumentación KPI es opcional: sin KpiModule o en construcciones manuales es no-op.
+  constructor(
+    private readonly configService: ConfigService,
+    @Optional()
+    @Inject(DEPENDENCY_INSTRUMENTATION)
+    private readonly instrumentation: DependencyInstrumentation = NOOP_DEPENDENCY_INSTRUMENTATION,
+  ) {}
 
   // Para POST /recipes: busca la foto de una receta y la devuelve lista para guardar, con el
   // tracking en PENDING. No registra el uso: eso se hace después de guardar (trackDownload).
@@ -186,10 +197,17 @@ export class UnsplashService {
     const timeoutId = setTimeout(() => abortController.abort(), UNSPLASH_TIMEOUT_MS);
 
     try {
-      const response = await fetch(trackingUrl, {
-        headers: { Authorization: `Client-ID ${apiKey}` },
-        signal: abortController.signal,
-      });
+      // Sólo el fetch se registra como intento KPI de 'unsplash_download'.
+      const response = await this.instrumentation.run(
+        'unsplash_download',
+        () =>
+          fetch(trackingUrl, {
+            headers: { Authorization: `Client-ID ${apiKey}` },
+            signal: abortController.signal,
+          }),
+        outcome =>
+          outcome.ok ? (outcome.value.ok ? 'success' : 'error') : abortController.signal.aborted ? 'timeout' : 'error',
+      );
 
       // fetch() no falla con un status de error (4xx/5xx): hay que revisarlo a mano.
       if (!response.ok) {
@@ -240,36 +258,36 @@ export class UnsplashService {
 
     // Un solo try/finally para fetch() y json(): el timeout también cubre la lectura del body.
     try {
-      const response = await fetch(url.toString(), {
-        headers: { Authorization: `Client-ID ${apiKey}` },
-        signal: abortController.signal,
-      });
+      // 200 con JSON leído ⇒ success aunque no haya resultados; otro status o JSON inválido ⇒ error.
+      const exchange = await this.instrumentation.run(
+        'unsplash_search',
+        () => this.searchExchange(url.toString(), apiKey, abortController.signal),
+        outcome =>
+          outcome.ok
+            ? outcome.value.kind === 'body'
+              ? 'success'
+              : 'error'
+            : abortController.signal.aborted
+              ? 'timeout'
+              : 'error',
+      );
 
-      this.applyQuotaFromResponse(response);
-
-      if (response.status !== 200) {
+      if (exchange.kind === 'status') {
         // 401/403 = key inválida o sin permisos: mensaje propio para detectarlo en los logs.
-        if (response.status === 401 || response.status === 403) {
-          this.logger.warn(`Unsplash configuration appears invalid (status ${response.status}) for query="${query}"`);
+        if (exchange.status === 401 || exchange.status === 403) {
+          this.logger.warn(`Unsplash configuration appears invalid (status ${exchange.status}) for query="${query}"`);
         } else {
-          this.logger.warn(`Unsplash responded with unexpected status ${response.status} for query="${query}"`);
+          this.logger.warn(`Unsplash responded with unexpected status ${exchange.status} for query="${query}"`);
         }
         return null;
       }
 
-      let data: unknown;
-      try {
-        data = await response.json();
-      } catch (error: any) {
-        if (error?.name === 'AbortError') {
-          // Timeout mientras se leía el body: se trata igual que un timeout de fetch() (catch de abajo).
-          throw error;
-        }
+      if (exchange.kind === 'invalid_json') {
         this.logger.warn(`Unsplash returned an invalid (non-JSON) response body for query="${query}"`);
         return null;
       }
 
-      const results = (data as { results?: unknown } | null | undefined)?.results;
+      const results = (exchange.data as { results?: unknown } | null | undefined)?.results;
       const candidate = selectUnsplashCandidate(results);
 
       if (!candidate) {
@@ -290,6 +308,30 @@ export class UnsplashService {
       return null;
     } finally {
       clearTimeout(timeoutId);
+    }
+  }
+
+  // Un abort, también durante json(), se relanza.
+  private async searchExchange(url: string, apiKey: string, signal: AbortSignal): Promise<SearchExchange> {
+    const response = await fetch(url, {
+      headers: { Authorization: `Client-ID ${apiKey}` },
+      signal,
+    });
+
+    this.applyQuotaFromResponse(response);
+
+    if (response.status !== 200) {
+      return { kind: 'status', status: response.status };
+    }
+
+    try {
+      return { kind: 'body', data: await response.json() };
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        // Timeout mientras se leía el body: se trata igual que un timeout de fetch() (catch del llamador).
+        throw error;
+      }
+      return { kind: 'invalid_json' };
     }
   }
 
