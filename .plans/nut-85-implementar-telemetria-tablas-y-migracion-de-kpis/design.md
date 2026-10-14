@@ -163,6 +163,8 @@ Ante ambigüedad se eligió la opción más conservadora según el contrato. Cad
 
 Hallazgo D32 (flake intermitente del test UNIQUE en la suite completa): el `query_timeout` de 150 ms del cliente pg es un temporizador del event loop; bajo carga (pausas de GC/event loop) vence aunque Postgres ya respondió y rechaza con `Error('Query read timeout')` sin `code` ni SQLSTATE (Prisma no lo envuelve; verificado con un log temporal), por eso se logueaba `KPI_WRITE_FAILED sqlstate=none`; la violación UNIQUE real sí llega como P2010 con `meta.driverAdapterError.cause.originalCode = 23505` y se mapea bien. Ahora ese caso se loguea `KPI_WRITE_TIMEOUT … sqlstate=none code=CLIENT_QUERY_TIMEOUT`, el connect timeout como `code=CLIENT_CONNECT_TIMEOUT` y los errores Prisma sin SQLSTATE con su código (p. ej. `code=P2028`), nunca con el mensaje.
 
+**D33 — El workflow no se activa hasta que exista el comando (hallazgo P1 del PR).** `apps/api/package.json` todavía no define `kpi:telemetry` (lo agrega Lara junto con `tsx`), así que el job queda condicionado a `if: vars.KPI_TELEMETRY_ENABLED == 'true'`, una variable de repositorio. Mientras no exista, tanto el cron como los disparos manuales quedan *skipped* en vez de fallar cada 30 minutos. Se eligió esto en lugar de agregar el script en este PR porque `package.json` es de Lara y cambiarlo obliga a regenerar el lockfile. Activación: después del merge del script, poner `KPI_TELEMETRY_ENABLED=true` en Settings → Secrets and variables → Actions → Variables. Rollback: borrar la variable o ponerla en otro valor.
+
 ---
 
 ## 3. Arquitectura

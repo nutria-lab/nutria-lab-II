@@ -333,6 +333,13 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(expr).not.toMatch(/'dev'|'qa'/);
     });
 
+    it('el job solo corre con vars.KPI_TELEMETRY_ENABLED == true (no se activa hasta que exista kpi:telemetry)', () => {
+      const wf = loadWorkflow();
+      const condition = jobScalar(wf, 'if');
+      expect(condition).toBeDefined();
+      expect(normalizeExpr(condition!).replace(/^\$\{\{\s*|\s*\}\}$/g, '')).toBe("vars.KPI_TELEMETRY_ENABLED == 'true'");
+    });
+
     it('el schedule ejecuta sample: MODE resuelve inputs.mode o sample', () => {
       const wf = loadWorkflow();
       const step = telemetryStep(wf);
@@ -458,12 +465,12 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(wf.steps.indexOf(upload)).toBeGreaterThan(wf.steps.indexOf(telemetryStep(wf)));
     });
 
-    it('solo usa secrets.DATABASE_URL y vars KPI_ENV / KPI_API_BASE_URL', () => {
+    it('solo usa secrets.DATABASE_URL y vars KPI_ENV / KPI_API_BASE_URL (más la guarda KPI_TELEMETRY_ENABLED)', () => {
       const wf = loadWorkflow();
       const secrets = new Set([...wf.text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map(m => m[1]));
       const vars = new Set([...wf.text.matchAll(/vars\.([A-Za-z0-9_]+)/g)].map(m => m[1]));
       expect([...secrets]).toEqual(['DATABASE_URL']);
-      expect([...vars].sort()).toEqual(['KPI_API_BASE_URL', 'KPI_ENV']);
+      expect([...vars].sort()).toEqual(['KPI_API_BASE_URL', 'KPI_ENV', 'KPI_TELEMETRY_ENABLED']);
       expect(wf.text).not.toMatch(/DATABASE_URL_UNPOOLED|PROJECT_KEY|SUPABASE_|service_role/);
       expect(wf.text).not.toMatch(/secrets\s*\[|toJSON\(\s*secrets/);
 

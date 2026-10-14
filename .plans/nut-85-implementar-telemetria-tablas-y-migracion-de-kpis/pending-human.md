@@ -8,9 +8,7 @@ Nada de esto bloquea el cierre de código del ticket; sí bloquea el merge o la 
    - Confirmar antes del push que la DB de los Preview de Vercel es una rama Neon aislada.
    - Después del primer push, no editar `migration.sql`: un cambio va en una migración nueva, porque si no cambia el checksum de una migración ya aplicada.
    - Adjuntar al PR el tamaño de `meal_plans` y `recipes`. Los índices `createdAt` se crean sin `CONCURRENTLY` y bloquean escrituras mientras se crean.
-2. **Entrada `kpi:telemetry` y `tsx` en `apps/api/package.json` (le toca a Lara, NUT-86).** Sin eso, el cron `*/30` falla cada 30 minutos en prod apenas se haga merge. Opciones:
-   - mergear en el mismo release que el cambio de Lara;
-   - o dejar el workflow deshabilitado en GitHub hasta entonces.
+2. **Entrada `kpi:telemetry` y `tsx` en `apps/api/package.json` (le toca a Lara, NUT-86) y activación del workflow (D33).** El job de `kpi-telemetry.yml` solo corre si la variable de repositorio `KPI_TELEMETRY_ENABLED` vale `'true'`, así que el merge no deja corridas en rojo. Cuando el script exista en `main`, hay que crear esa variable en Settings → Secrets and variables → Actions → Variables. Hasta entonces, los runs aparecen como *skipped* y no se toman muestras de salud.
 3. **`kpi-contract.ts`.** En esta rama hay una versión mínima solo con los tipos textuales del ticket, porque el archivo no existía. Coordinar con Lara: su versión entra primero y esta rama hace rebase, o en el conflicto add/add se toma su archivo sin mezclar contenidos.
 4. **GitHub Environments `dev` y `prod`.** Crear el secret `DATABASE_URL` y las variables `KPI_ENV` (`dev`/`prod`) y `KPI_API_BASE_URL`. Si `prod` no existe, GitHub lo crea vacío y el CLI sale con exit 2 (`KPI_ENV_MISSING`).
 5. **Variables del backend en Vercel.** `KPI_ENV` es obligatorio (`dev`/`prod`). `KPI_INSTRUMENTATION_ENABLED` es opcional; con `false` se apaga la instrumentación (rollback operativo, requiere redeploy).
