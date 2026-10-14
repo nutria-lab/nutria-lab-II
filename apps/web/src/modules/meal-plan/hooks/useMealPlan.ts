@@ -3,6 +3,7 @@ import { mealPlanService, type MealPlan } from '../../../services/mealPlanServic
 import { formatLocalDateKey } from '../utils';
 
 type Status = 'loading' | 'empty' | 'error' | 'success';
+type RegenerationStatus = 'idle' | 'confirming' | 'submitting' | 'error' | 'success';
 
 type UseMealPlanResult = {
   mealPlan: MealPlan | null;
@@ -10,7 +11,12 @@ type UseMealPlanResult = {
   errorMessage: string | null;
   retry: () => void;
   generate: () => Promise<void>;
-  regenerate: (planId: string) => Promise<void>;
+  regenerationStatus: RegenerationStatus;
+  regenerationError: string | null;
+  openRegeneration: (planId: string) => void;
+  cancelRegeneration: () => void;
+  confirmRegeneration: () => Promise<MealPlan | null>;
+  retryRegeneration: () => Promise<MealPlan | null>;
 };
 
 function getCurrentWeekStart(): string {
@@ -79,6 +85,9 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
   // segunda invocación de `generate()` (directa o vía `retry()`) dispare una nueva llamada
   // al servicio mientras la anterior todavía no resolvió.
   const generationInFlightRef = useRef(false);
+  const [regenerationStatus, setRegenerationStatus] = useState<RegenerationStatus>('idle');
+  const [regenerationError, setRegenerationError] = useState<string | null>(null);
+  const regenerationIntentRef = useRef<{ planId: string; idempotencyKey: string } | null>(null);
 
   const generate = useCallback(() => {
     if (generationInFlightRef.current) {
@@ -146,42 +155,63 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
       });
   }, [weekStart]);
 
-  const regenerate = useCallback((planId: string) => {
+  const openRegeneration = useCallback((planId: string) => {
     if (generationInFlightRef.current) {
-      return Promise.resolve();
+      return;
     }
+    regenerationIntentRef.current = {
+      planId,
+      idempotencyKey: globalThis.crypto.randomUUID(),
+    };
+    setRegenerationError(null);
+    setRegenerationStatus('confirming');
+  }, []);
+
+  const cancelRegeneration = useCallback(() => {
+    if (regenerationStatus === 'submitting') {
+      return;
+    }
+    regenerationIntentRef.current = null;
+    setRegenerationError(null);
+    setRegenerationStatus('idle');
+  }, [regenerationStatus]);
+
+  const confirmRegeneration = useCallback(async (): Promise<MealPlan | null> => {
+    const intent = regenerationIntentRef.current;
+    if (!intent || generationInFlightRef.current) {
+      return null;
+    }
+
     generationInFlightRef.current = true;
-    lastActionRef.current = 'load';
+    setRegenerationStatus('submitting');
+    setRegenerationError(null);
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
     const requestId = ++latestRequestIdRef.current;
 
-    setStatus('loading');
-    setErrorMessage(null);
+    try {
+      const data = await mealPlanService.regenerateMealPlan(intent.planId, intent.idempotencyKey, controller.signal);
+      if (latestRequestIdRef.current !== requestId) {
+        return null;
+      }
+      setMealPlan(data);
+      setRegenerationStatus('success');
+      regenerationIntentRef.current = null;
+      return data;
+    } catch {
+      if (latestRequestIdRef.current === requestId) {
+        setRegenerationStatus('error');
+        setRegenerationError('No pudimos regenerar tu plan semanal. Intentá de nuevo.');
+      }
+      return null;
+    } finally {
+      generationInFlightRef.current = false;
+    }
+  }, []);
 
-    return mealPlanService
-      .regenerateMealPlan(planId, controller.signal)
-      .then((data) => {
-        if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        setMealPlan(data);
-        setStatus('success');
-      })
-      .catch(() => {
-        if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        setStatus('error');
-        setErrorMessage('No pudimos regenerar tu plan semanal. Intentá de nuevo.');
-      })
-      .finally(() => {
-        generationInFlightRef.current = false;
-      });
-  }, [weekStart]);
-
+  const retryRegeneration = useCallback(() => confirmRegeneration(), [confirmRegeneration]);
   const retry = useCallback(() => {
     if (lastActionRef.current === 'generate') {
       generate();
@@ -197,5 +227,5 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     };
   }, [load]);
 
-  return { mealPlan, status, errorMessage, retry, generate, regenerate };
+  return { mealPlan, status, errorMessage, retry, generate, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration };
 }

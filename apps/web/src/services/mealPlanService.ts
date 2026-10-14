@@ -127,12 +127,13 @@ export const mealPlanService = {
   },
   async regenerateMealPlan(
     planId: string,
+    idempotencyKey: string,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<MealPlan> {
     const response = await apiClient.post<MealPlan>(`/meal-plans/${planId}/regenerate`, { reason: 'USER_REQUESTED' }, {
       timeout: MEAL_PLAN_GENERATION_TIMEOUT_MS,
       signal,
-      headers: { 'Idempotency-Key': globalThis.crypto.randomUUID() },
+      headers: { 'Idempotency-Key': idempotencyKey },
     });
     const data = response.data;
     if (!data || !Array.isArray(data.days)) {
