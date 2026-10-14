@@ -75,7 +75,10 @@ describe('KpiPublisher', () => {
   });
 
   it('reuses an already frozen authoritative batch without recollecting', async () => {
-    const { publisher, repository, logger, remoteClient, request } = publisherHarness();
+    const { publisher, repository, logger, remoteClient, request } = publisherHarness({ remoteClient: {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'not_found', status: 404 }),
+    } });
     const publication = await frozenPublication(repository as FakePublicationRepository);
 
     await publisher.publish(request);
@@ -103,6 +106,7 @@ describe('KpiPublisher', () => {
 
     const race = publisherHarness();
     const authoritative = await frozenPublication(race.repository as FakePublicationRepository);
+    race.remoteClient.verify.mockResolvedValue({ kind: 'not_found', status: 404 });
     await race.publisher.publish(race.request);
     expect(race.remoteClient.post).toHaveBeenCalledWith(authoritative.frozenPayload);
   });
@@ -116,19 +120,75 @@ describe('KpiPublisher', () => {
     expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
-  it('keeps postAccepted in output/artifact and prevents repost when accepted persistence fails, without a separate evidence store', async () => {
+  it('reconciles a remote MATCH after restart when accepted persistence failed, without reposting', async () => {
     const repository = new FakePublicationRepository();
     jest.spyOn(repository, 'markAccepted').mockRejectedValueOnce(new Error('accepted persistence unavailable'));
     const schemaCompatibleRepository = withoutLegacyPostAcceptedEvidence(repository);
-    const { publisher, remoteClient, artifactWriter, request } = publisherHarness({ repository: schemaCompatibleRepository });
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'match', status: 200 }),
+    };
+    const first = publisherHarness({ repository: schemaCompatibleRepository, remoteClient });
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ postAccepted: true, status: 'verify_pending' });
-    await expect(publisher.publish(request)).resolves.toMatchObject({ postAccepted: true });
+    await expect(first.publisher.publish(first.request)).resolves.toMatchObject({ postAccepted: true, status: 'verify_pending' });
+    const second = publisherHarness({ repository: schemaCompatibleRepository, remoteClient });
+
+    await expect(second.publisher.publish(second.request)).resolves.toMatchObject({ postAccepted: true, status: 'delivered' });
     expect(remoteClient.post).toHaveBeenCalledTimes(1);
-    expect(artifactWriter.write).toHaveBeenCalledWith(expect.objectContaining({
+    expect(first.artifactWriter.write).toHaveBeenCalledWith(expect.objectContaining({
       'diagnostics.json': expect.any(Buffer),
     }));
-    expect(artifactWriter.write.mock.calls[0][0]['diagnostics.json'].toString('utf8')).toContain('"post_accepted":true');
+    expect(first.artifactWriter.write.mock.calls[0][0]['diagnostics.json'].toString('utf8')).toContain('"post_accepted":true');
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({ status: 'delivered', acceptedAt: expect.any(String) });
+  });
+
+  it('permits a recovered frozen batch to POST only after remote NOT_FOUND', async () => {
+    const repository = new FakePublicationRepository();
+    const publication = await frozenPublication(repository);
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn()
+        .mockResolvedValueOnce({ kind: 'not_found', status: 404 })
+        .mockResolvedValueOnce({ kind: 'match', status: 200 }),
+    };
+    const { publisher, logger, request } = publisherHarness({ repository, remoteClient });
+
+    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+    expect(logger.collect).not.toHaveBeenCalled();
+    expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+  });
+
+  it('keeps a recovered frozen batch verify-pending when remote verification is unavailable', async () => {
+    const { publisher, repository, remoteClient, request } = publisherHarness({ remoteClient: {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'unavailable', status: 503 }),
+    } });
+    await frozenPublication(repository as FakePublicationRepository);
+
+    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'verify_pending', postAccepted: false });
+    expect(remoteClient.post).not.toHaveBeenCalled();
+  });
+
+  it('treats a recovered frozen batch whose verification GET throws as verify-pending without POST', async () => {
+    const { publisher, repository, remoteClient, request } = publisherHarness({ remoteClient: {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockRejectedValue({ kind: 'network' }),
+    } });
+    await frozenPublication(repository as FakePublicationRepository);
+
+    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'verify_pending', postAccepted: false });
+    expect(remoteClient.post).not.toHaveBeenCalled();
+  });
+
+  it('fails definitively without POST when a recovered frozen batch conflicts remotely', async () => {
+    const { publisher, repository, remoteClient, request } = publisherHarness({ remoteClient: {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'conflict', status: 409 }),
+    } });
+    await frozenPublication(repository as FakePublicationRepository);
+
+    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'failed', failureCode: 'REMOTE_VALUE_CONFLICT' });
+    expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
   it.each([

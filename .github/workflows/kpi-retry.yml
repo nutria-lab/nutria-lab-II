@@ -44,12 +44,24 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter api run prisma:generate
+      - name: Validate retry identity
+        env:
+          RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
+          ATTEMPT: ${{ inputs.attempt }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          [[ "$ATTEMPT" == "1" || "$ATTEMPT" == "2" ]]
+          [[ "$RETRY_CHAIN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
+          git cat-file -e "${SOURCE_COMMIT}^{commit}"
       - name: Delay retry attempt 1
         if: inputs.attempt == '1'
         run: sleep 300

@@ -35,6 +35,9 @@ describe('KPI publication workflows', () => {
     expect(content).toMatch(/workflow_dispatch:/);
     expect(content).toMatch(/date:\s*[\s\S]*environment:\s*[\s\S]*retry_chain_id:\s*[\s\S]*attempt:\s*[\s\S]*source_commit:/);
     expect(content).toMatch(/run_id:/);
+    expect(content).toMatch(/Validate retry identity/);
+    expect(content).toMatch(/SOURCE_COMMIT/);
+    expect(content).toMatch(/git cat-file -e/);
     expect(content).toMatch(/inputs\.attempt\s*==\s*['"]1['"]/);
     expect(content).toMatch(/inputs\.attempt\s*==\s*['"]2['"]/);
     expect(content).toMatch(/(?:sleep|delay)[^\n]*(?:300|5\s*\*\s*60)|(?:300|5\s*\*\s*60)[^\n]*(?:sleep|delay)/);

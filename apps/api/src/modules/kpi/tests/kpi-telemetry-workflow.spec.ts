@@ -353,6 +353,16 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
   });
 
   describe('I2 — aislamiento, pasos y comando', () => {
+    it('declares the exact package script invoked by the workflow', () => {
+      const workflow = readWorkflow();
+      const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../package.json'), 'utf8')) as {
+        scripts?: Record<string, string>;
+      };
+
+      expect(workflow).toContain('pnpm --filter api kpi:telemetry');
+      expect(packageJson.scripts?.['kpi:telemetry']).toBe('npx tsx scripts/kpi/telemetry.ts');
+    });
+
     it('concurrency por ambiente efectivo con cancel-in-progress: false', () => {
       const wf = loadWorkflow();
       const idx = findKeys(wf.lines, 'concurrency');

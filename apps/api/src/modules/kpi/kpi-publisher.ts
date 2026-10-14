@@ -25,7 +25,13 @@ export function parseRetryAfter(value: string | null | undefined, now: Date): nu
 }
 
 type RemotePost = { kind: 'accepted'; status: number } | { kind: string; status: number };
-type RemoteVerification = { kind: 'match' | 'unavailable' | 'conflict'; status: number };
+
+/** The remote GET result must distinguish absence from an indeterminate read. */
+export type RemoteVerification =
+  | { kind: 'match'; status: number }
+  | { kind: 'not_found'; status: number }
+  | { kind: 'conflict'; status: number }
+  | { kind: 'unavailable'; status: number | null };
 
 export interface KpiPublisherDependencies {
   repository: PublicationRepository;
@@ -46,8 +52,6 @@ export interface PublishRequest {
 
 /** Coordinates ports only: no database, network, or credential implementation lives here. */
 export class KpiPublisher {
-  private readonly acceptedRuns = new Set<string>();
-
   constructor(private readonly dependencies: KpiPublisherDependencies) {}
 
   async publish(request: PublishRequest): Promise<{ status: string; postAccepted: boolean; failureCode?: string }> {
@@ -59,7 +63,7 @@ export class KpiPublisher {
       retryChainId: request.retryChainId,
     });
 
-    if (publication.status === 'accepted' || publication.status === 'delivered' || publication.acceptedAt || this.acceptedRuns.has(publication.runId)) {
+    if (publication.status === 'accepted' || publication.status === 'delivered' || publication.acceptedAt) {
       return { status: publication.status === 'delivered' ? 'delivered' : 'verify_pending', postAccepted: true };
     }
 
@@ -71,16 +75,38 @@ export class KpiPublisher {
       }
     }
 
+    let recoveredFrozenBatch = publication.frozenBatch !== null;
     if (!publication.frozenBatch) {
       const window = resolveArgentinaKpiWindow(request.date, this.dependencies.clock);
       const context: CollectionContext = { contract_version: '1', ...window, environment: request.environment, run_id: publication.runId };
       const batch = freezeBatch(context, await this.dependencies.logger.collect(context));
-      publication = (await this.dependencies.repository.freezeBatchConditionally(publication.runId, batch, Buffer.from(JSON.stringify(batch.measurements), 'utf8'))).publication;
+      const freeze = await this.dependencies.repository.freezeBatchConditionally(publication.runId, batch, Buffer.from(JSON.stringify(batch.measurements), 'utf8'));
+      publication = freeze.publication;
+      // A losing CAS means another execution already owned this frozen batch
+      // and might already have reached a successful POST.
+      recoveredFrozenBatch = !freeze.won;
     }
 
     if (!hasValidFrozenPayload(publication)) {
       await this.dependencies.repository.markFailed(publication.runId, 'BATCH_INTEGRITY_ERROR');
       return { status: 'failed', postAccepted: false, failureCode: 'BATCH_INTEGRITY_ERROR' };
+    }
+
+    if (recoveredFrozenBatch) {
+      const verification = await this.verifyRemotely(request.environment, request.date);
+      if (verification.kind === 'match') {
+        return this.reconcileRemoteMatch(publication, request, verification.status);
+      }
+      if (verification.kind === 'conflict') {
+        await this.dependencies.repository.markFailed(publication.runId, 'REMOTE_VALUE_CONFLICT');
+        await this.writeArtifacts(publication, request, false, 'failed', 'REMOTE_VALUE_CONFLICT', verification.status);
+        return { status: 'failed', postAccepted: false, failureCode: 'REMOTE_VALUE_CONFLICT' };
+      }
+      if (verification.kind === 'unavailable') {
+        await this.writeArtifacts(publication, request, false, 'verify_pending', null, verification.status);
+        return { status: 'verify_pending', postAccepted: false };
+      }
+      // Only a typed NOT_FOUND permits a first (or retried) POST.
     }
 
     const response = await this.dependencies.remoteClient.post(publication.frozenPayload);
@@ -90,7 +116,6 @@ export class KpiPublisher {
       return { status: 'failed', postAccepted: false, failureCode };
     }
 
-    this.acceptedRuns.add(publication.runId);
     const acceptedAt = this.dependencies.clock.now().toISOString();
     try {
       await this.dependencies.repository.markAccepted(publication.runId, acceptedAt);
@@ -99,15 +124,40 @@ export class KpiPublisher {
       return { status: 'verify_pending', postAccepted: true };
     }
 
-    const verification = await this.dependencies.remoteClient.verify(request.environment, request.date);
+    const verification = await this.verifyRemotely(request.environment, request.date);
     if (verification.kind === 'match') {
-      await this.dependencies.repository.markDelivered(publication.runId, this.dependencies.clock.now().toISOString());
-      await this.writeArtifacts(publication, request, true, 'delivered', null, verification.status);
-      return { status: 'delivered', postAccepted: true };
+      return this.reconcileRemoteMatch(publication, request, verification.status);
     }
     const status = verification.kind === 'conflict' ? 'failed' : 'verify_pending';
     await this.writeArtifacts(publication, request, true, status, verification.kind === 'conflict' ? 'REMOTE_VALUE_CONFLICT' : null, verification.status);
     return { status, postAccepted: true };
+  }
+
+  private async reconcileRemoteMatch(
+    publication: PublicationRecord,
+    request: PublishRequest,
+    httpStatus: number,
+  ): Promise<{ status: string; postAccepted: boolean }> {
+    try {
+      if (!publication.acceptedAt) {
+        await this.dependencies.repository.markAccepted(publication.runId, this.dependencies.clock.now().toISOString());
+      }
+      await this.dependencies.repository.markDelivered(publication.runId, this.dependencies.clock.now().toISOString());
+    } catch {
+      await this.writeArtifacts(publication, request, true, 'verify_pending', null, httpStatus);
+      return { status: 'verify_pending', postAccepted: true };
+    }
+    await this.writeArtifacts(publication, request, true, 'delivered', null, httpStatus);
+    return { status: 'delivered', postAccepted: true };
+  }
+
+  private async verifyRemotely(environment: KpiEnvironment, date: string): Promise<RemoteVerification> {
+    try {
+      return await this.dependencies.remoteClient.verify(environment, date);
+    } catch {
+      // A failed GET cannot prove non-existence after an earlier POST.
+      return { kind: 'unavailable', status: null };
+    }
   }
 
   private async writeArtifacts(publication: PublicationRecord, request: PublishRequest, postAccepted: boolean, status: string, failureCode: string | null, httpStatus: number | null): Promise<void> {

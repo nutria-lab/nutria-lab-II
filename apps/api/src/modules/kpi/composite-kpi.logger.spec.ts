@@ -1,5 +1,6 @@
 import { CompositeKpiLogger } from './composite-kpi.logger';
 import type { CollectionContext, KpiId, KpiResult } from './kpi-contract';
+import { TelemetryLogger } from './telemetry-logger';
 
 const context: CollectionContext = {
   contract_version: '1',
@@ -60,6 +61,25 @@ describe('CompositeKpiLogger', () => {
     ]);
     expect(telemetry.collect).toHaveBeenCalledWith(context);
     expect(data.collect).toHaveBeenCalledWith(context);
+  });
+
+  it('composes the NUT-85 TelemetryLogger implementation with the business logger', async () => {
+    const core = {
+      finalizeCore: jest.fn().mockResolvedValue({
+        results: telemetryIds.map((id) => observed(id)),
+        reused: false,
+        aggregates: null,
+      }),
+      readCompleteFinals: jest.fn(),
+    };
+    const telemetry = new TelemetryLogger(core, { environment: 'qa' }, () => new Date('2026-10-10T00:00:01.000Z'));
+    const data = loggerFor(dataIds.map((id) => observed(id)));
+
+    const results = await new CompositeKpiLogger(telemetry, data).collect(context);
+
+    expect(results).toHaveLength(10);
+    expect(results.map((result) => result.kpi_id)).toEqual([...telemetryIds, ...dataIds].sort());
+    expect(core.finalizeCore).toHaveBeenCalledTimes(1);
   });
 
   it('maps an expected telemetry source failure to all eight unavailable technical IDs while retaining observed business values', async () => {
