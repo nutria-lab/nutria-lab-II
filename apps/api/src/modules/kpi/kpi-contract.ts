@@ -1,4 +1,5 @@
-/** The versioned boundary shared by every KPI collector and publisher. */
+// Versión mínima del contrato compartido v1 (tipos textuales del ticket); la implementación es de Lara.
+
 export type KpiEnvironment = 'dev' | 'qa' | 'prod';
 
 export type KpiId =
@@ -15,20 +16,20 @@ export type KpiId =
 
 export interface CollectionContext {
   contract_version: '1';
-  date: string;
+  date: string; // YYYY-MM-DD en Argentina
   environment: KpiEnvironment;
-  window_start: string;
-  window_end: string;
-  run_id: string;
+  window_start: string; // ISO UTC
+  window_end: string; // ISO UTC, corte fijo
+  run_id: string; // UUID de la publicacion; no el ID numerico de Actions
 }
 
 export interface KpiResult {
   kpi_id: KpiId;
   value: number | null;
   quality: 'observed' | 'unavailable';
-  reason: string | null;
+  reason: string | null; // codigo tecnico corto, sin datos personales
   sample_count: number;
-  measured_at: string;
+  measured_at: string; // ISO UTC real del calculo
 }
 
 export interface KpiLogger {
@@ -46,7 +47,7 @@ export interface Measurement {
 export interface FrozenBatch {
   contract_version: '1';
   context: CollectionContext;
-  measurements: readonly Measurement[];
+  measurements: readonly Measurement[]; // exactamente diez, ordenados por kpi_id
   diagnostics: readonly {
     kpi_id: KpiId;
     quality: 'observed' | 'defaulted';

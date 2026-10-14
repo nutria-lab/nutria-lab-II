@@ -1,0 +1,94 @@
+// Ids generados por la aplicación (sin default); los CHECK viven sólo en la migración SQL.
+
+model KpiHttpEvent {
+  id          String    @id @db.Uuid
+  environment String
+  operation   String
+  startedAt   DateTime  @map("started_at") @db.Timestamptz(3)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamptz(3)
+  durationMs  Float?    @map("duration_ms") @db.DoublePrecision
+  httpStatus  Int?      @map("http_status") @db.SmallInt
+  outcome     String
+  recordedAt  DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  @@index([environment, finishedAt], map: "kpi_http_event_environment_finished_at_idx")
+  @@index([environment, outcome, finishedAt], map: "kpi_http_event_environment_outcome_finished_at_idx")
+  @@index([environment, startedAt], map: "kpi_http_event_environment_started_at_idx")
+  @@map("kpi_http_event")
+}
+
+model KpiDependencyEvent {
+  id          String    @id @db.Uuid
+  environment String
+  operationId String    @map("operation_id") @db.Uuid
+  dependency  String
+  attempt     Int
+  startedAt   DateTime  @map("started_at") @db.Timestamptz(3)
+  finishedAt  DateTime? @map("finished_at") @db.Timestamptz(3)
+  durationMs  Float?    @map("duration_ms") @db.DoublePrecision
+  outcome     String
+  recordedAt  DateTime  @default(now()) @map("recorded_at") @db.Timestamptz(3)
+
+  @@unique([environment, operationId, dependency, attempt], map: "kpi_dependency_event_attempt_key")
+  @@index([environment, finishedAt], map: "kpi_dependency_event_environment_finished_at_idx")
+  @@index([environment, outcome, finishedAt], map: "kpi_dependency_event_environment_outcome_finished_at_idx")
+  @@map("kpi_dependency_event")
+}
+
+model KpiHealthSample {
+  id           String   @id @db.Uuid
+  environment  String
+  scheduledFor DateTime @map("scheduled_for") @db.Timestamptz(3)
+  measuredAt   DateTime @map("measured_at") @db.Timestamptz(3)
+  apiOk        Boolean? @map("api_ok")
+  databaseOk   Boolean? @map("database_ok")
+  outcome      String
+  reason       String?
+
+  @@unique([environment, scheduledFor], map: "kpi_health_sample_bucket_key")
+  @@index([environment, measuredAt], map: "kpi_health_sample_environment_measured_at_idx")
+  @@map("kpi_health_sample")
+}
+
+model KpiSnapshot {
+  id           String   @id @db.Uuid
+  environment  String
+  reportDate   DateTime @map("report_date") @db.Date
+  windowStart  DateTime @map("window_start") @db.Timestamptz(3)
+  windowEnd    DateTime @map("window_end") @db.Timestamptz(3)
+  snapshotKind String   @map("snapshot_kind")
+  kpiId        String   @map("kpi_id")
+  value        Float?   @db.DoublePrecision
+  quality      String
+  reason       String?
+  sampleCount  BigInt   @map("sample_count")
+  measuredAt   DateTime @map("measured_at") @db.Timestamptz(3)
+
+  @@unique([environment, reportDate, windowEnd, snapshotKind, kpiId], map: "kpi_snapshot_cut_key")
+  @@index([environment, reportDate, snapshotKind], map: "kpi_snapshot_environment_report_date_snapshot_kind_idx")
+  @@map("kpi_snapshot")
+}
+
+// updatedAt se setea explícitamente (sin @updatedAt).
+model KpiPublication {
+  runId         String    @id @map("run_id") @db.Uuid
+  environment   String
+  reportDate    DateTime  @map("report_date") @db.Date
+  windowStart   DateTime  @map("window_start") @db.Timestamptz(3)
+  windowEnd     DateTime  @map("window_end") @db.Timestamptz(3)
+  status        String
+  frozenBatch   Json?     @map("frozen_batch") @db.JsonB
+  payloadSha256 String?   @map("payload_sha256")
+  sourceCommit  String    @map("source_commit")
+  retryChainId  String    @map("retry_chain_id") @db.Uuid
+  attemptCount  Int       @default(0) @map("attempt_count")
+  lastError     String?   @map("last_error")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  acceptedAt    DateTime? @map("accepted_at") @db.Timestamptz(3)
+  deliveredAt   DateTime? @map("delivered_at") @db.Timestamptz(3)
+
+  @@unique([environment, reportDate], map: "kpi_publication_day_key")
+  @@index([status, updatedAt], map: "kpi_publication_status_updated_at_idx")
+  @@map("kpi_publication")
+}
