@@ -25,6 +25,18 @@ export type RecipeNutritionalValues = {
   fat: number;
 };
 
+export type RecipeImage = {
+  provider: 'UNSPLASH';
+  imageUrl: string;
+  alt: string;
+  photographer: string;
+  photographerUrl: string;
+  sourceUrl: string;
+  providerPhotoId?: string;
+  query?: string;
+  retrievedAt?: string;
+};
+
 export type Recipe = {
   id: string;
   title: string;
@@ -38,6 +50,7 @@ export type Recipe = {
   properties: string[];
   createdAt: string;
   updatedAt: string;
+  image?: RecipeImage | null;
 };
 
 export type CreateRecipeRequest = {
