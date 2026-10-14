@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import type { Meal } from '../../../services/mealPlanService';
 import { MEAL_TYPE_LABELS, formatIngredient } from '../utils';
+import { MealCardErrorBanner } from './MealCardErrorBanner';
+import { MealCardLoadingOverlay } from './MealCardLoadingOverlay';
+import { MealCardMobileConfirm } from './MealCardMobileConfirm';
 
 const MEAL_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
   BREAKFAST: { bg: 'bg-tertiary-fixed/40', text: 'text-on-tertiary-container' },
@@ -20,14 +23,31 @@ function MealTypeBadge({ mealType }: { mealType: string }) {
   );
 }
 
+export type MealCardReplaceError = {
+  message: string;
+  onRetry: () => void;
+  onCancel: () => void;
+};
+
 type MealCardProps = {
   meal: Meal;
   compact?: boolean;
   onSwap?: (meal: Meal) => void;
+  onReplace?: (meal: Meal) => void;
+  isReplacing?: boolean;
+  replaceError?: MealCardReplaceError | null;
 };
 
-export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
+export function MealCard({
+  meal,
+  compact = false,
+  onSwap,
+  onReplace,
+  isReplacing = false,
+  replaceError = null,
+}: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isConfirmingMobile, setIsConfirmingMobile] = useState(false);
   const { recipe } = meal;
 
   const totalMinutes = recipe
@@ -36,16 +56,30 @@ export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
   const calories = meal.nutritionalValues?.Calories;
   const protein = meal.nutritionalValues?.Protein;
 
+  const handleTriggerReplace = () => {
+    if (onReplace) {
+      onReplace(meal);
+    } else if (onSwap) {
+      onSwap(meal);
+    }
+  };
+
   if (compact) {
     return (
-      <article className="flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all">
+      <article
+        aria-busy={isReplacing}
+        className="relative flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all"
+      >
+        {isReplacing && <MealCardLoadingOverlay compact />}
+
         <div className="flex items-center justify-between">
           <MealTypeBadge mealType={meal.mealType} />
           <button
             type="button"
+            disabled={isReplacing}
             aria-label={`Cambiar comida ${recipe?.title ?? ''}`.trim()}
-            onClick={() => onSwap?.(meal)}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors"
+            onClick={handleTriggerReplace}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors disabled:opacity-40"
           >
             <span aria-hidden="true" className="material-symbols-outlined text-sm">sync</span>
           </button>
@@ -72,6 +106,15 @@ export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
             )}
           </div>
         )}
+
+        {replaceError && (
+          <MealCardErrorBanner
+            compact
+            message={replaceError.message}
+            onRetry={replaceError.onRetry}
+            onCancel={replaceError.onCancel}
+          />
+        )}
       </article>
     );
   }
@@ -94,51 +137,85 @@ export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
   const instructions = recipe.instructions ?? [];
 
   return (
-    <article className="overflow-hidden rounded-xl bg-white shadow-[0_4px_20px_rgba(46,50,48,0.06)] border border-outline-variant/30 transition-shadow hover:shadow-md">
-      {/* Card toggle button */}
-      <button
-        type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
-        aria-expanded={isExpanded}
-        className="w-full text-left flex gap-4 p-4 transition-colors hover:bg-surface-container-low/50"
-      >
-        {/* Thumbnail */}
-        <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-lg bg-surface-container">
-          {/* Placeholder — real image would go here */}
-        </div>
+    <article
+      aria-busy={isReplacing}
+      className="relative overflow-hidden rounded-xl bg-white shadow-[0_4px_20px_rgba(46,50,48,0.06)] border border-outline-variant/30 transition-shadow hover:shadow-md"
+    >
+      {isReplacing && <MealCardLoadingOverlay />}
 
-        {/* Content */}
-        <div className="min-w-0 flex-1">
+      {/* Main card body */}
+      <div className="p-4">
+        <div className="flex items-center justify-between mb-2">
           <MealTypeBadge mealType={meal.mealType} />
-          <span className="block mt-1 font-headline text-base font-bold text-on-surface leading-snug line-clamp-2">
-            {recipe.title}
-          </span>
-
-          {/* Meta row */}
-          <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
-            {totalMinutes != null && (
-              <span className="flex items-center gap-0.5 text-on-surface-variant">
-                <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '14px' }}>schedule</span>
-                {totalMinutes} min
-              </span>
-            )}
-            {calories != null && (
-              <span className="flex items-center gap-0.5 text-brand-green">
-                <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '14px' }}>local_fire_department</span>
-                {calories} kcal
-              </span>
-            )}
-            {protein != null && (
-              <span className="ml-auto rounded-full bg-brand-green/10 px-2 py-0.5 text-[10px] font-bold text-brand-green">
-                {protein}g prot
-              </span>
-            )}
-          </div>
+          <button
+            type="button"
+            disabled={isReplacing}
+            aria-label={`Reemplazar comida ${recipe.title}`}
+            onClick={() => setIsConfirmingMobile((prev) => !prev)}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors disabled:opacity-40"
+          >
+            <span aria-hidden="true" className="material-symbols-outlined text-base">sync</span>
+          </button>
         </div>
-      </button>
+
+        {/* Card toggle button */}
+        <button
+          type="button"
+          disabled={isReplacing}
+          onClick={() => setIsExpanded((prev) => !prev)}
+          aria-expanded={isExpanded}
+          className="w-full text-left flex gap-4 transition-colors hover:bg-surface-container-low/50 rounded-lg -m-1 p-1 disabled:opacity-75"
+        >
+          {/* Thumbnail */}
+          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-surface-container">
+            {/* Placeholder — real image would go here */}
+          </div>
+
+          {/* Content */}
+          <div className="min-w-0 flex-1">
+            <span className="block font-headline text-base font-bold text-on-surface leading-snug line-clamp-2">
+              {recipe.title}
+            </span>
+
+            {/* Meta row */}
+            <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
+              {totalMinutes != null && (
+                <span className="flex items-center gap-0.5 text-on-surface-variant">
+                  <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '14px' }}>schedule</span>
+                  {totalMinutes} min
+                </span>
+              )}
+              {calories != null && (
+                <span className="flex items-center gap-0.5 text-brand-green">
+                  <span aria-hidden="true" className="material-symbols-outlined" style={{ fontSize: '14px' }}>local_fire_department</span>
+                  {calories} kcal
+                </span>
+              )}
+              {protein != null && (
+                <span className="ml-auto rounded-full bg-brand-green/10 px-2 py-0.5 text-[10px] font-bold text-brand-green">
+                  {protein}g prot
+                </span>
+              )}
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Mobile in-card confirmation prompt */}
+      {isConfirmingMobile && !isReplacing && (
+        <MealCardMobileConfirm
+          mealTitle={recipe.title}
+          onConfirm={() => {
+            setIsConfirmingMobile(false);
+            handleTriggerReplace();
+          }}
+          onCancel={() => setIsConfirmingMobile(false)}
+          isSubmitting={isReplacing}
+        />
+      )}
 
       {/* Expanded detail */}
-      {isExpanded && (
+      {isExpanded && !isConfirmingMobile && (
         <div className="space-y-4 border-t border-outline-variant/30 px-4 pt-3 pb-4">
           {recipe.description && (
             <p className="text-sm leading-relaxed text-on-surface-variant">{recipe.description}</p>
@@ -172,6 +249,15 @@ export function MealCard({ meal, compact = false, onSwap }: MealCardProps) {
             )}
           </div>
         </div>
+      )}
+
+      {/* Error banner */}
+      {replaceError && (
+        <MealCardErrorBanner
+          message={replaceError.message}
+          onRetry={replaceError.onRetry}
+          onCancel={replaceError.onCancel}
+        />
       )}
     </article>
   );

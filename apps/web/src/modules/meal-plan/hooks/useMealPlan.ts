@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { mealPlanService, type MealPlan } from '../../../services/mealPlanService';
+import { mealPlanService, type MealPlan, type PlannedMeal } from '../../../services/mealPlanService';
 import { formatLocalDateKey } from '../utils';
 
 type Status = 'loading' | 'empty' | 'error' | 'success';
@@ -11,6 +11,7 @@ type UseMealPlanResult = {
   errorMessage: string | null;
   retry: () => void;
   generate: () => Promise<void>;
+  updateMeal: (newMeal: PlannedMeal) => void;
   regenerationStatus: RegenerationStatus;
   regenerationError: string | null;
   openRegeneration: (planId: string) => void;
@@ -18,6 +19,7 @@ type UseMealPlanResult = {
   confirmRegeneration: () => Promise<MealPlan | null>;
   retryRegeneration: () => Promise<MealPlan | null>;
 };
+
 
 function getCurrentWeekStart(): string {
   const now = new Date();
@@ -220,6 +222,19 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     load();
   }, [generate, load]);
 
+  const updateMeal = useCallback((newMeal: PlannedMeal) => {
+    setMealPlan((prevPlan) => {
+      if (!prevPlan) return null;
+      return {
+        ...prevPlan,
+        days: prevPlan.days.map((day) => ({
+          ...day,
+          meals: day.meals.map((meal) => (meal.id === newMeal.id ? newMeal : meal)),
+        })),
+      };
+    });
+  }, []);
+
   useEffect(() => {
     load();
     return () => {
@@ -227,5 +242,5 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     };
   }, [load]);
 
-  return { mealPlan, status, errorMessage, retry, generate, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration };
+  return { mealPlan, status, errorMessage, retry, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration };
 }

@@ -148,4 +148,29 @@ export const mealPlanService = {
       })),
     };
   },
+
+  async replacePlannedMeal(
+    planId: string,
+    plannedMealId: string,
+    idempotencyKey: string,
+    body: Record<string, unknown> = {},
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<PlannedMeal> {
+    const response = await apiClient.post<PlannedMeal | { plannedMeal: PlannedMeal }>(
+      `/meal-plans/${planId}/meals/${plannedMealId}/replace`,
+      body,
+      {
+        headers: {
+          'Idempotency-Key': idempotencyKey,
+        },
+        timeout: MEAL_PLAN_REQUEST_TIMEOUT_MS,
+        signal,
+      },
+    );
+    const data = response.data;
+    if ('plannedMeal' in data && data.plannedMeal) {
+      return data.plannedMeal;
+    }
+    return data as PlannedMeal;
+  },
 };
