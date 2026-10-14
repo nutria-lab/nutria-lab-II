@@ -20,7 +20,7 @@ export type RecipeCatalogListProps = {
   onRefresh?: () => void;
   selectedId?: string | null;
   onSelectRecipe: (id: string) => void;
-  onCreateRecipe: () => void;
+  onCreateRecipe: () => void;  onGenerateRecipe?: () => void;
   onCreateIngredient?: () => void;
   hideSearch?: boolean;
   hideHeader?: boolean;

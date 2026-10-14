@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { apiClient } from './apiClient';
+import type { RecipeImage } from './recipeService';
 
 export type MealType = 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'SNACK';
 
@@ -19,6 +20,7 @@ export type Recipe = {
   cookMinutes?: number;
   ingredients: Ingredient[];
   instructions: string[];
+  image?: RecipeImage | null;
 };
 
 // Forma real de `PlannedMeal.nutritionalValues` (JSON), en PascalCase tal como lo expone

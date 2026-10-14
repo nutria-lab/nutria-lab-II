@@ -4,6 +4,7 @@ import { MEAL_TYPE_LABELS, formatIngredient } from '../utils';
 import { MealCardErrorBanner } from './MealCardErrorBanner';
 import { MealCardLoadingOverlay } from './MealCardLoadingOverlay';
 import { MealCardMobileConfirm } from './MealCardMobileConfirm';
+import { RecipeImage } from '../../recipes/components/RecipeImage';
 
 const MEAL_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
   BREAKFAST: { bg: 'bg-tertiary-fixed/40', text: 'text-on-tertiary-container' },
@@ -84,9 +85,7 @@ export function MealCard({
             <span aria-hidden="true" className="material-symbols-outlined text-sm">sync</span>
           </button>
         </div>
-        <div className="h-20 w-full overflow-hidden rounded-lg bg-surface-container">
-          {/* Image thumbnail placeholder */}
-        </div>
+        <RecipeImage image={recipe?.image} title={recipe?.title ?? 'Receta'} className="h-20 w-full rounded-lg" />
         <h4 className="font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">
           {recipe ? recipe.title : 'Receta no disponible'}
         </h4>
@@ -167,9 +166,7 @@ export function MealCard({
           className="w-full text-left flex gap-4 transition-colors hover:bg-surface-container-low/50 rounded-lg -m-1 p-1 disabled:opacity-75"
         >
           {/* Thumbnail */}
-          <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-surface-container">
-            {/* Placeholder — real image would go here */}
-          </div>
+          <RecipeImage image={recipe.image} title={recipe.title} className="h-20 w-20 rounded-lg" />
 
           {/* Content */}
           <div className="min-w-0 flex-1">

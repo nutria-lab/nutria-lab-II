@@ -39,7 +39,23 @@ export class RecipeGenerationService {
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
     const reserved = await this.repository.createOrRecoverPreviewRun({ userId, idempotencyKey, kind, requestSnapshot, profileSnapshot: {}, expiresAt, provider: OPENAI_PROVIDER, model: OPENAI_MODEL_NAME, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION });
     if (!reserved.wasCreated) {
-      if ((reserved.run.status === 'READY_FOR_REVIEW' || reserved.run.status === 'CONFIRMED') && reserved.run.outputSnapshot) return this.publicPreview(reserved.run.outputSnapshot);
+      if ((reserved.run.status === 'READY_FOR_REVIEW' || reserved.run.status === 'CONFIRMED') && reserved.run.outputSnapshot) {
+        const snapshot = reserved.run.outputSnapshot as Record<string, unknown>;
+        return this.publicPreview({
+          generationRunId: reserved.run.id,
+          status: reserved.run.status,
+          requestedCount: snapshot.requestedCount,
+          reused: snapshot.reused,
+          drafts: snapshot.drafts,
+          rejected: snapshot.rejected,
+          summary: {
+            requested: typeof snapshot.requestedCount === 'number' ? snapshot.requestedCount : 0,
+            reused: Array.isArray(snapshot.reused) ? snapshot.reused.length : 0,
+            generated: Array.isArray(snapshot.drafts) ? snapshot.drafts.length : 0,
+          },
+          expiresAt: reserved.run.expiresAt,
+        });
+      }
       throw new ConflictException('Recipe preview is already being generated');
     }
 
@@ -65,7 +81,7 @@ export class RecipeGenerationService {
     }
     if (requestedCount === 0) {
       return this.publicPreview(await this.repository.persistReadyPreview({
-        runId: reserved.run.id, userId, kind, reused, drafts: [], rejected: [], validationSnapshot: { stage: 'passed', codes: [], warnings: [] }, profileSnapshot: this.profileSnapshot(profile), expiresAt,
+        runId: reserved.run.id, userId, kind, requestedCount: dto.count, reused, drafts: [], rejected: [], validationSnapshot: { stage: 'passed', codes: [], warnings: [] }, profileSnapshot: this.profileSnapshot(profile), expiresAt,
       }));
     }
 
@@ -113,7 +129,7 @@ export class RecipeGenerationService {
     const validationSnapshot = summarizeResults(results);
     if (!valid.length && !reused.length) await this.reject(reserved.run.id, userId, rejected, validationSnapshot);
     const drafts = await this.resolveDraftImages(valid);
-    return this.publicPreview(await this.repository.persistReadyPreview({ runId: reserved.run.id, userId, kind, reused, drafts, rejected, validationSnapshot, profileSnapshot: this.profileSnapshot(profile), expiresAt }));
+    return this.publicPreview(await this.repository.persistReadyPreview({ runId: reserved.run.id, userId, kind, requestedCount: dto.count, reused, drafts, rejected, validationSnapshot, profileSnapshot: this.profileSnapshot(profile), expiresAt }));
   }
 
   async confirm(userId: string, idempotencyKey: string, dto: ConfirmGeneratedRecipesDto) {
@@ -148,7 +164,12 @@ export class RecipeGenerationService {
   private normalizedCriteria(dto: PreviewGeneratedRecipesDto) { return { topic: dto.topic?.trim(), description: dto.description?.trim(), categories: dto.categories ?? [], properties: normalizeProperties(dto.properties ?? []), maxPrepMinutes: dto.maxPrepMinutes }; }
   private async reject(runId: string, userId: string, rejected: RejectedCandidate[], validationSnapshot: any): Promise<never> {
     await this.repository.rejectPreview({ runId, userId, code: validationSnapshot.codes[0] ?? 'VALIDATION_REJECTED', rejected, validationSnapshot });
-    throw new UnprocessableEntityException('Generated recipe could not be safely validated');
+    throw new UnprocessableEntityException({
+      code: 'RECIPE_PREVIEW_REJECTED',
+      message: 'Generated recipe could not be safely validated',
+      rejected,
+      validationSnapshot,
+    });
   }
   private providerFailureCode(error: unknown): string { const code = typeof (error as any)?.code === 'string' ? (error as any).code : ''; return code === 'RATE_LIMITED' || code === 'TIMEOUT' || code === 'TRANSIENT' ? code : 'TRANSIENT'; }
   private safeErrors(errors: readonly ValidationError[]) { return errors.map(({ code, field, message }) => ({ code, ...(field ? { field } : {}), message })); }

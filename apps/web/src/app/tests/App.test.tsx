@@ -74,7 +74,21 @@ function LocationProbe() {
 
 function renderApp(
   initialEntry: string | { pathname: string; state?: unknown },
+  accessStatus: { required: boolean; unlocked: boolean } = { required: false, unlocked: true },
 ) {
+  const adapter = apiClient.defaults.adapter as ((config: InternalAxiosRequestConfig) => Promise<AxiosResponse>);
+  apiClient.defaults.adapter = async (config) => {
+    if (config.url?.endsWith('/access/status')) {
+      return response(config, accessStatus);
+    }
+
+    if (!adapter) {
+      throw new Error('Missing test adapter');
+    }
+
+    return adapter(config);
+  };
+
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <App />
@@ -84,6 +98,7 @@ function renderApp(
 }
 
 async function completeValidCredentials(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => expect(screen.getByLabelText(/correo/i)).toBeEnabled());
   await user.type(screen.getByLabelText(/correo/i), authenticatedUser.email);
   await user.type(screen.getByLabelText(/^contraseña$/i), 'secreta');
 }
@@ -109,7 +124,7 @@ describe('App authentication routes', () => {
 
     renderApp('/login');
 
-    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.queryByRole('status', { name: /comprobando sesión/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
     expect(document.querySelector('form')).toHaveAttribute('aria-busy', 'true');
@@ -148,7 +163,7 @@ describe('App authentication routes', () => {
 
     renderApp({ pathname: '/login', state: { from: { pathname: '/dashboard' } } });
 
-    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.getByLabelText(/correo/i)).toBeDisabled();
     pendingRestoration.resolve(response({ url: '/auth/me' } as InternalAxiosRequestConfig, authenticatedUser));
 
@@ -156,12 +171,12 @@ describe('App authentication routes', () => {
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
   });
 
-  it('renders only an accessible session-checking status while initial identity restoration is unresolved', () => {
+  it('renders only an accessible session-checking status while initial identity restoration is unresolved', async () => {
     apiClient.defaults.adapter = () => new Promise<AxiosResponse>(() => undefined);
 
     renderApp('/goals');
 
-    expect(screen.getByRole('status', { name: /comprobando sesión/i })).toBeVisible();
+    expect(await screen.findByRole('status', { name: /comprobando sesión/i })).toBeVisible();
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
     expect(screen.queryByText(/objetivos nutricionales/i)).not.toBeInTheDocument();
   });
@@ -174,7 +189,7 @@ describe('App authentication routes', () => {
     renderApp('/dashboard');
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
-    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
   });
 
@@ -194,7 +209,7 @@ describe('App authentication routes', () => {
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
     expect(restorationTimeout).toBeGreaterThan(0);
     expect(restorationTimeout).toBeLessThanOrEqual(10_000);
-    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
   });
 
@@ -327,7 +342,7 @@ describe('App authentication routes', () => {
       password: 'secreta',
     });
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
-    expect(screen.getByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
   });
 
   it('returns to an internal protected destination after login but rejects an external destination', async () => {
