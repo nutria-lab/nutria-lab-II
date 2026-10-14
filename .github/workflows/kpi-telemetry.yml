@@ -83,5 +83,5 @@ jobs:
         with:
           name: kpi-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/kpi-diagnostics
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 90
