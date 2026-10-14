@@ -148,6 +148,14 @@ export function TopBar({
                 nutrition
               </span>
               <span>+ Ingrediente</span>
+            </button>            <button
+              type="button"
+              onClick={() => navigate('/recipes/generate')}
+              aria-label="Generar receta con IA"
+              className="flex items-center gap-1.5 rounded-xl border border-brand-green/40 bg-brand-green/10 px-3.5 py-1.5 text-xs font-bold text-brand-green transition-all hover:bg-brand-green/20 active:scale-95"
+            >
+              <span aria-hidden="true" className="material-symbols-outlined text-sm">auto_awesome</span>
+              <span>Generar con IA</span>
             </button>
             <button
               type="button"

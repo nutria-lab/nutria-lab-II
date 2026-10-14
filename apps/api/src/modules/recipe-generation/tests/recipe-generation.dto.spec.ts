@@ -9,7 +9,7 @@ const confirm = (body: unknown) => pipe.transform(body, { type: 'body', metatype
 
 describe('NUT-73 request DTOs', () => {
   it.each([
-    { mode: 'SINGLE', countMode: 'TOTAL_DESIRED', count: 1, description: 'Una cena vegana rápida y completa' },
+    { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'Una cena vegana rápida y completa' },
     { mode: 'BATCH', countMode: 'NEW_ONLY', count: 3, topic: 'cenas rápidas', categories: ['VEGAN'], properties: ['sin gluten'], maxPrepMinutes: 30 },
   ])('accepts a valid preview request: %#', async body => {
     await expect(preview(body)).resolves.toBeInstanceOf(PreviewGeneratedRecipesDto);
@@ -18,7 +18,7 @@ describe('NUT-73 request DTOs', () => {
   it.each([
     ['count outside 1..10', { mode: 'BATCH', countMode: 'NEW_ONLY', count: 11, topic: 'cenas' }],
     ['SINGLE with a count other than one', { mode: 'SINGLE', countMode: 'TOTAL_DESIRED', count: 2, description: 'Una cena vegana rápida y completa' }],
-    ['SINGLE without a trimmed description of at least ten characters', { mode: 'SINGLE', countMode: 'TOTAL_DESIRED', count: 1, description: ' corta ' }],
+    ['SINGLE without a trimmed description of at least ten characters', { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: ' corta ' }],
     ['BATCH without a trimmed topic of at least three characters', { mode: 'BATCH', countMode: 'NEW_ONLY', count: 1, topic: ' x ' }],
     ['duplicate categories', { mode: 'BATCH', countMode: 'NEW_ONLY', count: 1, topic: 'cenas', categories: ['VEGAN', 'VEGAN'] }],
     ['properties duplicated after normalization', { mode: 'BATCH', countMode: 'NEW_ONLY', count: 1, topic: 'cenas', properties: [' sin gluten ', 'SIN   GLUTEN'] }],

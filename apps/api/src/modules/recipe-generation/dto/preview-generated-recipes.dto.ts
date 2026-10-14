@@ -32,7 +32,7 @@ class PreviewGeneratedRecipeShape implements ValidatorConstraintInterface {
   validate(_: unknown, args: ValidationArguments): boolean {
     const value = args.object as PreviewGeneratedRecipesDto;
     if (value.mode === GeneratedRecipeMode.SINGLE) {
-      return value.count === 1 && typeof value.description === 'string' && value.description.trim().length >= 10 && value.description.trim().length <= 1000 && value.topic === undefined;
+      return value.count === 1 && value.countMode === GeneratedRecipeCountMode.NEW_ONLY && typeof value.description === 'string' && value.description.trim().length >= 10 && value.description.trim().length <= 1000 && value.topic === undefined;
     }
     return value.mode === GeneratedRecipeMode.BATCH && typeof value.topic === 'string' && value.topic.trim().length >= 3 && value.topic.trim().length <= 200 && value.description === undefined;
   }

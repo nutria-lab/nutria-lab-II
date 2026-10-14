@@ -8,6 +8,7 @@ import { RecipeModule } from '@/modules/recipe/recipe.module';
 import { IngredientModule } from '@/modules/ingredient/ingredient.module';
 import { KpiModule } from '@/modules/kpi/kpi.module';
 import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-generation.module';
+import { AccessModule } from '@/modules/access/access.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-gener
     IngredientModule,
     KpiModule,
     RecipeGenerationModule,
+    AccessModule,
   ],
   controllers: [],
   providers: [],

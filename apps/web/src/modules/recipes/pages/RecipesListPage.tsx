@@ -26,9 +26,11 @@ const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 function RecipesHeader({
   onCreateIngredient,
   onCreateRecipe,
+  onGenerateRecipe,
 }: {
   onCreateIngredient: () => void;
   onCreateRecipe: () => void;
+  onGenerateRecipe: () => void;
 }) {
   return (
     <div
@@ -58,6 +60,9 @@ function RecipesHeader({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          <button type="button" onClick={onGenerateRecipe} aria-label="Generar receta con IA" className="flex h-9 items-center gap-1 rounded-full border border-brand-green/40 bg-brand-green/10 px-3 text-xs font-bold text-brand-green">
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">auto_awesome</span>IA
+          </button>
           <button
             type="button"
             onClick={onCreateIngredient}
@@ -206,6 +211,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
             <RecipesHeader
               onCreateIngredient={() => setModalKind('ingredient')}
               onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
             />
 
             <RecipeCatalogList
@@ -216,6 +222,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
               onRefresh={refetch}
               onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
               onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
               searchTerm={urlSearchTerm}
               onSearchTermChange={(q) => setSearchParams(q ? { q } : {})}
             />
@@ -258,6 +265,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
         <RecipesHeader
           onCreateIngredient={() => setModalKind('ingredient')}
           onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
         />
 
         <RecipeCatalogList
@@ -268,6 +276,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
           onRefresh={refetch}
           onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
           onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
           searchTerm={urlSearchTerm}
           onSearchTermChange={(q) => setSearchParams(q ? { q } : {})}
           search={search}
