@@ -9,7 +9,7 @@ type RecipeDraft = { draftId: string; recipe: ValidatedRecipeDraft; image: JsonR
 type RejectedCandidate = { candidateIndex: number | null; codes: string[]; errors?: Array<{ code: string; field?: string; message: string }> };
 type ConfirmationResponse = { generationRunId: string; items: Array<{ id: string; image: JsonRecord | null }> };
 type RecipePreviewOutputSnapshot = {
-  version: 1; requestedCount: number; reused: unknown[]; drafts: RecipeDraft[];
+  version: 1; requestedCount?: number; reused: unknown[]; drafts: RecipeDraft[];
   rejected: RejectedCandidate[];
   confirmation: null | { idempotencyKeyHash: string; requestFingerprint: string; selectedDraftIds: string[]; response: ConfirmationResponse };
 };
@@ -19,7 +19,7 @@ type PreviewRunInput = {
   profileSnapshot?: JsonRecord; expiresAt?: Date | null;
 };
 type ReadyPreviewInput = {
-  runId: string; userId: string; kind: string; reused: unknown[]; drafts: RecipeDraft[];
+  runId: string; userId: string; kind: string; requestedCount?: number; reused: unknown[]; drafts: RecipeDraft[];
   rejected?: RejectedCandidate[]; validationSnapshot?: ValidationSummary | JsonRecord; profileSnapshot?: JsonRecord; expiresAt?: Date | null;
 };
 type ConfirmInput = {
@@ -60,7 +60,14 @@ function parseOutputSnapshot(value: unknown): RecipePreviewOutputSnapshot {
 export class RecipeGenerationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createOrRecoverPreviewRun(input: PreviewRunInput): Promise<{ run: { id: string; status: string; outputSnapshot: unknown }; wasCreated: boolean }> {
+  async updatePendingGenerationRunModel(id: string, userId: string, model: string): Promise<void> {
+    await this.prisma.generationRun.updateMany({
+      where: { id, userId, status: 'PENDING' },
+      data: { model },
+    });
+  }
+
+  async createOrRecoverPreviewRun(input: PreviewRunInput): Promise<{ run: { id: string; status: string; outputSnapshot: unknown; expiresAt: Date | null }; wasCreated: boolean }> {
     const requestSnapshot = input.requestSnapshot ?? input.criteria ?? {};
     const idempotencyKeyHash = previewHash(input);
     try {
@@ -71,7 +78,7 @@ export class RecipeGenerationRepository {
           profileSnapshot: (input.profileSnapshot ?? {}) as never, expiresAt: input.expiresAt ?? undefined, idempotencyKeyHash,
         },
       });
-      return { run: run as unknown as { id: string; status: string; outputSnapshot: unknown }, wasCreated: true };
+      return { run: run as unknown as { id: string; status: string; outputSnapshot: unknown; expiresAt: Date | null }, wasCreated: true };
     } catch (error: unknown) {
       if (!isRecord(error) || error.code !== 'P2002') throw error;
       const existing = await this.prisma.generationRun.findFirst({
@@ -92,17 +99,17 @@ export class RecipeGenerationRepository {
           where: { userId: input.userId, kind: input.kind as never, idempotencyKeyHash, status: { in: ['PENDING', 'READY_FOR_REVIEW', 'CONFIRMED'] } as never },
         });
         if (winner && canonicalJson(winner.requestSnapshot) === canonicalJson(requestSnapshot)) {
-          return { run: winner as unknown as { id: string; status: string; outputSnapshot: unknown }, wasCreated: false };
+          return { run: winner as unknown as { id: string; status: string; outputSnapshot: unknown; expiresAt: Date | null }, wasCreated: false };
         }
         throw new ConflictException('Recipe preview expiration conflicted');
       }
-      return { run: existing as unknown as { id: string; status: string; outputSnapshot: unknown }, wasCreated: false };
+      return { run: existing as unknown as { id: string; status: string; outputSnapshot: unknown; expiresAt: Date | null }, wasCreated: false };
     }
   }
 
-  async persistReadyPreview(input: ReadyPreviewInput): Promise<{ generationRunId: string; status: 'READY_FOR_REVIEW'; drafts: RecipeDraft[]; reused: unknown[] }> {
+  async persistReadyPreview(input: ReadyPreviewInput): Promise<{ generationRunId: string; status: 'READY_FOR_REVIEW'; requestedCount: number; drafts: RecipeDraft[]; reused: unknown[]; rejected: RejectedCandidate[]; summary: { requested: number; reused: number; generated: number }; expiresAt: Date | null }> {
     const snapshot: RecipePreviewOutputSnapshot = {
-      version: 1, requestedCount: input.drafts.length + input.reused.length, reused: input.reused, drafts: input.drafts,
+      version: 1, requestedCount: input.requestedCount ?? input.drafts.length + input.reused.length, reused: input.reused, drafts: input.drafts,
       rejected: input.rejected ?? [], confirmation: null,
     };
     const updated = await this.prisma.generationRun.updateMany({
@@ -113,13 +120,29 @@ export class RecipeGenerationRepository {
       const existing = await this.findRunForOwner(input.runId, input.userId);
       if (existing && existing.status === 'READY_FOR_REVIEW') {
         const persisted = parseOutputSnapshot(existing.outputSnapshot);
-        return { generationRunId: input.runId, status: 'READY_FOR_REVIEW', drafts: persisted.drafts, reused: persisted.reused };
+        return this.toPreviewResponse(input.runId, existing.expiresAt, persisted);
       }
       throw new ConflictException('Recipe preview can no longer be made ready');
     }
-    return { generationRunId: input.runId, status: 'READY_FOR_REVIEW', drafts: input.drafts, reused: input.reused };
+    return this.toPreviewResponse(input.runId, input.expiresAt ?? null, snapshot);
   }
 
+  private toPreviewResponse(runId: string, expiresAt: Date | null, snapshot: RecipePreviewOutputSnapshot) {
+    return {
+      generationRunId: runId,
+      status: 'READY_FOR_REVIEW' as const,
+      requestedCount: snapshot.requestedCount ?? snapshot.drafts.length + snapshot.reused.length,
+      reused: snapshot.reused,
+      drafts: snapshot.drafts,
+      rejected: snapshot.rejected,
+      summary: {
+        requested: snapshot.requestedCount ?? snapshot.drafts.length + snapshot.reused.length,
+        reused: snapshot.reused.length,
+        generated: snapshot.drafts.length,
+      },
+      expiresAt,
+    };
+  }
   async rejectPreview(input: { runId: string; code: string; userId?: string; rejected?: RejectedCandidate[]; validationSnapshot?: ValidationSummary | JsonRecord }): Promise<void> {
     await this.prisma.generationRun.updateMany({
       where: { id: input.runId, ...(input.userId ? { userId: input.userId } : {}), status: 'PENDING' },

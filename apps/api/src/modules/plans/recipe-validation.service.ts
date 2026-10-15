@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RecipeRepository, type DuplicateCandidate } from '../recipe/recipe.repository';
 import { normalizeRecipeTitle } from '../recipe/recipe-fingerprint.util';
-import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
 import { validateRecipe } from '../recipe/validation/validate-recipe';
 import type {
   ValidationErrorCode,
@@ -63,9 +62,8 @@ export class RecipeValidationService {
   ) {}
 
   // Un resultado por draft. Cada uno se valida por separado: repetir una comida en el plan es normal.
-  async validateDrafts(drafts: readonly unknown[], profile: { excludedIngredients?: unknown }): Promise<ValidationResult[]> {
-    const excludedIngredients = forbiddenRestrictions(profile);
-    const ctx = { excludedIngredients, catalog: await this.reusableCatalog(drafts, excludedIngredients) };
+  async validateDrafts(drafts: readonly unknown[], _profile?: { excludedIngredients?: unknown }): Promise<ValidationResult[]> {
+    const ctx = { excludedIngredients: [], catalog: await this.reusableCatalog(drafts) };
     return drafts.map(draft => validateRecipe(draft, ctx));
   }
 
@@ -95,16 +93,13 @@ export class RecipeValidationService {
     return this.reject(run, { stage: STAGE_BY_CALLER_CODE[code], codes: [code], warnings: [] });
   }
 
-  // Sólo las recetas del catálogo con el mismo título normalizado que algún draft, y nunca una que
-  // viole las restricciones del perfil (su descripción o sus pasos podrían mencionar un alérgeno
-  // que la huella no ve).
-  private async reusableCatalog(drafts: readonly unknown[], excludedIngredients: string[]): Promise<DuplicateCandidate[]> {
+  // Sólo las recetas del catálogo con el mismo título normalizado que algún draft.
+  private async reusableCatalog(drafts: readonly unknown[]): Promise<DuplicateCandidate[]> {
     const titles = drafts
       .map(draft => (isObject(draft) && typeof draft.title === 'string' ? normalizeRecipeTitle(draft.title) : ''))
       .filter(Boolean);
     if (titles.length === 0) return [];
 
-    const candidates = await this.recipes.findByNormalizedTitles([...new Set(titles)]);
-    return candidates.filter(recipe => !findExcludedIngredient(restrictionTexts(recipe), excludedIngredients));
+    return this.recipes.findByNormalizedTitles([...new Set(titles)]);
   }
 }

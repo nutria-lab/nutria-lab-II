@@ -10,6 +10,7 @@ import {
 } from '../../../services/recipeService';
 import { useIngredients } from './useIngredients';
 import { useRecipeDetail } from './useRecipeDetail';
+import { clearPersistedRecipeSearch } from './useRecipeSearch';
 import type { DetailStatus } from '../components/detail/MobileRecipeDetail';
 
 const DELETE_CONFIRM_TITLE = 'Eliminar receta';
@@ -128,7 +129,7 @@ export function useRecipeDetailController(): RecipeDetailController {
     }
   }
 
-  
+
 
   function openDelete() {
     setDeleteError(null);
@@ -172,6 +173,9 @@ export function useRecipeDetailController(): RecipeDetailController {
     setDeleting(true);
     try {
       await recipeService.remove(recipe.id);
+      // Evita restaurar desde sessionStorage una lista que todavía contiene
+      // la receta recién eliminada al volver a /recipes en mobile.
+      clearPersistedRecipeSearch();
       navigate('/recipes');
     } catch (error) {
       setDeleteError(deleteErrorMessage(error));

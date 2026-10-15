@@ -4,8 +4,8 @@ import { NutritionProfileRepository } from '@/modules/nutrition-profile/nutritio
 import { RecipeCoverageService } from '@/modules/recipe/recipe-coverage.service';
 import { normalizeRecipeTitle } from '@/modules/recipe/recipe-fingerprint.util';
 import { RecipeRepository } from '@/modules/recipe/recipe.repository';
-import { findIngredientGroup, hasSupportedProfilePolicy, profileForbiddenRestrictions, restrictionTexts } from '@/modules/recipe/validation/ingredient-dictionary';
-import { GEMINI_MODEL_NAME, GEMINI_PROVIDER } from '@/modules/plans/gemini/gemini.constants';
+import { profileForbiddenRestrictions } from '@/modules/recipe/validation/ingredient-dictionary';
+import { OPENAI_MODEL_NAME, OPENAI_PROVIDER } from '@/modules/openai/openai.constants';
 import { parseGeneratedOutput } from '@/modules/recipe/validation/parse-generated-output';
 import type { RecipeDraft, RecipeValidationContext, ValidationError, ValidationResult, ValidationWarning } from '@/modules/recipe/validation/recipe-validation.types';
 import { reusableDuplicate, summarizeParseFailure, summarizeResults, validateRecipes } from '@/modules/recipe/validation/validate-recipe';
@@ -16,8 +16,8 @@ import { GeneratedRecipeCountMode, PreviewGeneratedRecipesDto } from './dto/prev
 import { RECIPE_GENERATION_PROVIDER, RecipeGenerationProvider } from './recipe-generation.ports';
 import { RecipeGenerationRepository } from './recipe-generation.repository';
 
-const PROMPT_VERSION = 'recipe-preview-v1';
-const SCHEMA_VERSION = 'recipe-candidate-v1';
+const PROMPT_VERSION = 'recipe-preview-openai-v1';
+const SCHEMA_VERSION = 'recipe-candidate-openai-v1';
 type PersistedDraft = { draftId: string; recipe: RecipeDraft; image: Record<string, unknown> | null; warnings: Array<ValidationWarning | { code: 'IMAGE_UNAVAILABLE'; message: string }> };
 type RejectedCandidate = { candidateIndex: number | null; codes: string[]; errors?: Array<Pick<ValidationError, 'code' | 'field' | 'message'>> };
 
@@ -37,9 +37,25 @@ export class RecipeGenerationService {
     const requestSnapshot = { mode: dto.mode, countMode: dto.countMode, count: dto.count, ...criteria };
     const kind = dto.mode === 'SINGLE' ? 'RECIPE_SINGLE' : 'RECIPE_BATCH';
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-    const reserved = await this.repository.createOrRecoverPreviewRun({ userId, idempotencyKey, kind, requestSnapshot, profileSnapshot: {}, expiresAt, provider: GEMINI_PROVIDER, model: GEMINI_MODEL_NAME, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION });
+    const reserved = await this.repository.createOrRecoverPreviewRun({ userId, idempotencyKey, kind, requestSnapshot, profileSnapshot: {}, expiresAt, provider: OPENAI_PROVIDER, model: OPENAI_MODEL_NAME, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION });
     if (!reserved.wasCreated) {
-      if ((reserved.run.status === 'READY_FOR_REVIEW' || reserved.run.status === 'CONFIRMED') && reserved.run.outputSnapshot) return this.publicPreview(reserved.run.outputSnapshot);
+      if ((reserved.run.status === 'READY_FOR_REVIEW' || reserved.run.status === 'CONFIRMED') && reserved.run.outputSnapshot) {
+        const snapshot = reserved.run.outputSnapshot as Record<string, unknown>;
+        return this.publicPreview({
+          generationRunId: reserved.run.id,
+          status: reserved.run.status,
+          requestedCount: snapshot.requestedCount,
+          reused: snapshot.reused,
+          drafts: snapshot.drafts,
+          rejected: snapshot.rejected,
+          summary: {
+            requested: typeof snapshot.requestedCount === 'number' ? snapshot.requestedCount : 0,
+            reused: Array.isArray(snapshot.reused) ? snapshot.reused.length : 0,
+            generated: Array.isArray(snapshot.drafts) ? snapshot.drafts.length : 0,
+          },
+          expiresAt: reserved.run.expiresAt,
+        });
+      }
       throw new ConflictException('Recipe preview is already being generated');
     }
 
@@ -48,14 +64,9 @@ export class RecipeGenerationService {
     let requestedCount = dto.count;
     try {
       profile = await this.profiles.findByUserId(userId);
-      if (!hasSupportedProfilePolicy(profile)) {
-        await this.repository.rejectPreview({ runId: reserved.run.id, userId, code: 'PROFILE_POLICY_UNSUPPORTED' });
-        throw new UnprocessableEntityException('Nutrition profile cannot be safely evaluated for recipe generation');
-      }
       if (dto.countMode === GeneratedRecipeCountMode.TOTAL_DESIRED) {
         const evaluation = await this.coverage.evaluate({ userId, desiredTotal: dto.count, ...criteria });
-        const restrictions = profileForbiddenRestrictions(profile ?? {});
-        reused = evaluation.result.compatibleRecipes.filter(candidate => !this.violatesProfile(candidate.recipe, restrictions));
+        reused = evaluation.result.compatibleRecipes;
         requestedCount = Math.max(0, dto.count - reused.length);
       }
     } catch (error) {
@@ -70,13 +81,16 @@ export class RecipeGenerationService {
     }
     if (requestedCount === 0) {
       return this.publicPreview(await this.repository.persistReadyPreview({
-        runId: reserved.run.id, userId, kind, reused, drafts: [], rejected: [], validationSnapshot: { stage: 'passed', codes: [], warnings: [] }, profileSnapshot: this.profileSnapshot(profile), expiresAt,
+        runId: reserved.run.id, userId, kind, requestedCount: dto.count, reused, drafts: [], rejected: [], validationSnapshot: { stage: 'passed', codes: [], warnings: [] }, profileSnapshot: this.profileSnapshot(profile), expiresAt,
       }));
     }
 
     let raw: string;
     try {
-      raw = await this.provider.generate({ profile: this.profileSnapshot(profile), criteria, count: requestedCount, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION });
+      raw = await this.provider.generate(
+        { profile: this.profileSnapshot(profile), criteria, count: requestedCount, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION },
+        model => this.repository.updatePendingGenerationRunModel(reserved.run.id, userId, model),
+      );
     } catch (error) {
       const code = this.providerFailureCode(error);
       await this.repository.failPreview({ runId: reserved.run.id, userId, code });
@@ -100,8 +114,7 @@ export class RecipeGenerationService {
       await this.repository.failPreview({ runId: reserved.run.id, userId, code: 'TRANSIENT' });
       throw new ServiceUnavailableException('Recipe catalog is temporarily unavailable');
     }
-    const restrictions = profileForbiddenRestrictions(profile ?? {});
-    const context: RecipeValidationContext = { excludedIngredients: restrictions, catalog };
+    const context: RecipeValidationContext = { excludedIngredients: [], catalog };
     const results = validateRecipes(parsed.value, context);
     const valid: Array<{ recipe: RecipeDraft; warnings: ValidationWarning[] }> = [];
     const rejected: RejectedCandidate[] = [];
@@ -110,13 +123,13 @@ export class RecipeGenerationService {
       const reusable = reusableDuplicate(result);
       if (reusable) {
         const recipe = catalog.find(item => item.id === reusable.recipeId);
-        if (recipe && !this.violatesProfile(recipe, restrictions)) reused.push({ recipe, reusedFromValidation: true });
+        if (recipe) reused.push({ recipe, reusedFromValidation: true });
       } else rejected.push({ candidateIndex, codes: result.errors.map(error => error.code), errors: this.safeErrors(result.errors) });
     }
     const validationSnapshot = summarizeResults(results);
     if (!valid.length && !reused.length) await this.reject(reserved.run.id, userId, rejected, validationSnapshot);
     const drafts = await this.resolveDraftImages(valid);
-    return this.publicPreview(await this.repository.persistReadyPreview({ runId: reserved.run.id, userId, kind, reused, drafts, rejected, validationSnapshot, profileSnapshot: this.profileSnapshot(profile), expiresAt }));
+    return this.publicPreview(await this.repository.persistReadyPreview({ runId: reserved.run.id, userId, kind, requestedCount: dto.count, reused, drafts, rejected, validationSnapshot, profileSnapshot: this.profileSnapshot(profile), expiresAt }));
   }
 
   async confirm(userId: string, idempotencyKey: string, dto: ConfirmGeneratedRecipesDto) {
@@ -131,9 +144,8 @@ export class RecipeGenerationService {
     }
     const selected = this.repository.selectedDrafts(owned.outputSnapshot, dto.draftIds);
     const profile = await this.profiles.findByUserId(userId);
-    if (!hasSupportedProfilePolicy(profile)) throw new UnprocessableEntityException('Nutrition profile cannot be safely evaluated for recipe generation');
     const catalog = await this.catalogFor(selected.map(draft => draft.recipe));
-    const results = validateRecipes(selected.map(draft => draft.recipe), { excludedIngredients: profileForbiddenRestrictions(profile ?? {}), catalog });
+    const results = validateRecipes(selected.map(draft => draft.recipe), { excludedIngredients: [], catalog });
     if (results.some(result => !result.valid)) throw new UnprocessableEntityException('Selected recipe can no longer be safely validated');
     const normalized = results.map((result, index) => ({ ...selected[index], recipe: (result as Extract<ValidationResult, { valid: true }>).normalizedRecipe }));
     const result = await this.repository.confirmDraftsTransaction({ userId, generationRunId: dto.generationRunId, draftIds: dto.draftIds, idempotencyKey, drafts: normalized });
@@ -149,13 +161,15 @@ export class RecipeGenerationService {
     return this.recipes.findByNormalizedTitles(titles);
   }
   private profileSnapshot(profile: any) { return { diet: profile?.diet, excludedIngredients: profileForbiddenRestrictions(profile ?? {}), cookTimePreference: profile?.cookTimePreference, goal: profile?.goal }; }
-  private violatesProfile(recipe: unknown, restrictions: string[]) {
-    return typeof recipe === 'object' && recipe !== null && !!findIngredientGroup(restrictionTexts(recipe as Record<string, unknown>), restrictions);
-  }
   private normalizedCriteria(dto: PreviewGeneratedRecipesDto) { return { topic: dto.topic?.trim(), description: dto.description?.trim(), categories: dto.categories ?? [], properties: normalizeProperties(dto.properties ?? []), maxPrepMinutes: dto.maxPrepMinutes }; }
   private async reject(runId: string, userId: string, rejected: RejectedCandidate[], validationSnapshot: any): Promise<never> {
     await this.repository.rejectPreview({ runId, userId, code: validationSnapshot.codes[0] ?? 'VALIDATION_REJECTED', rejected, validationSnapshot });
-    throw new UnprocessableEntityException('Generated recipe could not be safely validated');
+    throw new UnprocessableEntityException({
+      code: 'RECIPE_PREVIEW_REJECTED',
+      message: 'Generated recipe could not be safely validated',
+      rejected,
+      validationSnapshot,
+    });
   }
   private providerFailureCode(error: unknown): string { const code = typeof (error as any)?.code === 'string' ? (error as any).code : ''; return code === 'RATE_LIMITED' || code === 'TIMEOUT' || code === 'TRANSIENT' ? code : 'TRANSIENT'; }
   private safeErrors(errors: readonly ValidationError[]) { return errors.map(({ code, field, message }) => ({ code, ...(field ? { field } : {}), message })); }

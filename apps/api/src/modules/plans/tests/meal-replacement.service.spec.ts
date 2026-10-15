@@ -10,7 +10,7 @@ import {
 import { MealReplacementService } from '../meal-replacement.service';
 import { RecipeValidationService } from '../recipe-validation.service';
 import { MealReplacementConflictError } from '../plans.repository';
-import { AiProviderUnavailableError } from '../gemini/gemini.service';
+import { AiProviderUnavailableError } from '../../openai/openai.service';
 import { InsufficientCoverageProfileError } from '../../recipe/recipe-coverage.types';
 import { pendingPersistedImage } from '../../unsplash/unsplash-search.fixture';
 
@@ -82,8 +82,8 @@ function setup(): any {
     findRecipeById: jest.fn(),
     updateRecipeImageTracking: jest.fn().mockResolvedValue(undefined),
   };
-  // Gemini devuelve texto crudo (NUT-74): el servicio lo parsea y valida.
-  const gemini = { generateReplacementMeal: jest.fn().mockResolvedValue(JSON.stringify(generatedMeal())) };
+  // OpenAI devuelve texto crudo (NUT-74): el servicio lo parsea y valida.
+  const openai = { generateReplacementMeal: jest.fn().mockResolvedValue(JSON.stringify(generatedMeal())) };
   const coverage = { evaluate: jest.fn().mockResolvedValue({ result: { compatibleRecipes: [] } }) };
   const config = { get: jest.fn().mockReturnValue(undefined) };
   // NUT-83: por defecto Unsplash no encuentra foto; los tests de imágenes lo cambian.
@@ -97,7 +97,7 @@ function setup(): any {
   // Validador real de NUT-74; sólo la búsqueda de duplicados en el catálogo está mockeada.
   const recipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
   const validation = new RecipeValidationService(recipes as any, repository as any);
-  const service = new MealReplacementService(repository as any, gemini as any, coverage as any, config as any, unsplash as any, validation);
+  const service = new MealReplacementService(repository as any, openai as any, coverage as any, config as any, unsplash as any, validation);
   const replace = (dto: Record<string, unknown> = {}, key = KEY) => service.replaceMeal(USER, PLAN, MEAL, key, dto);
   const catalogReturns = (...recipes: any[]) =>
     coverage.evaluate.mockResolvedValueOnce({ result: { compatibleRecipes: recipes.map(recipe => ({ recipe })) } });
@@ -107,7 +107,7 @@ function setup(): any {
     await probe.replace(dto);
     return probe.repository.createOrRecoverGenerationRun.mock.calls[0][6];
   };
-  return { plan, repository, gemini, coverage, config, unsplash, recipes, replace, catalogReturns, snapshotFor };
+  return { plan, repository, openai, coverage, config, unsplash, recipes, replace, catalogReturns, snapshotFor };
 }
 
 describe('MealReplacementService - plan y comida del usuario', () => {
@@ -153,12 +153,12 @@ describe('MealReplacementService - plan y comida del usuario', () => {
 
 describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () => {
   it('reutiliza la receta del catálogo sin llamar a la IA y sólo envía la comida objetivo a la transacción', async () => {
-    const { repository, gemini, catalogReturns, replace } = setup();
+    const { repository, openai, catalogReturns, replace } = setup();
     catalogReturns(catalogRecipe('recipe-cat', 'Ensalada César'));
 
     const response = await replace();
 
-    expect(gemini.generateReplacementMeal).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
     expect(repository.replaceMealTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: USER,
@@ -201,22 +201,22 @@ describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () =>
     expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-used');
   });
 
-  it('el filtro de restricciones del catálogo también revisa los pasos', async () => {
+  it('reuses the first catalog candidate without checking its instructions against restrictions', async () => {
     const { repository, catalogReturns, replace } = setup();
     catalogReturns({ ...catalogRecipe('recipe-steps'), instructions: ['Espolvorear maní picado'] }, catalogRecipe('recipe-ok'));
 
     await replace();
 
-    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-ok');
+    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-steps');
   });
 
-  it('descarta una receta del catálogo que viola una restricción del perfil y usa la siguiente', async () => {
+  it('reuses the first catalog candidate even when its title contains an excluded ingredient', async () => {
     const { repository, catalogReturns, replace } = setup();
     catalogReturns(catalogRecipe('recipe-nuts', 'Budín de nueces'), catalogRecipe('recipe-ok'));
 
     await replace();
 
-    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-ok');
+    expect(repository.replaceMealTransaction.mock.calls[0][0].existingRecipeId).toBe('recipe-nuts');
   });
 
   it('pasa los criterios del body a NUT-72 (refinan; las restricciones del perfil las agrega NUT-72)', async () => {
@@ -245,15 +245,16 @@ describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () =>
 
 describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
   it('genera exactamente una receta cuando el catálogo no tiene ninguna compatible', async () => {
-    const { repository, gemini, replace } = setup();
+    const { repository, openai, replace } = setup();
 
     const response = await replace({ topic: 'cena liviana' });
 
-    expect(gemini.generateReplacementMeal).toHaveBeenCalledTimes(1);
-    expect(gemini.generateReplacementMeal).toHaveBeenCalledWith(
+    expect(openai.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    expect(openai.generateReplacementMeal).toHaveBeenCalledWith(
       expect.objectContaining({ excludedIngredients: ['NUTS'] }),
       'DINNER',
       expect.objectContaining({ topic: 'cena liviana' }),
+      expect.any(Function),
     );
     const write = repository.replaceMealTransaction.mock.calls[0][0];
     expect(write.newRecipe).toEqual(expect.objectContaining({ title: 'Wok de verduras', prepMinutes: 15 }));
@@ -263,17 +264,17 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
   });
 
   it('si NUT-72 no puede evaluar el perfil (ej. KETO), sigue con la IA', async () => {
-    const { coverage, gemini, replace } = setup();
+    const { coverage, openai, replace } = setup();
     coverage.evaluate.mockRejectedValue(new InsufficientCoverageProfileError());
 
     await replace();
 
-    expect(gemini.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    expect(openai.generateReplacementMeal).toHaveBeenCalledTimes(1);
   });
 
   it('503 si la IA no responde: el run queda FAILED y no se toca el plan', async () => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockRejectedValue(new AiProviderUnavailableError('AI_TIMEOUT'));
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockRejectedValue(new AiProviderUnavailableError('AI_TIMEOUT'));
 
     await expect(replace()).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'FAILED', { errorCode: 'AI_TIMEOUT' });
@@ -285,15 +286,11 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     ['una respuesta que no es JSON', 'no es json', 'INVALID_JSON'],
     ['JSON con texto alrededor', 'Tu receta: ' + JSON.stringify(generatedMeal()), 'INVALID_JSON'],
     ['una comida sin receta', JSON.stringify(generatedMeal({ recipe: undefined })), 'MISSING_FIELD'],
-    ['una comida con un ingrediente excluido', JSON.stringify(generatedMeal({ title: 'Pollo con salsa de maní' })), 'EXCLUDED_INGREDIENT'],
     ['una categoría fuera del enum', JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, categories: ['PIZZA'] } })), 'UNSUPPORTED_CATEGORY'],
-    ['una categoría que contradicen sus ingredientes', JSON.stringify(generatedMeal({
-      recipe: { ...generatedMeal().recipe, categories: ['VEGAN'], ingredients: [{ name: 'Queso', quantity: 50, unit: 'g' }] },
-    })), 'CONTRADICTORY_PREFERENCE'],
     ['minutos negativos', JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, prepMinutes: -5 } })), 'INVALID_RANGE'],
   ])('422 si la IA devuelve %s: el run queda REJECTED con el código de NUT-74 y no se escribe nada', async (_label, generated, errorCode) => {
-    const { repository, gemini, unsplash, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(generated);
+    const { repository, openai, unsplash, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(generated);
 
     await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
@@ -306,9 +303,33 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     expect(unsplash.searchAndSelectCandidate).not.toHaveBeenCalled();
   });
 
+  it('accepts an excluded ingredient from the model without another server-side rejection', async () => {
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, title: 'Pollo con salsa de maní', ingredients: [{ name: 'Maní', quantity: 50, unit: 'g' }] },
+    })));
+
+    await replace();
+
+    expect(openai.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    expect(repository.replaceMealTransaction.mock.calls[0][0].newRecipe).toEqual(expect.objectContaining({ title: 'Pollo con salsa de maní' }));
+  });
+
+  it('accepts a generated recipe whose categories conflict with its ingredients', async () => {
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      recipe: { ...generatedMeal().recipe, categories: ['VEGAN'], ingredients: [{ name: 'Queso', quantity: 50, unit: 'g' }] },
+    })));
+
+    await replace();
+
+    expect(openai.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    expect(repository.replaceMealTransaction.mock.calls[0][0].newRecipe.categories).toEqual(['VEGAN']);
+  });
+
   it('acepta la receta de la IA si cumple las categorías y propiedades pedidas, y la guarda con ellas', async () => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
       recipe: { ...generatedMeal().recipe, categories: [' vegan ', 'VEGETARIAN', 'VEGAN'], properties: ['Sin Gluten', 'Alto en Fibra', 'sin gluten'] },
     })));
 
@@ -324,8 +345,8 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     ['la IA no clasificó la receta', { categories: ['VEGETARIAN'] }, {}],
     ['falta una propiedad pedida', { properties: ['Sin Gluten', 'Alto en Fibra'] }, { categories: [], properties: ['Sin Gluten'] }],
   ])('422 si la receta de la IA no cumple el body (%s)', async (_label, body, tags) => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, ...tags } })));
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ recipe: { ...generatedMeal().recipe, ...tags } })));
 
     await expect(replace(body)).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
@@ -351,8 +372,8 @@ describe('MealReplacementService - validación determinística (NUT-74)', () => 
   const duplicateInCatalog = { id: 'recipe-dup', title: 'WOK DE VERDURAS', description: 'Del catálogo', ingredients: [{ name: 'brócoli' }] };
 
   it('guarda la receta normalizada y el resumen de validación en el run', async () => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
       recipe: { ...generatedMeal().recipe, title: '  Wok de   verduras ', ingredients: [{ name: 'Brócoli', quantity: '1/2', unit: 'GR' }], extra: 'x' },
     })));
 
@@ -396,10 +417,10 @@ describe('MealReplacementService - validación determinística (NUT-74)', () => 
   });
 
   it('reutiliza el duplicado aunque la receta cruda no pase el DTO ("al gusto" sin unidad): se valida la normalizada', async () => {
-    const { repository, recipes, gemini, replace } = setup();
+    const { repository, recipes, openai, replace } = setup();
     recipes.findByNormalizedTitles.mockResolvedValue([{ ...duplicateInCatalog, ingredients: [{ name: 'brócoli' }, { name: 'Sal' }] }]);
     repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-dup', 'Wok de verduras'), prepMinutes: 15 });
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
       recipe: { ...generatedMeal().recipe, ingredients: [{ name: 'Brócoli', quantity: 200, unit: 'g' }, { name: 'Sal', quantity: 'al gusto', unit: '' }] },
     })));
 
@@ -421,8 +442,8 @@ describe('MealReplacementService - validación determinística (NUT-74)', () => 
   });
 
   it('un rechazo por el envoltorio de la comida (AI_INVALID_SCHEMA) también guarda snapshot', async () => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: '' , nutritionalValues: { Protein: 18, Calories: 420 } })));
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: '' , nutritionalValues: { Protein: 18, Calories: 420 } })));
 
     await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'REJECTED', {
@@ -444,12 +465,13 @@ describe('MealReplacementService - validación determinística (NUT-74)', () => 
     expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
   });
 
-  it('nunca le pide a la IA que juzgue su propio output (una sola llamada)', async () => {
-    const { gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: 'Budín de nueces' })));
+  it('accepts the model output without a restriction rejection or retry', async () => {
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({ title: 'Budín de nueces' })));
 
-    await expect(replace()).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(gemini.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    await replace();
+    expect(openai.generateReplacementMeal).toHaveBeenCalledTimes(1);
+    expect(repository.replaceMealTransaction).toHaveBeenCalled();
   });
 });
 
@@ -470,7 +492,7 @@ describe('MealReplacementService - idempotencia y concurrencia', () => {
   });
 
   it('repetir el mismo pedido con la misma clave devuelve el mismo reemplazo sin buscar ni generar de nuevo', async () => {
-    const { repository, coverage, gemini, catalogReturns, replace } = setup();
+    const { repository, coverage, openai, catalogReturns, replace } = setup();
     catalogReturns(catalogRecipe('recipe-cat'));
     await replace({ topic: 'cena' });
     const firstSnapshot = repository.createOrRecoverGenerationRun.mock.calls[0][6];
@@ -485,7 +507,7 @@ describe('MealReplacementService - idempotencia y concurrencia', () => {
     const replay = await replace({ topic: 'cena' });
 
     expect(coverage.evaluate).not.toHaveBeenCalled();
-    expect(gemini.generateReplacementMeal).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
     expect(repository.replaceMealTransaction).toHaveBeenCalledTimes(1);
     expect(replay.generationRunId).toBe('run-1');
     expect(replay.plannedMeal).toEqual(expect.objectContaining({ recipeId: 'recipe-cat', title: 'Ensalada' }));
@@ -554,9 +576,9 @@ describe('MealReplacementService - runs colgados y errores inesperados', () => {
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });
   });
 
-  it('un error inesperado de Gemini (que no es de proveedor) deja el run FAILED', async () => {
-    const { repository, gemini, replace } = setup();
-    gemini.generateReplacementMeal.mockRejectedValue(new TypeError('bug'));
+  it('un error inesperado de OpenAI (que no es de proveedor) deja el run FAILED', async () => {
+    const { repository, openai, replace } = setup();
+    openai.generateReplacementMeal.mockRejectedValue(new TypeError('bug'));
 
     await expect(replace()).rejects.toThrow('bug');
     expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', USER, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });

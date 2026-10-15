@@ -9,6 +9,7 @@ import { RecipeForm } from '../components/RecipeForm';
 import { useIngredients } from '../hooks/useIngredients';
 import { useRecipes } from '../hooks/useRecipes';
 import { useRecipeSearch, type UseRecipeSearchResult } from '../hooks/useRecipeSearch';
+import { clearPersistedRecipeSearch } from '../hooks/useRecipeSearch';
 
 // NUT-20 (octava iteración) — adaptación tablet/desktop (design.md sección 9.4/9.5): en
 // escritorio, esta pantalla nunca se queda mostrando el listado "puro" si ya hay recetas
@@ -25,9 +26,11 @@ const DESKTOP_MEDIA_QUERY = '(min-width: 1024px)';
 function RecipesHeader({
   onCreateIngredient,
   onCreateRecipe,
+  onGenerateRecipe,
 }: {
   onCreateIngredient: () => void;
   onCreateRecipe: () => void;
+  onGenerateRecipe: () => void;
 }) {
   return (
     <div
@@ -57,6 +60,9 @@ function RecipesHeader({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          <button type="button" onClick={onGenerateRecipe} aria-label="Generar receta con IA" className="flex h-9 items-center gap-1 rounded-full border border-brand-green/40 bg-brand-green/10 px-3 text-xs font-bold text-brand-green">
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">auto_awesome</span>IA
+          </button>
           <button
             type="button"
             onClick={onCreateIngredient}
@@ -165,6 +171,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
           catalogStatus={catalogStatus}
           onSuccess={() => {
             setModalKind(null);
+            clearPersistedRecipeSearch();
             refetch();
             search?.refetch();
           }}
@@ -204,6 +211,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
             <RecipesHeader
               onCreateIngredient={() => setModalKind('ingredient')}
               onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
             />
 
             <RecipeCatalogList
@@ -214,6 +222,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
               onRefresh={refetch}
               onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
               onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
               searchTerm={urlSearchTerm}
               onSearchTermChange={(q) => setSearchParams(q ? { q } : {})}
             />
@@ -256,6 +265,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
         <RecipesHeader
           onCreateIngredient={() => setModalKind('ingredient')}
           onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
         />
 
         <RecipeCatalogList
@@ -266,6 +276,7 @@ export function RecipesListPage({ useSearch, searchHook }: RecipesListPageProps 
           onRefresh={refetch}
           onSelectRecipe={(id) => navigate(`/recipes/${id}`)}
           onCreateRecipe={() => setModalKind('recipe')}
+              onGenerateRecipe={() => navigate('/recipes/generate')}
           searchTerm={urlSearchTerm}
           onSearchTermChange={(q) => setSearchParams(q ? { q } : {})}
           search={search}

@@ -7,14 +7,13 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PlansRepository } from './plans.repository';
-import { GEMINI_PROVIDER, GEMINI_MODEL_NAME } from './gemini/gemini.service';
-import { CURRENT_PROMPT_VERSION } from './gemini/prompts';
+import { OPENAI_PROVIDER, OPENAI_MODEL_NAME } from '../openai/openai.service';
+import { CURRENT_PROMPT_VERSION } from './openai/prompts';
 import { CreateMealPlanDto, MealPlanDayDto } from './dto';
 import { NutritionProfile } from '../../generated/prisma/client';
 import { buildProfileSnapshot, buildRequestSnapshot } from './generation-run-snapshot';
 import { computeIdempotencyKeyHash } from '../../utils/idempotency-hash.util';
 import { ConfigService } from '@nestjs/config';
-import { findExcludedIngredient, forbiddenRestrictions, restrictionTexts } from '../recipe/validation/ingredient-dictionary';
 import { isStalePendingRun } from './generation-run-ttl';
 import { RecipeImagesService } from './recipe-images.service';
 import { WeeklyProposalComposer } from './weekly-proposal.composer';
@@ -29,7 +28,7 @@ export class PlansService {
     private readonly repository: PlansRepository,
     private readonly images: RecipeImagesService,
     private readonly config: ConfigService,
-    // Composición de la propuesta semanal (hoy, Gemini + NUT-74; NUT-76 puede reemplazarla).
+    // Composición de la propuesta semanal con IA (NUT-74; NUT-76 puede reemplazarla).
     private readonly composer: WeeklyProposalComposer,
   ) {}
 
@@ -147,8 +146,8 @@ export class PlansService {
     const createOrRecoverRun = () => this.repository.createOrRecoverGenerationRun(
       userId,
       kind,
-      GEMINI_PROVIDER,
-      GEMINI_MODEL_NAME,
+      OPENAI_PROVIDER,
+      OPENAI_MODEL_NAME,
       promptVersion,
       schemaVersion,
       requestSnapshot,
@@ -216,7 +215,7 @@ export class PlansService {
       // manual concurrente vía `POST /meal-plans` para la misma semana entre el momento en que
       // se creó el run y el momento en que se intenta persistir — el `GenerationRun` no debe
       // quedar colgado en `PENDING` para siempre. Mismo patrón que el catch de
-      // `validateRestrictions` más abajo: try/catch silencioso alrededor de la transición, para
+      // `validatePlanStructure` más abajo: try/catch silencioso alrededor de la transición, para
       // no oscurecer el error original (`BadRequestException`) si la propia limpieza falla.
       if (generationRunId) {
         try {
@@ -231,10 +230,10 @@ export class PlansService {
     }
 
     try {
-      this.validateRestrictions(dto.days, user.nutritionProfile);
+      this.validatePlanStructure(dto.days);
     } catch (error) {
       if (generationRunId) {
-        await this.failRun(generationRunId, userId, 'REJECTED', 'RESTRICTION_VIOLATION');
+        await this.failRun(generationRunId, userId, 'REJECTED', 'INVALID_PLAN_STRUCTURE');
       }
       throw error;
     }
@@ -315,8 +314,8 @@ export class PlansService {
     const { run, wasCreated } = await this.repository.createOrRecoverGenerationRun(
       userId,
       kind,
-      GEMINI_PROVIDER,
-      GEMINI_MODEL_NAME,
+      OPENAI_PROVIDER,
+      OPENAI_MODEL_NAME,
       promptVersion,
       schemaVersion,
       requestSnapshot,
@@ -332,9 +331,9 @@ export class PlansService {
     }
 
     try {
-      this.validateRestrictions(dto.days, user.nutritionProfile);
+      this.validatePlanStructure(dto.days);
     } catch (error) {
-      await this.failRun(run.id, userId, 'REJECTED', 'RESTRICTION_VIOLATION');
+      await this.failRun(run.id, userId, 'REJECTED', 'INVALID_PLAN_STRUCTURE');
       throw error;
     }
 
@@ -386,31 +385,14 @@ export class PlansService {
     }
   }
 
-  private validateRestrictions(days: MealPlanDayDto[], profile: NutritionProfile) {
+  private validatePlanStructure(days: MealPlanDayDto[]) {
     if (!days || days.length !== 7) {
       throw new BadRequestException(`Plan must have exactly 7 days`);
     }
 
-    const forbidden = forbiddenRestrictions(profile);
-
     for (const day of days) {
       if (!day.meals || day.meals.length === 0) {
         throw new BadRequestException(`Empty meal list for day ${day.day}`);
-      }
-
-      for (const meal of day.meals) {
-        // Mismo diccionario y mismos textos que el validador de NUT-74 (pasos incluidos).
-        const restriction = findExcludedIngredient(restrictionTexts({
-          mealTitle: meal.title,
-          nutritionDescription: meal.nutritionalValues?.Description,
-          title: meal.recipe?.title,
-          description: meal.recipe?.description,
-          ingredients: meal.recipe?.ingredients,
-          instructions: meal.recipe?.instructions,
-        }), forbidden);
-        if (restriction) {
-          throw new BadRequestException(`Meal '${meal.title}' contains excluded ingredient/concept: ${restriction}`);
-        }
       }
     }
   }

@@ -1,4 +1,4 @@
-import { Diet, DietaryRestriction } from '@/generated/prisma/client';
+import { Diet } from '@/generated/prisma/client';
 import { NutritionProfileRepository } from '@/modules/nutrition-profile/nutrition-profile.repository';
 import { RecipeCoverageService } from '../recipe-coverage.service';
 import { RecipeRepository } from '../recipe.repository';
@@ -92,11 +92,11 @@ describe('RecipeCoverageService', () => {
     expect(mockRecipeRepository.findCoverageCandidates).not.toHaveBeenCalled();
   });
 
-  it('loads the persisted profile exactly once and translates only safely representable diet and restriction gates', async () => {
+  it('loads the persisted profile but does not derive category gates from dietary restrictions', async () => {
     mockProfileRepository.findByUserId.mockResolvedValue(
       completeProfile({
         diet: Diet.VEGETARIAN,
-        excludedIngredients: [DietaryRestriction.GLUTEN, DietaryRestriction.DAIRY],
+        excludedIngredients: ['GLUTEN', 'DAIRY'],
       }),
     );
 
@@ -117,23 +117,13 @@ describe('RecipeCoverageService', () => {
       properties: ['sin gluten', 'Alto en Fibra'],
       maxPrepMinutes: 30,
       excludeRecipeIds: ['used-1'],
-      requiredCategoryGroups: [
-        ['VEGETARIAN', 'VEGAN'],
-        ['GLUTEN_FREE'],
-        ['DAIRY_FREE'],
-      ],
+      requiredCategoryGroups: [],
       desiredTotal: 1,
     });
   });
 
-  const insufficientProfiles: Array<[unknown, string]> = [
-    [null, 'missing profile'],
-    [completeProfile({ diet: Diet.KETO }), 'diet without verifiable metadata'],
-    [completeProfile({ excludedIngredients: [DietaryRestriction.NUTS] }), 'ingredient restriction without verifiable metadata'],
-    [completeProfile({ excludedIngredients: undefined }), 'incomplete profile'],
-  ];
-
-  it.each(insufficientProfiles)('rejects %s as an insufficient profile without querying candidates', async (profile) => {
+  it('still requires a persisted profile record for coverage evaluation', async () => {
+    const profile = null;
     mockProfileRepository.findByUserId.mockResolvedValue(profile);
 
     await expect(service.evaluate({ userId: 'user-1', desiredTotal: 1 })).rejects.toThrow();

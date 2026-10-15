@@ -57,7 +57,7 @@ describe('validateRecipe - receta válida', () => {
     expect(recipeOut.nutritionalValues).not.toHaveProperty('sodium');
   });
 
-  it('acepta los macros de una comida de Gemini (Protein/Fiber/Calories/Description) y conserva el título de la comida', () => {
+  it('acepta los macros de una comida de OpenAI (Protein/Fiber/Calories/Description) y conserva el título de la comida', () => {
     const meal = generatedMeal();
     const recipeOut = normalized(validateRecipe(
       { ...meal.recipe, nutritionalValues: meal.nutritionalValues, mealTitle: meal.title },
@@ -284,28 +284,27 @@ describe('validateRecipe - calorías contra macros (aprobado por el TL)', () => 
   });
 });
 
-describe('validateRecipe - EXCLUDED_INGREDIENT (etapa profile)', () => {
+describe('validateRecipe - dietary restrictions delegated to the model', () => {
   it.each([
     ['restricción directa', 'Almendras'],
     ['derivado', 'Turrón'],
     ['derivado (marca)', 'Nutella'],
     ['acentos y mayúsculas', 'MANÍ TOSTADO'],
-  ])('%s: "%s"', (_label, ingredient) => {
+  ])('%s: "%s" is not rejected by server-side dietary checks', (_label, ingredient) => {
     const result = validateRecipe(recipeWithIngredient(ingredient), withNuts);
 
-    expect(codesOf(result)).toEqual(['EXCLUDED_INGREDIENT']);
-    expect(errorsOf(result)[0].message).toContain('nuts');
+    expect(result.valid).toBe(true);
   });
 
-  it('revisa también el título, la descripción y el título de la comida', () => {
-    expect(codesOf(validateRecipe(recipeWithIngredient('Arroz', { title: 'Arroz con almendras' }), withNuts))).toEqual(['EXCLUDED_INGREDIENT']);
-    expect(codesOf(validateRecipe(recipeWithIngredient('Arroz', { description: 'Con salsa de maní' }), withNuts))).toEqual(['EXCLUDED_INGREDIENT']);
-    expect(codesOf(validateRecipe(recipeWithIngredient('Arroz', { mealTitle: 'Budín de nueces' }), withNuts))).toEqual(['EXCLUDED_INGREDIENT']);
+  it('does not reject excluded ingredients mentioned in recipe text', () => {
+    expect(validateRecipe(recipeWithIngredient('Arroz', { title: 'Arroz con almendras' }), withNuts).valid).toBe(true);
+    expect(validateRecipe(recipeWithIngredient('Arroz', { description: 'Con salsa de maní' }), withNuts).valid).toBe(true);
+    expect(validateRecipe(recipeWithIngredient('Arroz', { mealTitle: 'Budín de nueces' }), withNuts).valid).toBe(true);
   });
 
-  it('revisa también el texto de los pasos', () => {
+  it('does not reject excluded ingredients mentioned in instructions', () => {
     const result = validateRecipe(recipeWithIngredient('Arroz', { instructions: ['Cocinar el arroz', 'Agregar maní picado'] }), withNuts);
-    expect(codesOf(result)).toEqual(['EXCLUDED_INGREDIENT']);
+    expect(result.valid).toBe(true);
   });
 
   it('en los pasos se mantienen las excepciones ("sin maní", "nuez moscada")', () => {
@@ -315,9 +314,9 @@ describe('validateRecipe - EXCLUDED_INGREDIENT (etapa profile)', () => {
     expect(result.valid).toBe(true);
   });
 
-  it('una negación en los pasos no tapa el ingrediente de la lista', () => {
+  it('does not inspect excluded ingredients in steps, including negated mentions', () => {
     const result = validateRecipe(recipeWithIngredient('Maní tostado', { instructions: ['Servir sin maní extra'] }), withNuts);
-    expect(codesOf(result)).toEqual(['EXCLUDED_INGREDIENT']);
+    expect(result.valid).toBe(true);
   });
 
   it.each([
@@ -329,7 +328,7 @@ describe('validateRecipe - EXCLUDED_INGREDIENT (etapa profile)', () => {
   });
 });
 
-describe('validateRecipe - CONTRADICTORY_PREFERENCE (pendiente de confirmar con el TL)', () => {
+describe('validateRecipe - category contradictions delegated to the model', () => {
   it.each([
     ['VEGETARIAN', 'Pechuga de pollo'],
     ['VEGETARIAN', 'Atún'],
@@ -338,11 +337,10 @@ describe('validateRecipe - CONTRADICTORY_PREFERENCE (pendiente de confirmar con 
     ['VEGAN', 'Miel'],
     ['GLUTEN_FREE', 'Harina de trigo'],
     ['DAIRY_FREE', 'Manteca'],
-  ])('%s con "%s"', (category, ingredient) => {
+  ])('%s with "%s" is not rejected by a server-side diet check', (category, ingredient) => {
     const result = validateRecipe(recipeWithIngredient(ingredient, { categories: [category] }), NO_RESTRICTIONS);
 
-    expect(codesOf(result)).toEqual(['CONTRADICTORY_PREFERENCE']);
-    expect(fieldsOf(result)).toEqual(['categories']);
+    expect(result.valid).toBe(true);
   });
 
   it.each([
@@ -354,10 +352,10 @@ describe('validateRecipe - CONTRADICTORY_PREFERENCE (pendiente de confirmar con 
     expect(validateRecipe(recipeWithIngredient(ingredient, { categories: [category] }), NO_RESTRICTIONS).valid).toBe(true);
   });
 
-  it('junta en la misma etapa el ingrediente excluido y la contradicción', () => {
+  it('accepts a recipe with both an excluded ingredient and a conflicting category', () => {
     const result = validateRecipe(recipeWithIngredient('Queso con nueces', { categories: ['VEGAN'] }), withNuts);
 
-    expect(codesOf(result)).toEqual(['EXCLUDED_INGREDIENT', 'CONTRADICTORY_PREFERENCE']);
+    expect(result.valid).toBe(true);
   });
 });
 
@@ -406,14 +404,13 @@ describe('validateRecipe - duplicados (NUT-72)', () => {
 });
 
 describe('validateRecipes - lotes', () => {
-  it('una receta inválida se rechaza sola; el resto del lote sigue', () => {
+  it('excluded ingredients do not invalidate one recipe in a batch', () => {
     const results = validateRecipes(
       [generatedRecipe(), recipeWithIngredient('Almendras'), generatedRecipe({ title: 'Wok de verduras' })],
       withNuts,
     );
 
-    expect(results.map(result => result.valid)).toEqual([true, false, true]);
-    expect(codesOf(results[1])).toEqual(['EXCLUDED_INGREDIENT']);
+    expect(results.map(result => result.valid)).toEqual([true, true, true]);
   });
 
   it('detecta duplicados dentro del mismo lote', () => {
@@ -445,7 +442,7 @@ describe('summarizeResults / summarizeParseFailure (validationSnapshot de NUT-75
       withNuts,
     );
 
-    expect(summarizeResults(results)).toEqual({ stage: 'schema', codes: ['EXCLUDED_INGREDIENT', 'MISSING_FIELD'], warnings: [] });
+    expect(summarizeResults(results)).toEqual({ stage: 'schema', codes: ['MISSING_FIELD'], warnings: [] });
   });
 
   it('falla del parseo', () => {

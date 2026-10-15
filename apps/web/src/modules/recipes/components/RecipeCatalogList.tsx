@@ -7,6 +7,7 @@ import type { Recipe, RecipeCategory } from '../../../services/recipeService';
 import type { UseRecipeSearchResult } from '../hooks/useRecipeSearch';
 import { RECIPE_CATEGORY_BADGE_CLASSES, RECIPE_CATEGORY_LABELS } from '../labels';
 import { RecipeTimeFilterSheet } from './RecipeTimeFilterSheet';
+import { RecipeImage } from './RecipeImage';
 
 const CREATE_RECIPE_LABEL = 'Crear receta';
 const UNCATEGORIZED_BADGE_CLASSES = 'bg-surface-container-highest text-on-surface-variant';
@@ -19,7 +20,7 @@ export type RecipeCatalogListProps = {
   onRefresh?: () => void;
   selectedId?: string | null;
   onSelectRecipe: (id: string) => void;
-  onCreateRecipe: () => void;
+  onCreateRecipe: () => void;  onGenerateRecipe?: () => void;
   onCreateIngredient?: () => void;
   hideSearch?: boolean;
   hideHeader?: boolean;
@@ -434,10 +435,14 @@ export function RecipeCatalogList({
                 }`}
               >
                 {/* Thumbnail with category badge overlay */}
-                <div
+                <RecipeImage
+                  image={recipe.image}
+                  title={recipe.title}
                   data-testid="recipe-card-thumbnail"
-                  className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-surface-container"
-                >
+                  className="h-20 w-20 shrink-0 rounded-xl"
+                  compact
+                />
+                <div className="pointer-events-none absolute">
                   <span
                     className={`absolute left-1 top-1 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${categoryBadgeClasses}`}
                   >

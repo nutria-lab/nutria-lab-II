@@ -12,6 +12,8 @@ type AuthFailureHandler = () => void | Promise<void>;
 let authFailureHandler: AuthFailureHandler | null = null;
 let authFailureInFlight: Promise<void> | null = null;
 
+const ACCESS_GATE_REQUIRED_CODE = 'ACCESS_GATE_REQUIRED';
+
 const EXCLUDED_AUTH_PATHS = new Set([
   '/auth/login',
   '/auth/logout',
@@ -51,6 +53,11 @@ function isExcludedAuthPath(url?: string) {
   }
 }
 
+function isAccessGateError(error: AxiosError) {
+  const data = error.response?.data;
+  return Boolean(data && typeof data === 'object' && (data as { code?: unknown }).code === ACCESS_GATE_REQUIRED_CODE);
+}
+
 function shouldHandleAuthError(error: AxiosError) {
   const status = error.response?.status;
   const config = error.config;
@@ -63,7 +70,7 @@ function shouldHandleAuthError(error: AxiosError) {
     return false;
   }
 
-  if (config.skipAuthErrorHandling || config.authErrorHandled) {
+  if (config.skipAuthErrorHandling || config.authErrorHandled || isAccessGateError(error)) {
     return false;
   }
 

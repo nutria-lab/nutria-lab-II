@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { AppLayout } from '../common/components/AppLayout';
 import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
+import { AccessGateBoundary } from '../features/access/AccessGateBoundary';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
 import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
@@ -10,6 +11,7 @@ import { LoginRequestError } from '../services/authService';
 import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
 import { RecipeDetailPage } from '../modules/recipes/pages/RecipeDetailPage';
 import { RecipesListPage } from '../modules/recipes/pages/RecipesListPage';
+import { RecipeGenerationPage } from '../modules/recipes/generation/RecipeGenerationPage';
 
 function LoginRoute() {
   const { status: authStatus, login } = useAuth();
@@ -66,7 +68,7 @@ function ProtectedApp({ children }: { children: ReactNode }) {
   return <AppLayout onLogout={logout} user={user}>{children}</AppLayout>;
 }
 
-export function App() {
+function AuthenticatedApp() {
   return (
     <AuthProvider><Routes>
       <Route path="/login" element={<LoginRoute />} />
@@ -80,6 +82,7 @@ export function App() {
               <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
               <Route path="/meal-plan" element={<MealPlanPage />} />
               <Route path="/recipes" element={<RecipesListPage />} />
+              <Route path="/recipes/generate" element={<RecipeGenerationPage />} />
               <Route path="/recipes/:id" element={<RecipeDetailPage inLayout />} />
               <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
               <Route path="/goals" element={<PreferencesPage />} />
@@ -88,5 +91,13 @@ export function App() {
         )}
       />
     </Routes></AuthProvider>
+  );
+}
+
+export function App() {
+  return (
+    <AccessGateBoundary>
+      <AuthenticatedApp />
+    </AccessGateBoundary>
   );
 }

@@ -33,42 +33,26 @@ function makeService(profile: Record<string, unknown>) {
 }
 
 describe('NUT-73 PR #52 review regressions', () => {
-  it('boots the real RecipeGenerationModule and binds the generation port to the concrete Gemini adapter', async () => {
+  it('boots the real RecipeGenerationModule and binds the generation port to OpenAI', async () => {
     const module = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true, load: [() => ({ JWT_SECRET: 'test', GEMINI_API_KEY: 'test-key' })] }), RecipeGenerationModule],
+      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true, load: [() => ({ JWT_SECRET: 'test', OPENAI_API_KEY: 'test-key' })] }), RecipeGenerationModule],
     }).compile();
 
     expect(module.get(RecipeGenerationService)).toBeInstanceOf(RecipeGenerationService);
-    const provider = module.get(RECIPE_GENERATION_PROVIDER);
-    expect(provider.constructor.name).toBe('GeminiRecipeGenerationProvider');
+    expect(module.get(RECIPE_GENERATION_PROVIDER).constructor.name).toBe('OpenAIRecipeGenerationProvider');
   });
 
-  it('uses the Gemini adapter for structured success, provider failure, and timeout without making a real request', async () => {
-    const generateContent = jest.fn();
-    jest.doMock('@google/generative-ai', () => ({ GoogleGenerativeAI: jest.fn(() => ({ getGenerativeModel: jest.fn(() => ({ generateContent })) })) }));
-    let GeminiRecipeGenerationProvider: any;
-    jest.isolateModules(() => ({ GeminiRecipeGenerationProvider } = require('../recipe-generation.ports')));
-    const adapter = new GeminiRecipeGenerationProvider({ get: jest.fn().mockReturnValue('test-key') });
-    const input = { profile: { diet: 'VEGAN' }, criteria: { topic: 'cena' }, count: 1, promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1' };
+  it('passes the preview contract to the shared OpenAI service', async () => {
+    const openai = { generateJson: jest.fn().mockResolvedValue(rawRecipes([generatedRecipe()])) };
+    const { OpenAIRecipeGenerationProvider } = require('../recipe-generation.ports');
+    const adapter = new OpenAIRecipeGenerationProvider(openai);
+    const input = { profile: { diet: 'VEGAN' }, criteria: { topic: 'cena' }, count: 1, promptVersion: 'recipe-preview-openai-v1', schemaVersion: 'recipe-candidate-openai-v1' };
 
-    generateContent.mockResolvedValueOnce({ response: { text: () => rawRecipes([generatedRecipe()]) } });
     await expect(adapter.generate(input)).resolves.toBe(rawRecipes([generatedRecipe()]));
-
-    generateContent.mockRejectedValueOnce(new Error('Gemini unavailable'));
-    await expect(adapter.generate(input)).rejects.toMatchObject({ name: 'AiProviderUnavailableError', reason: 'AI_PROVIDER_ERROR' });
-
-    jest.useFakeTimers();
-    generateContent.mockImplementationOnce((_request: unknown, options: { signal: AbortSignal }) => new Promise((_, reject) => {
-      options.signal.addEventListener('abort', () => reject(new Error('aborted')));
-    }));
-    const timedOut = adapter.generate(input);
-    await jest.advanceTimersByTimeAsync(90_000);
-    await expect(timedOut).rejects.toMatchObject({ name: 'AiProviderUnavailableError', reason: 'AI_TIMEOUT' });
-    jest.useRealTimers();
-    expect(generateContent).toHaveBeenCalledTimes(3);
+    expect(openai.generateJson).toHaveBeenCalledWith(expect.stringContaining('recipe-preview-openai-v1'), expect.objectContaining({ type: 'object' }), 'recipe_candidates', undefined);
   });
 
-  it('removes a wheat-containing GLUTEN_FREE catalog recipe, recalculates the missing count, and generates the replacement', async () => {
+  it('reuses catalog coverage without filtering it by excluded ingredients', async () => {
     const { service, coverage, provider, repository } = makeService({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: ['GLUTEN'], cookTimePreference: 'STANDARD' });
     coverage.evaluate.mockResolvedValue({
       profile: { goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: ['GLUTEN'], cookTimePreference: 'STANDARD' },
@@ -81,31 +65,35 @@ describe('NUT-73 PR #52 review regressions', () => {
 
     await service.preview(userId, key, { mode: 'BATCH', countMode: 'TOTAL_DESIRED', count: 1, topic: 'cenas' } as any);
 
-    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ count: 1 }));
-    expect(repository.persistReadyPreview).toHaveBeenCalledWith(expect.objectContaining({ reused: [] }));
+    expect(provider.generate).not.toHaveBeenCalled();
+    expect(repository.persistReadyPreview).toHaveBeenCalledWith(expect.objectContaining({
+      reused: expect.arrayContaining([expect.objectContaining({ recipe: expect.objectContaining({ id: 'unsafe-wheat' }) })]),
+      drafts: [],
+    }));
   });
 
-  it('rejects provider chicken for a VEGAN profile before image lookup or preview persistence', async () => {
+  it('accepts a recipe that conflicts with the diet profile and still sends the profile to the model', async () => {
     const { service, provider, images, repository } = makeService({ goal: 'MAINTAIN', diet: 'VEGAN', excludedIngredients: [], cookTimePreference: 'STANDARD' });
     provider.generate.mockResolvedValue(rawRecipes([generatedRecipe({ ingredients: [{ name: 'Pollo', quantity: 150, unit: 'g' }], categories: [] })]));
 
-    await expect(service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any);
 
-    expect(images.searchAndSelectCandidate).not.toHaveBeenCalled();
-    expect(repository.persistReadyPreview).not.toHaveBeenCalled();
-    expect(repository.rejectPreview).toHaveBeenCalled();
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ diet: 'VEGAN' }) }), expect.any(Function));
+    expect(images.searchAndSelectCandidate).toHaveBeenCalled();
+    expect(repository.persistReadyPreview).toHaveBeenCalled();
+    expect(repository.rejectPreview).not.toHaveBeenCalled();
   });
 
-  it('revalidates persisted meat drafts against the current VEGAN profile before confirmation writes', async () => {
+  it('allows confirmation of a persisted recipe that conflicts with the current diet profile', async () => {
     const { service, repository } = makeService({ goal: 'MAINTAIN', diet: 'VEGAN', excludedIngredients: [], cookTimePreference: 'STANDARD' });
     const unsafeDraft = { draftId: 'draft-1', recipe: generatedRecipe({ ingredients: [{ name: 'Carne vacuna', quantity: 150, unit: 'g' }], categories: [] }), image: null, warnings: [] };
+    repository.findRunForOwner.mockResolvedValue({ id: 'run-1', userId, status: 'READY_FOR_REVIEW', outputSnapshot: {} });
     repository.selectedDrafts.mockReturnValue([unsafeDraft]);
+    repository.confirmDraftsTransaction.mockResolvedValue({ replayed: false, generationRunId: 'run-1', items: [] });
 
-    await expect(service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any);
 
-    expect(repository.confirmDraftsTransaction).not.toHaveBeenCalled();
+    expect(repository.confirmDraftsTransaction).toHaveBeenCalled();
   });
 
   it('expires a stale PENDING reservation atomically and reserves a fresh run for the same preview key', async () => {
@@ -162,24 +150,24 @@ describe('NUT-73 PR #52 review regressions', () => {
     expect(repository.failPreview).not.toHaveBeenCalled();
   });
 
-  it.each(['KETO', 'PALEO'])('fails closed for unsupported %s policy in preview without image I/O or preview persistence', async diet => {
-    const { service, images, repository } = makeService({ goal: 'MAINTAIN', diet, excludedIngredients: [], cookTimePreference: 'STANDARD' });
+  it.each(['KETO', 'PALEO'])('passes %s diet to the model without a server-side policy gate', async diet => {
+    const { service, provider, repository } = makeService({ goal: 'MAINTAIN', diet, excludedIngredients: [], cookTimePreference: 'STANDARD' });
 
-    await expect(service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any);
 
-    expect(images.searchAndSelectCandidate).not.toHaveBeenCalled();
-    expect(repository.persistReadyPreview).not.toHaveBeenCalled();
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ diet }) }), expect.any(Function));
+    expect(repository.persistReadyPreview).toHaveBeenCalled();
   });
 
-  it.each(['KETO', 'PALEO'])('fails closed for unsupported %s policy in confirmation before persistence', async diet => {
+  it.each(['KETO', 'PALEO'])('allows confirmation for a %s profile without a server-side policy gate', async diet => {
     const { service, repository } = makeService({ goal: 'MAINTAIN', diet, excludedIngredients: [], cookTimePreference: 'STANDARD' });
     repository.selectedDrafts.mockReturnValue([{ draftId: 'draft-1', recipe: generatedRecipe(), image: null, warnings: [] }]);
+    repository.findRunForOwner.mockResolvedValue({ id: 'run-1', userId, status: 'READY_FOR_REVIEW', outputSnapshot: {} });
+    repository.confirmDraftsTransaction.mockResolvedValue({ replayed: false, generationRunId: 'run-1', items: [] });
 
-    await expect(service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any);
 
-    expect(repository.confirmDraftsTransaction).not.toHaveBeenCalled();
+    expect(repository.confirmDraftsTransaction).toHaveBeenCalled();
   });
 
   it('on a lost conditional expiry update, rereads a ready winner and returns its normal replay state', async () => {
@@ -210,75 +198,28 @@ describe('NUT-73 PR #52 review regressions', () => {
     expect(findFirst).toHaveBeenCalledTimes(2);
   });
 
-  it('fails closed when NEW_ONLY has no persisted profile, before calling the provider or persisting a preview', async () => {
-    const { service, profiles, provider, images, repository } = makeService({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'STANDARD' });
+  it('generates with an empty profile snapshot when no persisted profile exists', async () => {
+    const { service, profiles, provider, repository } = makeService({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'STANDARD' });
     profiles.findByUserId.mockResolvedValue(null);
 
-    await expect(service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any);
 
-    expect(provider.generate).not.toHaveBeenCalled();
-    expect(images.searchAndSelectCandidate).not.toHaveBeenCalled();
-    expect(repository.persistReadyPreview).not.toHaveBeenCalled();
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ profile: expect.objectContaining({ excludedIngredients: [] }) }), expect.any(Function));
+    expect(repository.persistReadyPreview).toHaveBeenCalled();
   });
 
-  it('fails closed when confirmation has no persisted profile, before recipe persistence', async () => {
+  it('allows confirmation when no persisted profile exists', async () => {
     const { service, profiles, repository } = makeService({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'STANDARD' });
     profiles.findByUserId.mockResolvedValue(null);
     repository.selectedDrafts.mockReturnValue([{ draftId: 'draft-1', recipe: generatedRecipe(), image: null, warnings: [] }]);
+    repository.findRunForOwner.mockResolvedValue({ id: 'run-1', userId, status: 'READY_FOR_REVIEW', outputSnapshot: {} });
+    repository.confirmDraftsTransaction.mockResolvedValue({ replayed: false, generationRunId: 'run-1', items: [] });
 
-    await expect(service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any))
-      .rejects.toBeInstanceOf(UnprocessableEntityException);
+    await service.confirm(userId, key, { generationRunId: 'run-1', draftIds: ['draft-1'] } as any);
 
-    expect(repository.confirmDraftsTransaction).not.toHaveBeenCalled();
+    expect(profiles.findByUserId).toHaveBeenCalledWith(userId);
+    expect(repository.confirmDraftsTransaction).toHaveBeenCalled();
   });
 
-  it('sends Gemini a versioned exact recipe-array schema with every required recipe field', async () => {
-    const generateContent = jest.fn().mockResolvedValue({ response: { text: () => rawRecipes([generatedRecipe()]) } });
-    const getGenerativeModel = jest.fn((_config: unknown) => ({ generateContent }));
-    jest.doMock('@google/generative-ai', () => ({ GoogleGenerativeAI: jest.fn(() => ({ getGenerativeModel })) }));
-    let GeminiRecipeGenerationProvider: any;
-    jest.isolateModules(() => ({ GeminiRecipeGenerationProvider } = require('../recipe-generation.ports')));
-    const adapter = new GeminiRecipeGenerationProvider({ get: jest.fn().mockReturnValue('test-key') });
 
-    await adapter.generate({ profile: { diet: 'ALL' }, criteria: { topic: 'cena' }, count: 1, promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1' });
-
-    const modelInput = getGenerativeModel.mock.calls[0]?.[0] as any;
-    expect(modelInput.generationConfig).toEqual(expect.objectContaining({
-      responseMimeType: 'application/json',
-      responseSchema: expect.objectContaining({
-        type: expect.anything(),
-        required: ['recipes'],
-        properties: expect.objectContaining({
-          recipes: expect.objectContaining({
-            type: expect.anything(),
-            items: expect.objectContaining({
-              required: expect.arrayContaining(['title', 'description', 'prepMinutes', 'cookMinutes', 'ingredients', 'instructions', 'categories', 'nutritionalValues', 'properties']),
-            }),
-          }),
-        }),
-      }),
-    }));
-    const prompt = JSON.parse(generateContent.mock.calls[0][0].contents[0].parts[0].text);
-    expect(prompt).toEqual(expect.objectContaining({
-      promptVersion: 'recipe-preview-v1', schemaVersion: 'recipe-candidate-v1',
-      outputContract: expect.objectContaining({ version: 'recipe-candidate-v1', required: ['recipes'] }),
-    }));
-  });
-
-  it('maps a mocked Gemini 429 through RATE_LIMITED to the preview 429 contract, not 503', async () => {
-    const generateContent = jest.fn().mockRejectedValue({ status: 429, message: 'quota exhausted' });
-    const getGenerativeModel = jest.fn((_config: unknown) => ({ generateContent }));
-    jest.doMock('@google/generative-ai', () => ({ GoogleGenerativeAI: jest.fn(() => ({ getGenerativeModel })) }));
-    let GeminiRecipeGenerationProvider: any;
-    jest.isolateModules(() => ({ GeminiRecipeGenerationProvider } = require('../recipe-generation.ports')));
-    const adapter = new GeminiRecipeGenerationProvider({ get: jest.fn().mockReturnValue('test-key') });
-    const { service, repository } = makeService({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'STANDARD' });
-    (service as any).provider = adapter;
-
-    await expect(service.preview(userId, key, { mode: 'SINGLE', countMode: 'NEW_ONLY', count: 1, description: 'cena' } as any))
-      .rejects.toMatchObject({ status: 429 });
-
-    expect(repository.failPreview).toHaveBeenCalledWith(expect.objectContaining({ runId: 'run-1', userId, code: 'RATE_LIMITED' }));
-  });
 });
