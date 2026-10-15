@@ -13,7 +13,9 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "npx tsx prisma/seed.ts",
     "unsplash:recover-tracking": "npx tsx prisma/recover-unsplash-tracking.ts",
-    "kpi:telemetry": "tsx scripts/kpi/telemetry.ts"
+    "kpi:telemetry": "tsx scripts/kpi/telemetry.ts",
+    "kpi:publish": "tsx scripts/kpi/publish.ts",
+    "kpi:retry": "tsx scripts/kpi/retry.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

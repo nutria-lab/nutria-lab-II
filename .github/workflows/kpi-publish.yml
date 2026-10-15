@@ -1,0 +1,101 @@
+name: KPI publish
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Argentina report date (YYYY-MM-DD); schedule selects the last completed local cut.
+        required: true
+        type: string
+      environment:
+        description: Publishable environment
+        required: true
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: kpi-publication-${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api run prisma:generate
+      - id: report-date
+        name: Select explicit or last completed Argentina cut
+        env:
+          INPUT_DATE: ${{ inputs.date }}
+        run: |
+          if [[ -n "$INPUT_DATE" ]]; then REPORT_DATE="$INPUT_DATE"; else REPORT_DATE="$(TZ=America/Argentina/Buenos_Aires date +%F)"; fi
+          echo "date=$REPORT_DATE" >> "$GITHUB_OUTPUT"
+      - id: publish
+        name: Publish frozen KPI batch
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
+          KPI_ENV: ${{ vars.KPI_ENV }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
+          REPORT_DATE: ${{ steps.report-date.outputs.date }}
+          TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+        run: |
+          set +e
+          pnpm --filter api kpi:publish --date "$REPORT_DATE" --environment "$TARGET_ENV"
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Dispatch retry one when the failed initial attempt is eligible
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          OUTCOME_PATH: ${{ runner.temp }}/kpi-publication/outcome.json
+          REPORT_DATE: ${{ steps.report-date.outputs.date }}
+          TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          CLI_EXIT: ${{ steps.publish.outputs.exit_code }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (process.env.CLI_EXIT === '0' || !fs.existsSync(process.env.OUTCOME_PATH)) return;
+            const outcome = JSON.parse(fs.readFileSync(process.env.OUTCOME_PATH, 'utf8'));
+            if (outcome.post_accepted || !outcome.retryable ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outcome.retry_chain_id ?? '')) return;
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: context.sha,
+              inputs: { date: process.env.REPORT_DATE, environment: process.env.TARGET_ENV,
+                retry_chain_id: outcome.retry_chain_id, attempt: '1', source_commit: process.env.SOURCE_COMMIT,
+                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? '') },
+            });
+      - name: Fail the initial publication when it did not deliver
+        if: always()
+        env:
+          CLI_EXIT: ${{ steps.publish.outputs.exit_code }}
+        run: |
+          [[ "$CLI_EXIT" =~ ^[0-9]+$ ]]
+          exit "$CLI_EXIT"
+      - name: Upload publication artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kpi-publication
+          if-no-files-found: error
+          retention-days: 90
