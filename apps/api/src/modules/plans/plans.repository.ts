@@ -39,6 +39,16 @@ type RecipeImageWithTracking = {
 // Comida a persistir. `reuseRecipeId` lo pone sólo el servidor;
 // el ValidationPipe global rechaza esa clave si viene de un cliente.
 export type PersistableMeal = MealPlanDayDto['meals'][number] & { reuseRecipeId?: string };
+function recipeNutritionalValuesFromMeal(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const source = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  if (typeof source.Calories === 'number') result.calories = source.Calories;
+  if (typeof source.Protein === 'number') result.protein = source.Protein;
+  if (typeof source.Fiber === 'number') result.fiber = source.Fiber;
+  if (typeof source.Description === 'string') result.description = source.Description;
+  return Object.keys(result).length > 0 ? result : undefined;
+}
 
 // Opciones del supersede. El PUT pasa la versión que leyó; la regeneración (NUT-78) además su
 // updatedAt (control optimista), recetas AI y el resumen de validación de NUT-74.
@@ -165,6 +175,11 @@ export class PlansRepository {
           const recipeImage = (meal.recipe as { image?: unknown }).image;
           if (recipeImage !== undefined) {
             recipeData.image = recipeImage;
+          }
+
+          const recipeNutrition = recipeNutritionalValuesFromMeal(meal.nutritionalValues);
+          if (recipeNutrition) {
+            recipeData.nutritionalValues = recipeNutrition;
           }
 
           const recipe = await tx.recipe.create({ data: recipeData });

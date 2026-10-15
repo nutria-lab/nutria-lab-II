@@ -14,6 +14,17 @@ function withPublicImage<T extends object>(recipe: T) {
   return { ...recipe, image: toPublicRecipeImage(image) };
 }
 
+function recipeNutritionFromMeal(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  if (typeof source.Calories === 'number') result.calories = source.Calories;
+  if (typeof source.Protein === 'number') result.protein = source.Protein;
+  if (typeof source.Fiber === 'number') result.fiber = source.Fiber;
+  if (typeof source.Description === 'string') result.description = source.Description;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 @Injectable()
 export class RecipeService {
   private readonly logger = new Logger(RecipeService.name);
@@ -66,7 +77,15 @@ export class RecipeService {
     if (!recipe) {
       throw new NotFoundException(`Recipe with ID ${id} not found.`);
     }
-    return withPublicImage(recipe);
+    let recipeWithNutrition = recipe;
+    if (!recipe.nutritionalValues && typeof (this.repository as any).findPlannedMealNutritionByRecipeId === 'function') {
+      const plannedMeal = await this.repository.findPlannedMealNutritionByRecipeId(id);
+      const fallbackNutrition = recipeNutritionFromMeal(plannedMeal?.nutritionalValues);
+      if (fallbackNutrition) {
+        recipeWithNutrition = { ...recipe, nutritionalValues: fallbackNutrition as any };
+      }
+    }
+    return withPublicImage(recipeWithNutrition);
   }
 
   async update(id: string, data: UpdateRecipeDto) {

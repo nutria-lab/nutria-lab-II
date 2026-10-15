@@ -191,6 +191,14 @@ export class RecipeRepository {
     });
   }
 
+  async findPlannedMealNutritionByRecipeId(recipeId: string) {
+    return this.prisma.plannedMeal.findFirst({
+      where: { recipeId },
+      select: { nutritionalValues: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
   async findByTitle(title: string) {
     return this.prisma.recipe.findFirst({
       where: { title },
