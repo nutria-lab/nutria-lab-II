@@ -12,6 +12,8 @@ export interface PublicationArtifactInput {
   failureCode: string | null;
   retry: { retryChainId: string; attempt: number };
   httpStatus: number | null;
+  retryable?: boolean;
+  retryAfterMs?: number | null;
 }
 
 /** Builds only publish-safe evidence; caller-supplied extras cannot leak into it. */
@@ -27,6 +29,8 @@ export function buildPublicationArtifacts(input: PublicationArtifactInput & Reco
     failure_code: input.failureCode,
     retry: { retry_chain_id: input.retry.retryChainId, attempt: input.retry.attempt },
     http_status: input.httpStatus,
+    retryable: input.retryable ?? false,
+    retry_after_ms: input.retryAfterMs ?? null,
   };
   return {
     'payload.json': Buffer.from(input.frozenPayload),

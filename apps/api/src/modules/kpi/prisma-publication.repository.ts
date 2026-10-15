@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
-import { Prisma } from '@/generated/prisma/client';
-import type { PrismaService } from '@/prisma/prisma.service';
+import { Prisma } from '../../generated/prisma/client';
+import type { PrismaService } from '../../prisma/prisma.service';
 
 import { canonicalPayloadBytes } from './kpi-batch';
 import type { FrozenBatch, Measurement } from './kpi-contract';

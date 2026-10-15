@@ -1,4 +1,4 @@
-name: KPI retry (gated)
+name: KPI retry
 
 on:
   workflow_dispatch:
@@ -29,6 +29,10 @@ on:
         description: Optional original run ID
         required: false
         type: string
+      retry_after_ms:
+        description: Retry-After hint from the preceding response in milliseconds
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -39,8 +43,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  retry-gate:
+  retry:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -57,23 +62,81 @@ jobs:
           RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
           ATTEMPT: ${{ inputs.attempt }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
+          RETRY_AFTER_MS: ${{ inputs.retry_after_ms }}
         run: |
           [[ "$ATTEMPT" == "1" || "$ATTEMPT" == "2" ]]
           [[ "$RETRY_CHAIN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ -z "$RETRY_AFTER_MS" || "$RETRY_AFTER_MS" =~ ^[0-9]+$ ]]
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
-      - name: Delay retry attempt 1
-        if: inputs.attempt == '1'
-        run: sleep 300
-      - name: Delay retry attempt 2
-        if: inputs.attempt == '2'
-        run: sleep 600
-      # No external publication action is allowed until its contract is approved.
-      - run: echo 'KPI retry remains gated pending approved adapters.'
-      - name: Upload gated retry artifacts
+      - name: Respect backoff and Retry-After
+        env:
+          ATTEMPT: ${{ inputs.attempt }}
+          RETRY_AFTER_MS: ${{ inputs.retry_after_ms }}
+        run: |
+          if [[ "$ATTEMPT" == "1" ]]; then base=300; else base=600; fi
+          hint=0
+          if [[ -n "$RETRY_AFTER_MS" ]]; then hint=$(( (RETRY_AFTER_MS + 999) / 1000 )); fi
+          if (( hint > base )); then delay=$hint; else delay=$base; fi
+          sleep "$delay"
+      - id: retry
+        name: Retry the same frozen KPI batch
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
+          KPI_ENV: ${{ vars.KPI_ENV }}
+          KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
+          REPORT_DATE: ${{ inputs.date }}
+          TARGET_ENV: ${{ inputs.environment }}
+          RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          RUN_ID: ${{ inputs.run_id }}
+          ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          set +e
+          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT")
+          if [[ -n "$RUN_ID" ]]; then args+=(--run-id "$RUN_ID"); fi
+          pnpm --filter api kpi:retry "${args[@]}"
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Dispatch retry two only for an eligible retry one failure
+        if: always() && inputs.attempt == '1'
+        uses: actions/github-script@v7
+        env:
+          OUTCOME_PATH: ${{ runner.temp }}/kpi-publication/outcome.json
+          CLI_EXIT: ${{ steps.retry.outputs.exit_code }}
+          REPORT_DATE: ${{ inputs.date }}
+          TARGET_ENV: ${{ inputs.environment }}
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            if (process.env.CLI_EXIT === '0' || !fs.existsSync(process.env.OUTCOME_PATH)) return;
+            const outcome = JSON.parse(fs.readFileSync(process.env.OUTCOME_PATH, 'utf8'));
+            if (outcome.post_accepted || !outcome.retryable ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outcome.retry_chain_id ?? '')) return;
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: process.env.SOURCE_COMMIT,
+              inputs: { date: process.env.REPORT_DATE, environment: process.env.TARGET_ENV,
+                retry_chain_id: outcome.retry_chain_id, attempt: '2', source_commit: process.env.SOURCE_COMMIT,
+                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? '') },
+            });
+      - name: Fail the retry when it did not deliver
+        if: always()
+        env:
+          CLI_EXIT: ${{ steps.retry.outputs.exit_code }}
+        run: |
+          [[ "$CLI_EXIT" =~ ^[0-9]+$ ]]
+          exit "$CLI_EXIT"
+      - name: Upload retry artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: kpi-retry-gated-${{ github.run_id }}
-          path: .github/workflows/kpi-retry.yml
+          name: kpi-retry-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kpi-publication
+          if-no-files-found: error
           retention-days: 90
