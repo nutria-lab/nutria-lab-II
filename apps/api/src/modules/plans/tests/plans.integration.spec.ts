@@ -17,7 +17,12 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
     instructions: ['Cortar los vegetales', 'Sazonar el pollo', 'Hornear 35 minutos a 180C'],
     categories: [],
     properties: [],
-    nutritionalValues: null,
+    nutritionalValues: {
+      calories: 450,
+      protein: 40,
+      fiber: 6,
+      description: 'Almuerzo proteico',
+    },
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -143,7 +148,12 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
     // Confirma compatibilidad: no envía metadata y sostiene la creación exclusivamente con los defaults de Prisma
     expect(capturedRecipeData.categories).toBeUndefined();
     expect(capturedRecipeData.properties).toBeUndefined();
-    expect(capturedRecipeData.nutritionalValues).toBeUndefined();
+    expect(capturedRecipeData.nutritionalValues).toEqual({
+      calories: 450,
+      protein: 40,
+      fiber: 6,
+      description: 'Almuerzo proteico',
+    });
   });
 
   it('GET / findPlanByWeek devuelve la receta con instructions como array y defaults del contrato NUT-20', async () => {
@@ -174,7 +184,12 @@ describe('Plans Integration - Recipe Contract Persistence & Retrieval', () => {
     // Verificación de compatibilidad con el nuevo contrato NUT-20
     expect(recipe.categories).toEqual([]);
     expect(recipe.properties).toEqual([]);
-    expect(recipe.nutritionalValues).toBeNull();
+    expect(recipe.nutritionalValues).toEqual({
+      calories: 450,
+      protein: 40,
+      fiber: 6,
+      description: 'Almuerzo proteico',
+    });
 
     // NUT-75 (AC11, actualización de este test existente): el contrato de búsqueda cambió de
     // `findUnique` con el compound `userId_startDate` a `findFirst` filtrando explícitamente
