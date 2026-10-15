@@ -21,8 +21,10 @@ export type RecipeIngredientItem = {
 export type RecipeNutritionalValues = {
   calories: number;
   protein: number;
-  carbs: number;
-  fat: number;
+  carbs?: number;
+  fat?: number;
+  fiber?: number;
+  description?: string;
 };
 
 export type RecipeImage = {

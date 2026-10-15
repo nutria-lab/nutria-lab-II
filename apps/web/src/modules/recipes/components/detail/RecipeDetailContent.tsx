@@ -7,6 +7,26 @@ function formatIngredientAmount(item: Recipe['ingredients'][number]): string {
   return item.quantity == null ? item.unit : `${item.quantity} ${item.unit}`;
 }
 
+
+type NutritionMetric = {
+  label: string;
+  value: number;
+  unit: string;
+};
+
+function nutritionMetrics(recipe: Recipe): NutritionMetric[] {
+  const values = recipe.nutritionalValues;
+  if (!values) return [];
+
+  return [
+    { label: 'Calorías', value: values.calories, unit: 'kcal' },
+    { label: 'Proteínas', value: values.protein, unit: 'g' },
+    { label: 'Carbohidratos', value: values.carbs, unit: 'g' },
+    { label: 'Grasas', value: values.fat, unit: 'g' },
+    { label: 'Fibra', value: values.fiber, unit: 'g' },
+  ].filter((metric): metric is NutritionMetric => typeof metric.value === 'number');
+}
+
 export function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
   const primaryCategoryRaw = (recipe.categories ?? [])[0];
   const primaryCategory = primaryCategoryRaw
@@ -35,49 +55,30 @@ export function RecipeImagePlaceholder({ recipe }: { recipe: Recipe }) {
 export function RecipeDetailSections({ recipe }: { recipe: Recipe }) {
   const totalMinutes = recipe.prepMinutes + recipe.cookMinutes;
   const recipeProperties = recipe.properties ?? [];
+  const metrics = nutritionMetrics(recipe);
 
   return (
     <>
       {/* Stats row */}
       <div className="flex flex-wrap gap-4 text-sm text-on-surface-variant">
         <span className="flex flex-col items-start gap-0.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
-            Tiempo
-          </span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">Tiempo</span>
           <span className="font-semibold text-on-surface">{totalMinutes} min</span>
         </span>
-        {Boolean(recipe.nutritionalValues) ? (
-          <>
-            <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
-                Calorías
-              </span>
-              <span className="font-semibold text-on-surface">
-                {recipe.nutritionalValues!.calories} kcal
-              </span>
-            </span>
-            <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
-                Proteína
-              </span>
-              <span className="font-semibold text-on-surface">
-                {recipe.nutritionalValues!.protein} g
-              </span>
-            </span>
-            <span className="flex flex-col items-start gap-0.5">
-              <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">
-                Carbos
-              </span>
-              <span className="font-semibold text-on-surface">
-                {recipe.nutritionalValues!.carbs} g
-              </span>
-            </span>
-          </>
-        ) : (
+        {metrics.length > 0 ? metrics.map((metric) => (
+          <span key={metric.label} className="flex flex-col items-start gap-0.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant/70">{metric.label}</span>
+            <span className="font-semibold text-on-surface">{metric.value} {metric.unit}</span>
+          </span>
+        )) : (
           <span className="text-on-surface-variant">Valores nutricionales no especificados</span>
         )}
       </div>
-
+      {recipe.nutritionalValues?.description && (
+        <p className="rounded-xl bg-surface-container-low px-3 py-2 text-xs text-on-surface-variant">
+          {recipe.nutritionalValues.description}
+        </p>
+      )}
       <section>
         <h2 className="font-headline text-lg font-semibold text-on-surface">Descripción</h2>
         <p className="mt-1 text-sm leading-relaxed text-on-surface-variant">{recipe.description}</p>
@@ -166,38 +167,32 @@ export function DesktopRecipeHero({ recipe }: { recipe: Recipe }) {
 }
 
 export function DesktopNutritionalValues({ recipe }: { recipe: Recipe }) {
-  if (!recipe.nutritionalValues) {
+  const metrics = nutritionMetrics(recipe);
+  if (metrics.length === 0) {
     return (
-      <div className="p-3 bg-surface-container-low rounded-xl border border-outline-variant/30 text-xs text-on-surface-variant text-center">
+      <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-3 text-center text-xs text-on-surface-variant">
         Valores nutricionales no especificados
       </div>
     );
   }
 
   return (
-    <div className="p-4 bg-surface-container-low rounded-xl border border-outline-variant/30">
-      <span className="text-xs font-bold text-on-surface block mb-2.5 flex items-center gap-1.5">
+    <div className="rounded-xl border border-outline-variant/30 bg-surface-container-low p-4">
+      <span className="mb-2.5 flex items-center gap-1.5 text-xs font-bold text-on-surface">
         <span aria-hidden="true" className="material-symbols-outlined text-sm text-tertiary">monitoring</span>
         <span>Valores Nutricionales y Aportes</span>
       </span>
-      <div className="grid grid-cols-4 gap-3 text-center">
-        <div className="p-2.5 rounded-lg bg-white border border-outline-variant/20 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-on-surface-variant/70 block">Calorías</span>
-          <span className="text-base font-bold text-brand-green">{recipe.nutritionalValues.calories} kcal</span>
-        </div>
-        <div className="p-2.5 rounded-lg bg-white border border-outline-variant/20 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-on-surface-variant/70 block">Proteínas</span>
-          <span className="text-base font-bold text-brand-green">{recipe.nutritionalValues.protein} g</span>
-        </div>
-        <div className="p-2.5 rounded-lg bg-white border border-outline-variant/20 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-on-surface-variant/70 block">Carbohidratos</span>
-          <span className="text-base font-bold text-brand-green">{recipe.nutritionalValues.carbs} g</span>
-        </div>
-        <div className="p-2.5 rounded-lg bg-white border border-outline-variant/20 shadow-xs">
-          <span className="text-[10px] uppercase font-bold text-on-surface-variant/70 block">Grasas Saludables</span>
-          <span className="text-base font-bold text-brand-green">{recipe.nutritionalValues.fat} g</span>
-        </div>
+      <div className="grid grid-cols-2 gap-3 text-center sm:grid-cols-3 lg:grid-cols-5">
+        {metrics.map((metric) => (
+          <div key={metric.label} className="rounded-lg border border-outline-variant/20 bg-white p-2.5 shadow-xs">
+            <span className="block text-[10px] font-bold uppercase text-on-surface-variant/70">{metric.label}</span>
+            <span className="text-base font-bold text-brand-green">{metric.value} {metric.unit}</span>
+          </div>
+        ))}
       </div>
+      {recipe.nutritionalValues?.description && (
+        <p className="mt-3 text-xs text-on-surface-variant">{recipe.nutritionalValues.description}</p>
+      )}
     </div>
   );
 }

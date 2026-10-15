@@ -85,10 +85,7 @@ export function MealCard({
             <span aria-hidden="true" className="material-symbols-outlined text-sm">sync</span>
           </button>
         </div>
-        <RecipeImage image={recipe?.image} title={recipe?.title ?? 'Receta'} className="h-20 w-full rounded-lg" />
-        <h4 className="font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">
-          {recipe ? recipe.title : 'Receta no disponible'}
-        </h4>
+        <a href={'/recipes/' + (recipe?.id ?? '')} aria-label={'Ver receta ' + (recipe?.title ?? 'Receta no disponible')} className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-brand-green"><RecipeImage image={recipe?.image} title={recipe?.title ?? 'Receta'} className="h-20 w-full rounded-lg" /><h4 className="mt-2 font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">{recipe ? recipe.title : 'Receta no disponible'}</h4></a>
         {recipe && (
           <div className="mt-auto flex items-center gap-2 text-[10px] font-semibold text-on-surface-variant">
             {totalMinutes != null && (
@@ -157,24 +154,17 @@ export function MealCard({
           </button>
         </div>
 
-        {/* Card toggle button */}
-        <button
-          type="button"
-          disabled={isReplacing}
-          onClick={() => setIsExpanded((prev) => !prev)}
-          aria-expanded={isExpanded}
-          className="w-full text-left flex gap-4 transition-colors hover:bg-surface-container-low/50 rounded-lg -m-1 p-1 disabled:opacity-75"
+        {/* Recipe link */}
+        <a
+          href={'/recipes/' + recipe.id}
+          aria-label={'Ver receta ' + recipe.title}
+          className="flex w-full gap-4 rounded-lg p-1 text-left outline-none transition-colors hover:bg-surface-container-low/50 focus-visible:ring-2 focus-visible:ring-brand-green disabled:opacity-75"
         >
-          {/* Thumbnail */}
-          <RecipeImage image={recipe.image} title={recipe.title} className="h-20 w-20 rounded-lg" />
-
-          {/* Content */}
+          <RecipeImage image={recipe.image} title={recipe.title} className="h-20 w-20 shrink-0 rounded-lg" />
           <div className="min-w-0 flex-1">
-            <span className="block font-headline text-base font-bold text-on-surface leading-snug line-clamp-2">
+            <span className="block font-headline text-base font-bold leading-snug text-on-surface line-clamp-2">
               {recipe.title}
             </span>
-
-            {/* Meta row */}
             <div className="mt-2 flex items-center gap-3 text-[11px] font-semibold">
               {totalMinutes != null && (
                 <span className="flex items-center gap-0.5 text-on-surface-variant">
@@ -195,6 +185,15 @@ export function MealCard({
               )}
             </div>
           </div>
+        </a>
+        <button
+          type="button"
+          disabled={isReplacing}
+          onClick={() => setIsExpanded((prev) => !prev)}
+          aria-expanded={isExpanded}
+          className="mt-3 text-xs font-semibold text-brand-green hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-green"
+        >
+          {isExpanded ? 'Ocultar ingredientes e instrucciones' : 'Ver ingredientes e instrucciones'}
         </button>
       </div>
 
