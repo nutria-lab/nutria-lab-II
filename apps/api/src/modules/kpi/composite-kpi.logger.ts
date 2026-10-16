@@ -20,15 +20,19 @@ export class CompositeKpiLogger implements KpiLogger {
   constructor(
     private readonly telemetryLogger: KpiLogger,
     private readonly dataLogger: KpiLogger,
+    private readonly clock: () => Date = () => new Date(),
   ) {}
 
   async collect(context: CollectionContext): Promise<readonly KpiResult[]> {
-    const [telemetry, data] = await Promise.all([
+    const collected = await Promise.allSettled([
       this.collectSource(this.telemetryLogger, context, telemetryKpiIds, 'telemetry'),
       this.collectSource(this.dataLogger, context, dataKpiIds, 'data'),
     ]);
+    const failure = collected.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+    if (failure) throw failure.reason;
+    const [telemetry, data] = collected.map(result => (result as PromiseFulfilledResult<readonly KpiResult[]>).value);
 
-    return [...telemetry, ...data].sort((left, right) => left.kpi_id.localeCompare(right.kpi_id));
+    return [...telemetry, ...data].sort(compareKpiId);
   }
 
   private async collectSource(
@@ -42,7 +46,8 @@ export class CompositeKpiLogger implements KpiLogger {
       return validateResults(results, expectedIds, source);
     } catch (error) {
       if (isExpectedSourceFailure(error)) {
-        return expectedIds.map((kpi_id) => unavailable(kpi_id, context.window_end));
+        const measuredAt = this.clock().toISOString();
+        return expectedIds.map((kpi_id) => unavailable(kpi_id, measuredAt));
       }
 
       throw error;
@@ -127,6 +132,10 @@ function isExpectedSourceFailure(error: unknown): error is { code: 'SOURCE_UNAVA
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function compareKpiId(left: KpiResult, right: KpiResult): number {
+  return left.kpi_id < right.kpi_id ? -1 : left.kpi_id > right.kpi_id ? 1 : 0;
 }
 
 function isIsoTimestamp(value: unknown): value is string {

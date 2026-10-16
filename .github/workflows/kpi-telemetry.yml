@@ -15,18 +15,6 @@ on:
         options:
           - dev
           - prod
-      mode:
-        description: Modo de ejecución
-        type: choice
-        required: true
-        default: sample
-        options:
-          - sample
-          - finalize
-      date:
-        description: Fecha local America/Argentina/Buenos_Aires YYYY-MM-DD (opcional)
-        type: string
-        required: false
 
 # Un único run por ambiente efectivo; nunca se cancela un run en curso.
 concurrency:
@@ -66,15 +54,13 @@ jobs:
       # Los inputs llegan solo por env; ningún run interpola expresiones.
       - name: Run KPI telemetry
         env:
-          MODE: ${{ inputs.mode || 'sample' }}
           TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
-          DATE: ${{ inputs.date }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           KPI_INTERNAL_TOKEN: ${{ secrets.KPI_INTERNAL_TOKEN }}
           KPI_ENV: ${{ vars.KPI_ENV }}
           KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
         run: |
-          pnpm --filter api kpi:telemetry --mode "$MODE" --environment "$TARGET_ENV" ${DATE:+--date "$DATE"} --diagnostics-out "$RUNNER_TEMP/kpi-diagnostics"
+          pnpm --filter api kpi:telemetry --mode sample --environment "$TARGET_ENV" --diagnostics-out "$RUNNER_TEMP/kpi-diagnostics"
 
       - name: Upload diagnostics
         if: always()

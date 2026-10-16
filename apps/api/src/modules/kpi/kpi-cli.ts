@@ -14,6 +14,11 @@ export interface RetryCliArgs extends PublishCliArgs {
   attempt: 1 | 2;
   sourceCommit: string;
   runId?: string;
+  manualRecovery: boolean;
+}
+
+export interface CatalogCliArgs {
+  environment: PublishableKpiEnvironment;
 }
 
 type ParsedOptions = Readonly<Record<string, string>>;
@@ -79,7 +84,7 @@ export function parsePublishCliArgs(args: readonly string[]): PublishCliArgs {
 }
 
 export function parseRetryCliArgs(args: readonly string[]): RetryCliArgs {
-  const options = parseOptions(args, ['date', 'environment', 'retry-chain-id', 'attempt', 'source-commit', 'run-id']);
+  const options = parseOptions(args, ['date', 'environment', 'retry-chain-id', 'attempt', 'source-commit', 'run-id', 'manual-recovery']);
   const attemptValue = requireOption(options, 'attempt');
   if (attemptValue !== '1' && attemptValue !== '2') {
     throw new Error('Attempt must be 1 or 2');
@@ -92,6 +97,14 @@ export function parseRetryCliArgs(args: readonly string[]): RetryCliArgs {
   if (!/^[0-9a-f]{40}$/i.test(sourceCommit)) {
     throw new Error('Source commit must be a full SHA-1');
   }
+  const runId = options['run-id'];
+  if (runId !== undefined && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
+    throw new Error('Run ID must be a UUID');
+  }
+  const manualRecoveryValue = options['manual-recovery'] ?? 'false';
+  if (manualRecoveryValue !== 'true' && manualRecoveryValue !== 'false') throw new Error('Manual recovery must be true or false');
+  const manualRecovery = manualRecoveryValue === 'true';
+  if (manualRecovery && attemptValue !== '1') throw new Error('Manual recovery starts at attempt 1');
 
   return {
     ...parsePublishCliArgs([
@@ -101,6 +114,12 @@ export function parseRetryCliArgs(args: readonly string[]): RetryCliArgs {
     retryChainId,
     attempt: Number(attemptValue) as 1 | 2,
     sourceCommit,
+    manualRecovery,
     ...(options['run-id'] === undefined ? {} : { runId: options['run-id'] }),
   };
+}
+
+export function parseCatalogCliArgs(args: readonly string[]): CatalogCliArgs {
+  const options = parseOptions(args, ['environment']);
+  return { environment: assertEnvironment(requireOption(options, 'environment')) };
 }

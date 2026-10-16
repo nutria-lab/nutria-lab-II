@@ -53,6 +53,17 @@ describe('KPI batch freezing', () => {
     expect(batch.payload_sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
   });
 
+  it('orders the full contract by deterministic codepoint kpi_id order', () => {
+    const ids: readonly KpiId[] = [
+      'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
+      'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
+      'initial_plans_count', 'manual_recipes_count',
+    ];
+    const batch = freezeBatch(context, [...ids].reverse().map(id => result(id, 0)));
+
+    expect(batch.measurements.map(item => item.kpi_id)).toEqual([...ids].sort());
+  });
+
   it('is stable for the same logical batch regardless of input order, and changes when a value changes', () => {
     const first = freezeBatch(context, [result('manual_recipes_count', 4), result('availability_rate', 0)]);
     const reordered = freezeBatch(context, [result('availability_rate', 0), result('manual_recipes_count', 4)]);

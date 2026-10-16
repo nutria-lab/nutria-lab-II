@@ -68,6 +68,23 @@ export class KpiPublicationController {
     return this.execute('KPI_PUBLICATION_CLAIM_FAILED', () => this.repository.claimAttempt(retryChainId, input.attempt as number));
   }
 
+  @Post('manual-recovery')
+  async manualRecovery(@Body() body: unknown) {
+    const input = asRecord(body, 'KPI_PUBLICATION_REQUEST_INVALID');
+    const environment = parseEnvironment(input.environment);
+    const date = parseDate(input.date);
+    const runId = parseUuid(input.run_id);
+    const retryChainId = parseUuid(input.retry_chain_id);
+    if (typeof input.source_commit !== 'string' || !/^[0-9a-f]{40}$/i.test(input.source_commit)) {
+      throw new BadRequestException('KPI_PUBLICATION_SOURCE_COMMIT_INVALID');
+    }
+    this.assertEnvironment(environment);
+    const publication = await this.execute('KPI_PUBLICATION_RECOVERY_FAILED', () => this.repository.beginManualRecovery({
+      environment, date, runId, sourceCommit: input.source_commit as string, retryChainId,
+    }));
+    return serialize(publication);
+  }
+
   @Post('mark-accepted')
   async markAccepted(@Body() body: unknown) {
     const input = asRecord(body, 'KPI_PUBLICATION_REQUEST_INVALID');

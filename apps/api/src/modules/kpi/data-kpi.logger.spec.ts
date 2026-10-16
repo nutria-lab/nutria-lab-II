@@ -52,6 +52,16 @@ describe('DataKpiLogger', () => {
     ]);
   });
 
+  it('maps a successful query with no row to two observed zeros and records the real calculation time', async () => {
+    const prisma = { $queryRaw: jest.fn(async () => []) };
+    const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-10T00:04:05.006Z'));
+
+    await expect(logger.collect(context)).resolves.toEqual([
+      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
+      expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
+    ]);
+  });
+
   it('returns both business IDs as unavailable when the query source is unavailable', async () => {
     const prisma = { $queryRaw: jest.fn().mockRejectedValue({ code: 'P2021' }) };
     const logger = new DataKpiLogger(prisma as never);

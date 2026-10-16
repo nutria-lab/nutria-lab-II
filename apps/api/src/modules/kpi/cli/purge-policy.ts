@@ -5,7 +5,7 @@ export const PURGE_START_DATE = '2027-01-01';
 export const PURGE_BATCH_SIZE = 1000;
 // Tope total por corrida sumando todas las tablas; el resto queda para la siguiente.
 export const PURGE_MAX_BATCHES = 100;
-export const PURGE_TABLES = ['kpi_http_event', 'kpi_dependency_event', 'kpi_health_sample', 'kpi_snapshot'] as const;
+export const PURGE_TABLES = ['kpi_http_event', 'kpi_dependency_event', 'kpi_health_sample'] as const;
 
 export type PurgeTable = (typeof PURGE_TABLES)[number];
 

@@ -7,7 +7,6 @@ const MODEL_TABLES: Record<string, string> = {
   KpiHttpEvent: 'kpi_http_event',
   KpiDependencyEvent: 'kpi_dependency_event',
   KpiHealthSample: 'kpi_health_sample',
-  KpiSnapshot: 'kpi_snapshot',
   KpiPublication: 'kpi_publication',
 };
 
@@ -62,20 +61,6 @@ const FIELDS: Record<string, FieldSpec[]> = {
     { name: 'databaseOk', type: 'Boolean?', column: 'database_ok' },
     { name: 'outcome', type: 'String', column: 'outcome' },
     { name: 'reason', type: 'String?', column: 'reason' },
-  ],
-  KpiSnapshot: [
-    { name: 'id', type: 'String', column: 'id', db: 'Uuid', id: true },
-    { name: 'environment', type: 'String', column: 'environment' },
-    { name: 'reportDate', type: 'DateTime', column: 'report_date', db: 'Date' },
-    { name: 'windowStart', type: 'DateTime', column: 'window_start', db: TS3 },
-    { name: 'windowEnd', type: 'DateTime', column: 'window_end', db: TS3 },
-    { name: 'snapshotKind', type: 'String', column: 'snapshot_kind' },
-    { name: 'kpiId', type: 'String', column: 'kpi_id' },
-    { name: 'value', type: 'Float?', column: 'value', db: 'DoublePrecision' },
-    { name: 'quality', type: 'String', column: 'quality' },
-    { name: 'reason', type: 'String?', column: 'reason' },
-    { name: 'sampleCount', type: 'BigInt', column: 'sample_count' },
-    { name: 'measuredAt', type: 'DateTime', column: 'measured_at', db: TS3 },
   ],
   KpiPublication: [
     { name: 'runId', type: 'String', column: 'run_id', db: 'Uuid', id: true },
@@ -154,13 +139,13 @@ describe('NUT-85 A1 — kpi.prisma (estático)', () => {
     if (!fs.existsSync(KPI_PRISMA_FILE)) {
       throw new Error(
         `NUT-85 T1: no existe ${path.relative(PRISMA_DIR, KPI_PRISMA_FILE)} dentro de prisma/. ` +
-          'Debe declarar KpiHttpEvent, KpiDependencyEvent, KpiHealthSample, KpiSnapshot y KpiPublication (design §5.1/§5.3/D19).',
+          'Debe declarar KpiHttpEvent, KpiDependencyEvent, KpiHealthSample y KpiPublication (design §5.1/§5.3/D19).',
       );
     }
     models = parseModels(fs.readFileSync(KPI_PRISMA_FILE, 'utf-8'));
   });
 
-  it('kpi.prisma define los 5 modelos con @@map a los nombres del contrato', () => {
+  it('kpi.prisma define los 4 modelos con @@map a los nombres del contrato', () => {
     expect([...models.keys()].sort()).toEqual(Object.keys(MODEL_TABLES).sort());
     for (const [model, table] of Object.entries(MODEL_TABLES)) {
       expect(blockAttributes(models.get(model)!)).toContain(`@@map("${table}")`);
@@ -222,7 +207,7 @@ describe('NUT-85 A1 — kpi.prisma (estático)', () => {
   });
 
   it('declara PK, UNIQUE e índices con map explícito', () => {
-    for (const spec of KPI_UNIQUE_INDEXES) {
+    for (const spec of KPI_UNIQUE_INDEXES.filter(index => index.table !== 'kpi_snapshot')) {
       const body = models.get(TABLE_MODELS[spec.table])!;
       const pattern = new RegExp(
         `^@@unique\\(\\[${fieldListPattern(spec.prismaFields!)}\\]\\s*,\\s*map:\\s*"${escapeRegExp(spec.name)}"\\s*\\)$`,
@@ -233,7 +218,7 @@ describe('NUT-85 A1 — kpi.prisma (estático)', () => {
       });
     }
 
-    for (const spec of KPI_INDEXES) {
+    for (const spec of KPI_INDEXES.filter(index => index.table !== 'kpi_snapshot')) {
       const body = models.get(TABLE_MODELS[spec.table])!;
       const pattern = new RegExp(
         `^@@index\\(\\[${fieldListPattern(spec.prismaFields!)}\\]\\s*,\\s*map:\\s*"${escapeRegExp(spec.name)}"\\s*\\)$`,
@@ -258,8 +243,8 @@ describe('NUT-85 A1 — kpi.prisma (estático)', () => {
     const declaredIndexes = [...models.values()].flatMap(body =>
       blockAttributes(body).filter(line => line.startsWith('@@index')),
     );
-    expect(declaredUniques).toHaveLength(KPI_UNIQUE_INDEXES.length);
-    expect(declaredIndexes).toHaveLength(KPI_INDEXES.length);
+    expect(declaredUniques).toHaveLength(KPI_UNIQUE_INDEXES.filter(index => index.table !== 'kpi_snapshot').length);
+    expect(declaredIndexes).toHaveLength(KPI_INDEXES.filter(index => index.table !== 'kpi_snapshot').length);
   });
 
   it('ningún modelo KPI tiene relaciones (@relation) ni FK', () => {

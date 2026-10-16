@@ -2,10 +2,9 @@ import 'reflect-metadata';
 import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { CollectionContext, KpiId, KpiLogger, KpiResult } from '../kpi-contract';
 import { KpiModule } from '../kpi.module';
-import { KpiSnapshotError, TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
 import { KpiContextError, TelemetryLogger } from '../telemetry-logger';
 import { windowForDate } from '../window/kpi-window';
-import { FakeSnapshotStore, pgError, sampleAggregates, storedFinals } from './telemetry-fakes.fixture';
+import { pgError, sampleAggregates } from './telemetry-fakes.fixture';
 
 const DAY = '2026-10-11';
 const CANON = windowForDate(DAY);
@@ -37,11 +36,10 @@ function context(overrides: Partial<CollectionContext> = {}): CollectionContext 
 }
 
 function makeLogger(clock: () => Date = () => new Date(CLOCK_HOURS_LATER)) {
-  const store = new FakeSnapshotStore((_env, w) => sampleAggregates(w.end));
-  const core = new TelemetrySnapshotService(store, clock);
-  const finalizeSpy = jest.spyOn(core, 'finalizeCore');
-  const logger = new TelemetryLogger(core, { environment: 'dev' }, clock);
-  return { store, core, finalizeSpy, logger };
+  const loadAggregates = jest.fn(async (_environment: string, window: { start: Date; end: Date }) => sampleAggregates(window.end));
+  const store = { loadAggregates, calls: { loadAggregates } };
+  const logger = new TelemetryLogger(store, { environment: 'dev' }, clock);
+  return { store, readSpy: loadAggregates, logger };
 }
 
 /** Composite falso: consume KpiLogger del contrato y exige ids disjuntos. */
@@ -75,6 +73,18 @@ const businessLogger: KpiLogger = {
 };
 
 describe('TelemetryLogger.collect (G4)', () => {
+  it('recomputes publication values on every collection from current database aggregates', async () => {
+    const { logger, store } = makeLogger();
+    const first = await logger.collect(context());
+    const updated = sampleAggregates(CANON.end);
+    updated.http.success += 1;
+    store.loadAggregates.mockResolvedValue(updated);
+    const second = await logger.collect(context());
+    expect(first.find(result => result.kpi_id === 'operations_count')?.value).toBe(10);
+    expect(second.find(result => result.kpi_id === 'operations_count')?.value).toBe(11);
+    expect(store.loadAggregates).toHaveBeenCalledTimes(2);
+  });
+
   it('implementa KpiLogger y devuelve exactamente los 8 códigos de Telemetry ordenados por kpi_id', async () => {
     const { logger } = makeLogger();
     const asContract: KpiLogger = logger;
@@ -84,23 +94,14 @@ describe('TelemetryLogger.collect (G4)', () => {
     expect(results.map(r => r.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
   });
 
-  it('usa el corte fijo del contexto aunque el reloj esté horas después, vía el núcleo de finalize', async () => {
-    const { logger, finalizeSpy, store } = makeLogger();
+  it('reads database aggregates for the fixed context window even hours after the cut', async () => {
+    const { logger, readSpy, store } = makeLogger();
 
     await logger.collect(context());
 
-    expect(finalizeSpy).toHaveBeenCalledTimes(1);
-    expect(finalizeSpy).toHaveBeenCalledWith({ environment: 'dev', date: DAY, start: CANON.start, end: CANON.end });
-    expect(store.isolations).toEqual(['RepeatableRead']);
+    expect(readSpy).toHaveBeenCalledTimes(1);
+    expect(readSpy).toHaveBeenCalledWith('dev', { start: CANON.start, end: CANON.end });
     expect(store.calls.loadAggregates).toHaveBeenCalledWith('dev', { start: CANON.start, end: CANON.end });
-  });
-
-  it('con finales existentes devuelve los guardados (measured_at original)', async () => {
-    const { logger, store } = makeLogger();
-    const existing = storedFinals('2026-10-12T00:05:00.000Z');
-    store.readFinalsQueue = [existing];
-
-    await expect(logger.collect(context())).resolves.toEqual(existing);
   });
 
   describe('contexto mal formado ⇒ lanza (no traduce a unavailable)', () => {
@@ -121,14 +122,14 @@ describe('TelemetryLogger.collect (G4)', () => {
     ];
 
     it.each(cases)('%s', async (_name, overrides, code) => {
-      const { logger, finalizeSpy } = makeLogger();
+      const { logger, readSpy } = makeLogger();
       await expect(logger.collect(context(overrides))).rejects.toMatchObject({ code });
-      expect(finalizeSpy).not.toHaveBeenCalled();
+      expect(readSpy).not.toHaveBeenCalled();
     });
 
     it('KPI_ENV del proceso ausente ⇒ KPI_ENV_MISMATCH', async () => {
-      const store = new FakeSnapshotStore((_env, w) => sampleAggregates(w.end));
-      const logger = new TelemetryLogger(new TelemetrySnapshotService(store, () => CLOCK_HOURS_LATER), {
+      const { store } = makeLogger();
+      const logger = new TelemetryLogger(store, {
         environment: null,
       });
       const error = await logger.collect(context()).catch((e: unknown) => e);
@@ -137,19 +138,18 @@ describe('TelemetryLogger.collect (G4)', () => {
     });
 
     it('corte futuro ⇒ FUTURE_CUT', async () => {
-      const { logger, finalizeSpy } = makeLogger(() => new Date('2026-10-11T20:00:00.000Z')); // 17:00 local de D
+      const { logger, readSpy } = makeLogger(() => new Date('2026-10-11T20:00:00.000Z')); // 17:00 local de D
       await expect(logger.collect(context())).rejects.toMatchObject({ code: 'FUTURE_CUT' });
-      expect(finalizeSpy).not.toHaveBeenCalled();
+      expect(readSpy).not.toHaveBeenCalled();
     });
   });
 
   describe('fuente caída ⇒ 8 unavailable SOURCE_UNAVAILABLE sin persistir', () => {
     it.each([
       ['DB caída', pgError('ECONNREFUSED')],
-      ['conflicto agotado', new KpiSnapshotError('KPI_FINALIZE_CONFLICT')],
     ])('%s', async (_name, failure) => {
       const { logger, store } = makeLogger();
-      store.transactionError = failure;
+      store.loadAggregates.mockRejectedValue(failure);
 
       const results = await logger.collect(context());
 
@@ -164,8 +164,6 @@ describe('TelemetryLogger.collect (G4)', () => {
           measured_at: CLOCK_HOURS_LATER.toISOString(),
         });
       }
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
-      expect(store.calls.upsertPreviews).not.toHaveBeenCalled();
     });
   });
 
@@ -179,13 +177,12 @@ describe('TelemetryLogger.collect (G4)', () => {
       ['40001 hasta agotar reintentos', pgError('40001')],
     ])('%s ⇒ 8 unavailable SOURCE_UNAVAILABLE', async (_name, failure) => {
       const { logger, store } = makeLogger();
-      store.transactionError = failure;
+      store.loadAggregates.mockRejectedValue(failure);
 
       const results = await logger.collect(context());
 
       expect(results).toHaveLength(8);
       for (const result of results) expect(result).toMatchObject({ quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE' });
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
     });
   });
 
@@ -215,10 +212,9 @@ describe('TelemetryLogger.collect (G4)', () => {
       ['23514 envuelto por adapter-pg (cause.originalCode)', adapterWrapped('23514')],
     ])('%s ⇒ collect rechaza con el mismo error, sin 8 unavailable', async (_name, failure) => {
       const { logger, store } = makeLogger();
-      store.transactionError = failure;
+      store.loadAggregates.mockRejectedValue(failure);
 
       await expect(logger.collect(context())).rejects.toBe(failure);
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
     });
 
     it('también si el error estructural aparece al calcular (loadAggregates), no sólo al abrir la transacción', async () => {
@@ -254,8 +250,6 @@ describe('TelemetryLogger.collect (G4)', () => {
         });
       }
       expect(store.calls.loadAggregates).not.toHaveBeenCalled();
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
-      expect(store.calls.upsertPreviews).not.toHaveBeenCalled();
     });
 
     it('justo el día anterior al corte (2027-03-31) también es PURGED_WINDOW', async () => {
@@ -265,17 +259,6 @@ describe('TelemetryLogger.collect (G4)', () => {
 
       for (const result of results) expect(result).toMatchObject({ quality: 'unavailable', reason: 'PURGED_WINDOW' });
       expect(store.calls.loadAggregates).not.toHaveBeenCalled();
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
-    });
-
-    it('si los 8 finales ya existen, los devuelve tal cual (sin recalcular ni insertar)', async () => {
-      const { logger, store } = makeLogger(() => new Date(NOW_2027));
-      const existing = storedFinals('2027-02-11T00:05:00.000Z');
-      store.readFinalsQueue = [existing];
-
-      await expect(logger.collect(contextFor('2027-02-10'))).resolves.toEqual(existing);
-      expect(store.calls.loadAggregates).not.toHaveBeenCalled();
-      expect(store.calls.insertFinals).not.toHaveBeenCalled();
     });
 
     it('el día del corte (2027-04-01) no está purgado: calcula normalmente', async () => {
@@ -284,7 +267,6 @@ describe('TelemetryLogger.collect (G4)', () => {
       const results = await logger.collect(contextFor('2027-04-01'));
 
       expect(store.calls.loadAggregates).toHaveBeenCalledTimes(1);
-      expect(store.calls.insertFinals).toHaveBeenCalledTimes(1);
       expect(results.every(r => r.reason !== 'PURGED_WINDOW')).toBe(true);
     });
 

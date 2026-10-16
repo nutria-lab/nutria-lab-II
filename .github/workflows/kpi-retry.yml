@@ -33,6 +33,11 @@ on:
         description: Retry-After hint from the preceding response in milliseconds
         required: false
         type: string
+      manual_recovery:
+        description: Explicitly begin a new retry chain for a failed publication
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -50,7 +55,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
+      - name: Prepare diagnostic artifact directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/kpi-publication"
+          printf '{"tool":"nutria-kpi-publisher","status":"pending"}' > "$RUNNER_TEMP/kpi-publication/diagnostics.json"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -63,12 +73,20 @@ jobs:
           ATTEMPT: ${{ inputs.attempt }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           RETRY_AFTER_MS: ${{ inputs.retry_after_ms }}
+          REPORT_DATE: ${{ inputs.date }}
+          RUN_ID: ${{ inputs.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          [[ "$REPORT_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$(date -d "$REPORT_DATE" +%F)" == "$REPORT_DATE" ]]
           [[ "$ATTEMPT" == "1" || "$ATTEMPT" == "2" ]]
           [[ "$RETRY_CHAIN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ -z "$RUN_ID" || "$RUN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
           [[ -z "$RETRY_AFTER_MS" || "$RETRY_AFTER_MS" =~ ^[0-9]+$ ]]
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
+          git merge-base --is-ancestor "$SOURCE_COMMIT" "origin/$DEFAULT_BRANCH"
+          git checkout --detach "$SOURCE_COMMIT"
       - name: Respect backoff and Retry-After
         env:
           ATTEMPT: ${{ inputs.attempt }}
@@ -96,9 +114,10 @@ jobs:
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           RUN_ID: ${{ inputs.run_id }}
           ATTEMPT: ${{ inputs.attempt }}
+          MANUAL_RECOVERY: ${{ inputs.manual_recovery }}
         run: |
           set +e
-          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT")
+          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT" --manual-recovery "$MANUAL_RECOVERY")
           if [[ -n "$RUN_ID" ]]; then args+=(--run-id "$RUN_ID"); fi
           pnpm --filter api kpi:retry "${args[@]}"
           code=$?
@@ -125,7 +144,7 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: process.env.SOURCE_COMMIT,
               inputs: { date: process.env.REPORT_DATE, environment: process.env.TARGET_ENV,
                 retry_chain_id: outcome.retry_chain_id, attempt: '2', source_commit: process.env.SOURCE_COMMIT,
-                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? '') },
+                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? ''), manual_recovery: 'false' },
             });
       - name: Fail the retry when it did not deliver
         if: always()

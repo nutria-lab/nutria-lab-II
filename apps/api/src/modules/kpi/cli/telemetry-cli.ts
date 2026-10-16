@@ -4,19 +4,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { INSTRUMENTATION_DISABLED } from '../calc/telemetry-formulas';
-import type { TelemetryAggregates } from '../calc/telemetry-formulas';
 import { resolveKpiConfig } from '../config/kpi-config';
 import type { KpiEnvSource } from '../config/kpi-config';
 import { createReportingStore } from '../db/kpi-reporting-store';
 import type { TelemetryCliStore } from '../db/kpi-reporting-store';
 import { sqlStateOf } from '../events/kpi-event-writer';
 import { PgDbHealthProbe } from '../health/db-health-probe';
-import type { KpiEnvironment, KpiResult } from '../kpi-contract';
+import type { KpiEnvironment } from '../kpi-contract';
 import type { HealthSampleInput } from '../repo/telemetry.repository';
-import { KpiSnapshotError, TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
-import type { SnapshotCut, SnapshotRun } from '../snapshots/telemetry-snapshot.service';
-import { KpiWindowError, resolveFinalizeDate, resolvePreviewWindow, scheduledBucket } from '../window/kpi-window';
-import type { KpiWindow, PreviewWindow } from '../window/kpi-window';
+import { scheduledBucket } from '../window/kpi-window';
 import { computePurgeCutoff, runPurge } from './purge-policy';
 import type { PurgeTable } from './purge-policy';
 import { KpiApiClient, KpiResponseError, KpiTransportError, KPI_API_REQUEST_TIMEOUT_MS } from '../kpi-api-client';
@@ -31,7 +27,7 @@ export const KPI_ENDPOINT_TIMEOUT_MS = KPI_API_REQUEST_TIMEOUT_MS;
 export const DIAGNOSTICS_FILE_NAME = 'kpi-telemetry-diagnostics.json';
 const TOOL_NAME = 'nutria-kpi-telemetry';
 
-export type CliMode = 'sample' | 'finalize';
+export type CliMode = 'sample';
 // Header de /health; ausente o desconocido (backend viejo) ⇒ null.
 export type ApiProbeOutcome =
   | { kind: 'response'; status: number; body: unknown; instrumentation?: 'enabled' | 'disabled' | null }
@@ -43,7 +39,7 @@ export interface TelemetryCliDeps {
   clock(): Date;
   probeApi(healthUrl: string, timeoutMs: number): Promise<ApiProbeOutcome>;
   probeDatabase(databaseUrl: string, timeoutMs: number): Promise<DbProbeOutcome>;
-  apiClient(baseUrl: string, token: string): Pick<KpiApiClient, 'sample' | 'finalize'>;
+  apiClient(baseUrl: string, token: string): Pick<KpiApiClient, 'sample'>;
   openStore(databaseUrl: string): TelemetryCliStore;
   writeDiagnostics(dir: string, diagnostics: TelemetryDiagnostics): Promise<void>;
 }
@@ -52,23 +48,10 @@ export interface TelemetryDiagnostics {
   tool: string;
   mode: CliMode | null;
   environment: KpiEnvironment | null;
-  report_date: string | null;
-  window_start: string | null;
-  window_end: string | null;
   bucket: string | null;
   sample: { outcome: HealthSampleInput['outcome']; inserted: boolean; reason: string | null; result: string } | null;
-  preview: { executed: boolean; skip_reason: string | null } | null;
-  reused: boolean | null;
-  kpis: { kpi_id: string; kind: 'preview' | 'final'; value: number | null; quality: string; reason: string | null; sample_count: number }[];
-  counts: { http_terminal: number; http_pending_incomplete: number; dependency_attempts: number; health_samples: number } | null;
   purge: { executed: boolean; cutoff: string | null; deleted: Record<PurgeTable, number> | null };
   error_codes: string[];
-  failure: {
-    stage: string;
-    error_code: string;
-    http_status: number | null;
-    remote_error_code: string | null;
-  } | null;
   exit_code: number | null;
   started_at: string;
   finished_at: string | null;
@@ -77,7 +60,6 @@ export interface TelemetryDiagnostics {
 interface CliArgs {
   mode: CliMode;
   environment: KpiEnvironment;
-  date: string | undefined;
 }
 
 class CliUsageError extends Error {
@@ -90,8 +72,8 @@ const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
 const EXIT_USAGE = 2;
 
-const KNOWN_FLAGS = ['--mode', '--environment', '--date', '--diagnostics-out'] as const;
-const MODES: readonly string[] = ['sample', 'finalize'];
+const KNOWN_FLAGS = ['--mode', '--environment', '--diagnostics-out'] as const;
+const MODES: readonly string[] = ['sample'];
 const ENVIRONMENTS: readonly string[] = ['dev', 'qa', 'prod'];
 
 function readFlags(argv: readonly string[]): { values: Map<string, string>; invalid: boolean } {
@@ -117,30 +99,12 @@ function parseArgs(values: Map<string, string>, invalid: boolean): CliArgs {
   if (mode === undefined || !MODES.includes(mode)) throw new CliUsageError('INVALID_MODE');
   const environment = values.get('--environment');
   if (environment === undefined || !ENVIRONMENTS.includes(environment)) throw new CliUsageError('INVALID_ENVIRONMENT');
-  return { mode: mode as CliMode, environment: environment as KpiEnvironment, date: values.get('--date') };
+  return { mode: mode as CliMode, environment: environment as KpiEnvironment };
 }
 
 function errorCodeOf(error: unknown, fallback: string): string {
-  if (error instanceof KpiSnapshotError) return error.code;
   if (error instanceof KpiTransportError || error instanceof KpiResponseError) return error.code;
   return fallback;
-}
-
-function recordFailure(
-  diag: TelemetryDiagnostics,
-  stage: string,
-  errorCode: string,
-  error?: unknown,
-): void {
-  diag.error_codes.push(errorCode);
-  if (diag.failure === null) {
-    diag.failure = {
-      stage,
-      error_code: errorCode,
-      http_status: error instanceof KpiResponseError ? error.status : null,
-      remote_error_code: error instanceof KpiResponseError ? error.remoteCode : null,
-    };
-  }
 }
 
 function apiFailureReason(outcome: ApiProbeOutcome): string | null {
@@ -168,40 +132,12 @@ function dbFailureReason(outcome: DbProbeOutcome): string | null {
   return null;
 }
 
-function countsOf(a: TelemetryAggregates): NonNullable<TelemetryDiagnostics['counts']> {
-  const { http, dependency, health } = a;
-  return {
-    http_terminal: http.success + http.clientError + http.serverError + http.networkError + http.timeout + http.other,
-    http_pending_incomplete: http.pendingIncomplete,
-    dependency_attempts: dependency.success + dependency.error + dependency.timeout,
-    health_samples: health.healthy + health.unhealthy + health.unknown,
-  };
-}
-
-function kpisOf(results: readonly KpiResult[], kind: 'preview' | 'final'): TelemetryDiagnostics['kpis'] {
-  return results.map(r => ({
-    kpi_id: r.kpi_id,
-    kind,
-    value: r.value,
-    quality: r.quality,
-    reason: r.reason,
-    sample_count: r.sample_count,
-  }));
-}
-
-function recordRun(diag: TelemetryDiagnostics, run: SnapshotRun, kind: 'preview' | 'final'): void {
-  diag.kpis = kpisOf(run.results, kind);
-  diag.counts = run.aggregates ? countsOf(run.aggregates) : null;
-}
-
 interface ResolvedRun {
   args: CliArgs;
   databaseUrl: string;
   apiBaseUrl: string;
   internalToken: string;
   now: Date;
-  cut: SnapshotCut;
-  previewSkipReason: string | null;
 }
 
 interface RunContext extends ResolvedRun {
@@ -222,39 +158,13 @@ function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
   const internalToken = env.KPI_INTERNAL_TOKEN;
   if (!internalToken) throw new CliUsageError('KPI_INTERNAL_TOKEN_MISSING');
 
-  let window: KpiWindow;
-  let previewSkipReason: PreviewWindow['skipReason'] = null;
-  try {
-    if (args.mode === 'sample') {
-      const preview = resolvePreviewWindow(now, args.date);
-      previewSkipReason = preview.skipReason;
-      window = preview;
-    } else {
-      window = resolveFinalizeDate(now, args.date);
-    }
-  } catch (error) {
-    if (error instanceof KpiWindowError) throw new CliUsageError(error.code);
-    throw error;
-  }
-  // Un día ya purgado no se recalcula: sus eventos ya no existen.
-  const purgeCutoff = args.mode === 'finalize' ? computePurgeCutoff(now) : null;
-  if (purgeCutoff !== null && window.date < purgeCutoff.date) throw new CliUsageError('PURGED_WINDOW');
-  return {
-    args,
-    databaseUrl,
-    apiBaseUrl: apiBaseUrl ?? '',
-    internalToken,
-    now,
-    cut: { environment: args.environment, date: window.date, start: window.start, end: window.end },
-    previewSkipReason,
-  };
+  return { args, databaseUrl, apiBaseUrl, internalToken, now };
 }
 
 function sampleRequest(
   api: ApiProbeOutcome,
   measuredAt: Date,
   bucket: Date,
-  previewDate?: string,
 ): KpiSampleRequest {
   const request: KpiSampleRequest = {
     scheduled_for: bucket.toISOString(),
@@ -277,7 +187,6 @@ function sampleRequest(
     request.reason = apiFailureReason(api) ?? 'API_HTTP_NON_OK';
   }
   if (instrumentationDisabled(api)) request.reason = INSTRUMENTATION_DISABLED;
-  if (previewDate !== undefined) request.preview_date = previewDate;
   return request;
 }
 
@@ -288,9 +197,6 @@ function recordApiSample(diag: TelemetryDiagnostics, result: KpiSampleResponse):
     reason: result.sample.reason,
     result: result.sample.inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED',
   };
-  diag.preview = { executed: result.preview.executed, skip_reason: result.preview.skip_reason };
-  if (result.preview.executed) diag.kpis = kpisOf(result.preview.results, 'preview');
-  diag.counts = result.counts;
   diag.purge = result.purge;
 }
 
@@ -300,13 +206,7 @@ async function runDirectSample(
   apiFailure: string | null,
   store: () => TelemetryCliStore,
 ): Promise<number> {
-  let db: DbProbeOutcome;
-  try {
-    db = await ctx.deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS);
-  } catch (error) {
-    recordFailure(ctx.diag, 'database_probe', errorCodeOf(error, 'DB_PROBE_FAILED'), error);
-    return EXIT_FAILURE;
-  }
+  const db = await ctx.deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS);
   const dbReason = dbFailureReason(db);
   const disabled = request.reason === INSTRUMENTATION_DISABLED;
   const sample: HealthSampleInput = {
@@ -327,20 +227,8 @@ async function runDirectSample(
     const inserted = await store().insertHealthSample(sample);
     ctx.diag.sample.inserted = inserted;
     ctx.diag.sample.result = inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED';
-  } catch (error) {
-    recordFailure(ctx.diag, 'local_sample_write', 'SAMPLE_WRITE_FAILED', error);
-    return EXIT_FAILURE;
-  }
-  if (ctx.previewSkipReason !== null) {
-    ctx.diag.preview = { executed: false, skip_reason: ctx.previewSkipReason };
-    return EXIT_OK;
-  }
-  try {
-    const run = await new TelemetrySnapshotService(store(), ctx.deps.clock).preview(ctx.cut);
-    ctx.diag.preview = { executed: true, skip_reason: null };
-    recordRun(ctx.diag, run, 'preview');
-  } catch (error) {
-    recordFailure(ctx.diag, 'local_preview', errorCodeOf(error, 'PREVIEW_FAILED'), error);
+  } catch {
+    ctx.diag.error_codes.push('SAMPLE_WRITE_FAILED');
     return EXIT_FAILURE;
   }
   const cutoff = computePurgeCutoff(ctx.now);
@@ -349,25 +237,19 @@ async function runDirectSample(
   try {
     ctx.diag.purge.deleted = (await runPurge(store(), ctx.args.environment, cutoff)).deleted;
     return EXIT_OK;
-  } catch (error) {
-    recordFailure(ctx.diag, 'purge', 'PURGE_FAILED', error);
+  } catch {
+    ctx.diag.error_codes.push('PURGE_FAILED');
     return EXIT_FAILURE;
   }
 }
 
 async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
   const healthUrl = `${ctx.apiBaseUrl.replace(/\/+$/, '')}/health`;
-  let api: ApiProbeOutcome;
-  try {
-    api = await ctx.deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS);
-  } catch (error) {
-    recordFailure(ctx.diag, 'api_health_probe', errorCodeOf(error, 'API_HEALTH_PROBE_FAILED'), error);
-    return EXIT_FAILURE;
-  }
+  const api = await ctx.deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS);
   const measuredAt = ctx.deps.clock();
   const bucket = scheduledBucket(measuredAt);
   ctx.diag.bucket = bucket.toISOString();
-  const sample = sampleRequest(api, measuredAt, bucket, ctx.args.date);
+  const sample = sampleRequest(api, measuredAt, bucket);
 
   if (api.kind !== 'response') return runDirectSample(ctx, sample, apiFailureReason(api), store);
   try {
@@ -376,34 +258,10 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     return EXIT_OK;
   } catch (error) {
     if (!(error instanceof KpiTransportError)) {
-      recordFailure(ctx.diag, 'api_sample', errorCodeOf(error, 'API_SAMPLE_FAILED'), error);
+      ctx.diag.error_codes.push(errorCodeOf(error, 'API_SAMPLE_FAILED'));
       return EXIT_FAILURE;
     }
     return runDirectSample(ctx, sample, null, store);
-  }
-}
-
-async function runFinalize(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
-  try {
-    const result = await ctx.deps.apiClient(ctx.apiBaseUrl, ctx.internalToken).finalize(ctx.cut.date, ctx.args.environment);
-    ctx.diag.reused = result.reused;
-    ctx.diag.kpis = kpisOf(result.results, 'final');
-    ctx.diag.counts = result.aggregates ? countsOf(result.aggregates) : null;
-    return EXIT_OK;
-  } catch (error) {
-    if (!(error instanceof KpiTransportError)) {
-      recordFailure(ctx.diag, 'api_finalize', errorCodeOf(error, 'FINALIZE_FAILED'), error);
-      return EXIT_FAILURE;
-    }
-    try {
-      const run = await new TelemetrySnapshotService(store(), ctx.deps.clock).finalizeCore(ctx.cut);
-      ctx.diag.reused = run.reused;
-      recordRun(ctx.diag, run, 'final');
-      return EXIT_OK;
-    } catch (fallbackError) {
-      recordFailure(ctx.diag, 'local_finalize', errorCodeOf(fallbackError, 'FINALIZE_FAILED'), fallbackError);
-      return EXIT_FAILURE;
-    }
   }
 }
 
@@ -417,18 +275,10 @@ export async function runTelemetryCli(
     tool: TOOL_NAME,
     mode: null,
     environment: null,
-    report_date: null,
-    window_start: null,
-    window_end: null,
     bucket: null,
     sample: null,
-    preview: null,
-    reused: null,
-    kpis: [],
-    counts: null,
     purge: { executed: false, cutoff: null, deleted: null },
     error_codes: [],
-    failure: null,
     exit_code: null,
     started_at: startedAt.toISOString(),
     finished_at: null,
@@ -443,20 +293,17 @@ export async function runTelemetryCli(
     diag.mode = args.mode;
     diag.environment = args.environment;
     const ctx: RunContext = { ...resolveRun(args, env, startedAt), deps, diag };
-    diag.report_date = ctx.cut.date;
-    diag.window_start = ctx.cut.start.toISOString();
-    diag.window_end = ctx.cut.end.toISOString();
     const store = (): TelemetryCliStore => {
       opened ??= deps.openStore(ctx.databaseUrl);
       return opened;
     };
-    exitCode = args.mode === 'sample' ? await runSample(ctx, store) : await runFinalize(ctx, store);
+    exitCode = await runSample(ctx, store);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      recordFailure(diag, 'validation', error.code, error);
+      diag.error_codes.push(error.code);
       exitCode = EXIT_USAGE;
     } else {
-      recordFailure(diag, 'runtime', 'UNEXPECTED_ERROR', error);
+      diag.error_codes.push('UNEXPECTED_ERROR');
       exitCode = EXIT_FAILURE;
     }
   } finally {
@@ -464,14 +311,11 @@ export async function runTelemetryCli(
     if (store !== null) await store.close().catch(() => undefined);
     diag.exit_code = exitCode;
     diag.finished_at = deps.clock().toISOString();
-    if (diag.failure !== null && exitCode === EXIT_FAILURE) {
-      console.error(`KPI_TELEMETRY_FAILED ${JSON.stringify(diag.failure)}`);
-    }
     if (diagnosticsDir !== undefined) {
       try {
         await deps.writeDiagnostics(diagnosticsDir, diag);
       } catch {
-        recordFailure(diag, 'diagnostics_write', 'DIAGNOSTICS_WRITE_FAILED');
+        diag.error_codes.push('DIAGNOSTICS_WRITE_FAILED');
         diag.exit_code = EXIT_FAILURE;
         exitCode = EXIT_FAILURE;
         console.error('KPI_DIAGNOSTICS_WRITE_FAILED');

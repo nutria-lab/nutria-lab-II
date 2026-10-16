@@ -1,4 +1,3 @@
-import { TELEMETRY_KPI_IDS } from '../calc/telemetry-formulas';
 import type { PurgeCutoff } from '../cli/purge-policy';
 import { PURGE_TABLES } from '../cli/purge-policy';
 import { probeApiHealth, runTelemetryCli } from '../cli/telemetry-cli';
@@ -11,11 +10,10 @@ import type {
 } from '../cli/telemetry-cli';
 import * as http from 'http';
 import type { AddressInfo } from 'node:net';
-import type { KpiEnvironment, KpiResult } from '../kpi-contract';
+import type { KpiEnvironment } from '../kpi-contract';
 import { KpiResponseError, KpiTransportError } from '../kpi-api-client';
 import type { KpiSampleResponse } from '../kpi-api-client';
-import { KpiSnapshotError, TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
-import { FakeSnapshotStore, pgError, sampleAggregates, storedFinals } from './telemetry-fakes.fixture';
+import { pgError } from './telemetry-fakes.fixture';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
@@ -27,7 +25,8 @@ const BASE_ENV = { KPI_ENV: 'dev', DATABASE_URL: SECRET_DB_URL, KPI_API_BASE_URL
 const NOW_MIDDAY = '2026-10-12T15:47:12.345Z'; // 12:47 local AR
 const BUCKET_MIDDAY = '2026-10-12T15:30:00.000Z';
 
-class FakeCliStore extends FakeSnapshotStore implements TelemetryCliStore {
+class FakeCliStore implements TelemetryCliStore {
+  readonly loadAggregates = jest.fn();
   readonly insertHealthSample = jest.fn(async (_sample: HealthSampleInput) => true);
   readonly purgeBatch = jest.fn(
     async (_table: string, _env: KpiEnvironment, _cutoff: PurgeCutoff, _limit: number) => 0,
@@ -47,7 +46,7 @@ interface Harness {
 }
 
 function harness(nowIso = NOW_MIDDAY): Harness {
-  const store = new FakeCliStore((_env, w) => sampleAggregates(w.end));
+  const store = new FakeCliStore();
   const probeApi = jest.fn(
     async (_url: string, _timeout: number): Promise<ApiProbeOutcome> => ({
       kind: 'response',
@@ -58,9 +57,6 @@ function harness(nowIso = NOW_MIDDAY): Harness {
   const probeDatabase = jest.fn(async (_url: string, _timeout: number): Promise<DbProbeOutcome> => 'ok');
   const apiClient = jest.fn(() => ({
     sample: jest.fn(async (_request: unknown): Promise<KpiSampleResponse> => {
-      throw new KpiTransportError('KPI_API_NETWORK_ERROR');
-    }),
-    finalize: jest.fn(async (_date: string, _environment: string): Promise<never> => {
       throw new KpiTransportError('KPI_API_NETWORK_ERROR');
     }),
   }));
@@ -115,18 +111,24 @@ function expectNoSideEffects(h: Harness): void {
   expect(h.probeDatabase).not.toHaveBeenCalled();
   expect(h.apiClient).not.toHaveBeenCalled();
   expect(h.store.insertHealthSample).not.toHaveBeenCalled();
-  expect(h.store.isolations).toHaveLength(0);
+  expect(h.store.loadAggregates).not.toHaveBeenCalled();
 }
 
 describe('runTelemetryCli — argumentos y configuración (exit 2)', () => {
+  it('rejects the removed finalize mode without probing or writing data', async () => {
+    const h = harness();
+    await expect(runTelemetryCli(finalizeArgs(), BASE_ENV, h.deps)).resolves.toBe(2);
+    expectNoSideEffects(h);
+    expect(h.diagnostics().error_codes).toContain('INVALID_MODE');
+  });
+
   it.each([
     ['sin argumentos', ['--diagnostics-out', DIAG_DIR]],
     ['modo inválido', ['--mode', 'bogus', '--environment', 'dev', '--diagnostics-out', DIAG_DIR]],
     ['sin --environment', ['--mode', 'sample', '--diagnostics-out', DIAG_DIR]],
     ['ambiente inválido', sampleArgs('staging')],
     ['flag desconocido', sampleArgs('dev', ['--force', 'yes'])],
-    ['fecha mal formada', finalizeArgs(['--date', '2026-13-01'])],
-    ['fecha con formato libre', finalizeArgs(['--date', '11/10/2026'])],
+    ['removed historical date flag', sampleArgs('dev', ['--date', '2026-10-11'])],
   ])('%s ⇒ exit 2 sin escrituras y con diagnóstico', async (_name, argv) => {
     const h = harness();
     await expect(runTelemetryCli(argv, BASE_ENV, h.deps)).resolves.toBe(2);
@@ -173,50 +175,16 @@ describe('runTelemetryCli — argumentos y configuración (exit 2)', () => {
     expect(h.diagnostics().error_codes).toContain('KPI_INTERNAL_TOKEN_MISSING');
   });
 
-  it('finalize con corte futuro ⇒ exit 2 FUTURE_CUT', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z'); // 12:00 local: el corte de hoy todavía no pasó
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-12']), BASE_ENV, h.deps)).resolves.toBe(2);
-    expectNoSideEffects(h);
-    expect(h.diagnostics().error_codes).toContain('FUTURE_CUT');
-  });
-
-  it('finalize --date de una fecha ya purgada ⇒ exit 2 PURGED_WINDOW sin efectos', async () => {
-    const h = harness('2027-05-20T15:00:00.000Z'); // corte de purga vigente: 2027-04-01
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2027-02-10']), BASE_ENV, h.deps)).resolves.toBe(2);
-    expectNoSideEffects(h);
-    expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
-    expect(h.store.purgeBatch).not.toHaveBeenCalled();
-    const diag = h.diagnostics();
-    expect(diag.exit_code).toBe(2);
-    expect(diag.error_codes).toContain('PURGED_WINDOW');
-  });
-
-  it('finalize --date del día del corte (no purgado) sigue funcionando', async () => {
-    const h = harness('2027-05-20T15:00:00.000Z');
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2027-04-01']), BASE_ENV, h.deps)).resolves.toBe(0);
-    expect(h.store.calls.insertFinals).toHaveBeenCalledTimes(1);
-    expect(h.diagnostics().error_codes).not.toContain('PURGED_WINDOW');
-  });
 });
 
 describe('runTelemetryCli — sample (H1, H2, H3)', () => {
-  it('cuando la API responde guarda sample y preview allí sin abrir conexión directa', async () => {
+  it('stores the API health sample without opening a direct database connection', async () => {
     const h = harness();
-    const results: KpiResult[] = TELEMETRY_KPI_IDS.map(kpi_id => ({
-      kpi_id,
-      value: null,
-      quality: 'unavailable',
-      reason: 'NO_SAMPLE',
-      sample_count: 0,
-      measured_at: NOW_MIDDAY,
-    }));
     const sample = jest.fn(async () => ({
       sample: { outcome: 'healthy' as const, inserted: true, reason: null },
-      preview: { executed: true, skip_reason: null, reused: false, results },
-      counts: { http_terminal: 4, http_pending_incomplete: 0, dependency_attempts: 1, health_samples: 1 },
       purge: { executed: false, cutoff: null, deleted: null },
     }));
-    h.apiClient.mockReturnValue({ sample, finalize: jest.fn() });
+    h.apiClient.mockReturnValue({ sample });
 
     await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
 
@@ -231,41 +199,21 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(h.openStore).not.toHaveBeenCalled();
     expect(h.diagnostics()).toMatchObject({
       sample: { inserted: true, outcome: 'healthy' },
-      preview: { executed: true },
-      counts: { http_terminal: 4 },
     });
   });
 
   it('un error HTTP del endpoint de sample falla sin activar el fallback local', async () => {
     const h = harness();
-    const sample = jest.fn(async () => {
-      throw Object.assign(new KpiResponseError(401, 'KPI_API_HTTP_ERROR'), { remoteCode: 'ACCESS_GATE_REQUIRED' });
-    });
-    h.apiClient.mockReturnValue({ sample, finalize: jest.fn() });
-    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const sample = jest.fn(async () => { throw new KpiResponseError(503, 'KPI_API_HTTP_ERROR'); });
+    h.apiClient.mockReturnValue({ sample });
 
-    try {
-      await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
 
-      expect(sample).toHaveBeenCalledTimes(1);
-      expect(h.probeDatabase).not.toHaveBeenCalled();
-      expect(h.openStore).not.toHaveBeenCalled();
-      expect(h.store.insertHealthSample).not.toHaveBeenCalled();
-      expect(h.diagnostics()).toMatchObject({
-        error_codes: ['KPI_API_HTTP_ERROR'],
-        failure: {
-          stage: 'api_sample', error_code: 'KPI_API_HTTP_ERROR', http_status: 401,
-          remote_error_code: 'ACCESS_GATE_REQUIRED',
-        },
-      });
-      expect(log).toHaveBeenCalledWith(
-        'KPI_TELEMETRY_FAILED {"stage":"api_sample","error_code":"KPI_API_HTTP_ERROR","http_status":401,"remote_error_code":"ACCESS_GATE_REQUIRED"}',
-      );
-      expect(log.mock.calls.flat().join(' ')).not.toContain('internal-secret');
-      expect(log.mock.calls.flat().join(' ')).not.toContain(SECRET_API_BASE);
-    } finally {
-      log.mockRestore();
-    }
+    expect(sample).toHaveBeenCalledTimes(1);
+    expect(h.probeDatabase).not.toHaveBeenCalled();
+    expect(h.openStore).not.toHaveBeenCalled();
+    expect(h.store.insertHealthSample).not.toHaveBeenCalled();
+    expect(h.diagnostics().error_codes).toContain('KPI_API_HTTP_ERROR');
   });
 
   it('bucket floor(now/30min); API primero, DB SELECT 1 de fallback con 2 s; una muestra healthy', async () => {
@@ -311,7 +259,7 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(h.store.insertHealthSample.mock.calls[0][0]).toMatchObject({ outcome: 'unhealthy', ...expected });
   });
 
-  it('bucket ya registrado conserva la muestra y vuelve a completar el preview', async () => {
+  it('preserves an already recorded health bucket without reading aggregates', async () => {
     const h = harness();
     h.store.insertHealthSample.mockResolvedValue(false);
 
@@ -322,28 +270,7 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(diag.sample.inserted).toBe(false);
     expect(JSON.stringify(diag)).toContain('SAMPLE_BUCKET_ALREADY_RECORDED');
     expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
-    expect(h.store.calls.upsertPreviews).toHaveBeenCalledTimes(1);
-  });
-
-  it('sample --date D explícito recalcula el preview de D aunque el bucket actual ya esté registrado (D25 sólo sin --date)', async () => {
-    const h = harness();
-    h.store.insertHealthSample.mockResolvedValue(false);
-
-    await expect(runTelemetryCli(sampleArgs('dev', ['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    expect(h.store.calls.upsertPreviews).toHaveBeenCalledTimes(1);
-    const [cut, results] = h.store.calls.upsertPreviews.mock.calls[0];
-    expect(cut).toEqual({
-      environment: 'dev',
-      date: '2026-10-11',
-      start: new Date('2026-10-11T03:00:00.000Z'),
-      end: new Date('2026-10-12T00:00:00.000Z'),
-    });
-    expect(results.map((r: { kpi_id: string }) => r.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
-    const diag = h.diagnostics();
-    expect(diag.exit_code).toBe(0);
-    expect(diag.report_date).toBe('2026-10-11');
-    expect(diag.preview?.skip_reason).not.toBe('SAMPLE_BUCKET_ALREADY_RECORDED');
+    expect(h.store.loadAggregates).not.toHaveBeenCalled();
   });
 
   it('nunca crea buckets anteriores: una sola muestra, la del bucket actual (H1)', async () => {
@@ -356,15 +283,15 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(h.diagnostics().bucket).toBe(BUCKET_MIDDAY);
   });
 
-  it('no se puede guardar la muestra ⇒ exit 1 sin observación ficticia ni previews (H2)', async () => {
+  it('no se puede guardar la muestra ⇒ exit 1 sin observación ficticia (H2)', async () => {
     const h = harness();
     h.store.insertHealthSample.mockRejectedValue(pgError('ECONNREFUSED'));
 
     await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
 
     expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
-    expect(h.store.isolations).toHaveLength(0);
-    expect(h.store.calls.upsertPreviews).not.toHaveBeenCalled();
+    expect(h.store.loadAggregates).not.toHaveBeenCalled();
+    expect(h.store.loadAggregates).not.toHaveBeenCalled();
     expect(h.store.purgeBatch).not.toHaveBeenCalled();
     const diag = h.diagnostics();
     expect(diag.exit_code).toBe(1);
@@ -372,151 +299,6 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(diag.error_codes).toContain('SAMPLE_WRITE_FAILED');
   });
 
-  it('preview con end = now cuando todavía no son las 21:00 locales (H3)', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    expect(h.store.calls.upsertPreviews).toHaveBeenCalledTimes(1);
-    const [cut, results] = h.store.calls.upsertPreviews.mock.calls[0];
-    expect(cut).toEqual({
-      environment: 'dev',
-      date: '2026-10-12',
-      start: new Date('2026-10-12T03:00:00.000Z'),
-      end: new Date('2026-10-12T15:00:00.000Z'),
-    });
-    expect(results.map((r: { kpi_id: string }) => r.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
-    const diag = h.diagnostics();
-    expect(diag.report_date).toBe('2026-10-12');
-    expect(diag.window_start).toBe('2026-10-12T03:00:00.000Z');
-    expect(diag.window_end).toBe('2026-10-12T15:00:00.000Z');
-  });
-
-  it('preview con end = 21:00 de D cuando ya pasó el corte (H3)', async () => {
-    const h = harness('2026-10-12T02:30:00.000Z'); // 23:30 local del 2026-10-11
-
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    const [cut] = h.store.calls.upsertPreviews.mock.calls[0];
-    expect(cut).toEqual({
-      environment: 'dev',
-      date: '2026-10-11',
-      start: new Date('2026-10-11T03:00:00.000Z'),
-      end: new Date('2026-10-12T00:00:00.000Z'),
-    });
-  });
-
-  it('sin intervalo positivo ⇒ sólo guarda la muestra y sale con 0 (H3)', async () => {
-    const h = harness('2026-10-12T03:00:00.000Z'); // 00:00 local exacto
-
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
-    expect(h.store.isolations).toHaveLength(0);
-    expect(h.store.calls.upsertPreviews).not.toHaveBeenCalled();
-    expect(JSON.stringify(h.diagnostics())).toContain('NO_POSITIVE_WINDOW');
-  });
-
-  it('falla del preview ⇒ exit 1 (la muestra ya quedó guardada)', async () => {
-    const h = harness();
-    h.store.calls.loadAggregates.mockRejectedValue(pgError('57014'));
-
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
-
-    expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
-    expect(h.diagnostics().exit_code).toBe(1);
-  });
-});
-
-describe('runTelemetryCli — finalize (H4)', () => {
-  it('no toma muestra de salud, usa REPEATABLE READ y measured_at real (no las 21:00)', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-    const coreSpy = jest.spyOn(TelemetrySnapshotService.prototype, 'finalizeCore');
-    const env = BASE_ENV;
-
-    try {
-      await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), env, h.deps)).resolves.toBe(0);
-
-      expect(coreSpy).toHaveBeenCalledWith({
-        environment: 'dev',
-        date: '2026-10-11',
-        start: new Date('2026-10-11T03:00:00.000Z'),
-        end: new Date('2026-10-12T00:00:00.000Z'),
-      });
-    } finally {
-      coreSpy.mockRestore();
-    }
-    expect(h.probeApi).not.toHaveBeenCalled();
-    expect(h.probeDatabase).not.toHaveBeenCalled();
-    expect(h.store.insertHealthSample).not.toHaveBeenCalled();
-    expect(h.store.purgeBatch).not.toHaveBeenCalled();
-    expect(h.store.isolations).toEqual(['RepeatableRead']);
-    const [, results] = h.store.calls.insertFinals.mock.calls[0];
-    for (const result of results) {
-      expect(result.measured_at).toBe('2026-10-12T15:00:00.000Z');
-      expect(result.measured_at).not.toBe('2026-10-12T00:00:00.000Z');
-    }
-  });
-
-  it('sin --date toma el último corte de las 21:00 ya ocurrido', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-
-    await expect(runTelemetryCli(finalizeArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    expect(h.store.calls.readFinals.mock.calls[0][0]).toMatchObject({ date: '2026-10-11' });
-    expect(h.diagnostics().report_date).toBe('2026-10-11');
-  });
-
-  it('finales existentes ⇒ exit 0 sin insertar', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-    h.store.readFinalsQueue = [storedFinals('2026-10-12T00:05:00.000Z')];
-
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(0);
-
-    expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
-    expect(h.diagnostics().kpis).toHaveLength(8);
-  });
-
-  it('un error HTTP del endpoint finalize falla sin activar el fallback local', async () => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-    const finalize = jest.fn(async () => {
-      throw Object.assign(new KpiResponseError(401, 'KPI_API_HTTP_ERROR'), { remoteCode: 'ACCESS_GATE_REQUIRED' });
-    });
-    h.apiClient.mockReturnValue({ sample: jest.fn(), finalize });
-    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    try {
-      await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(1);
-
-      expect(finalize).toHaveBeenCalledTimes(1);
-      expect(h.probeDatabase).not.toHaveBeenCalled();
-      expect(h.openStore).not.toHaveBeenCalled();
-      expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
-      expect(h.diagnostics()).toMatchObject({
-        error_codes: ['KPI_API_HTTP_ERROR'],
-        failure: {
-          stage: 'api_finalize', error_code: 'KPI_API_HTTP_ERROR', http_status: 401,
-          remote_error_code: 'ACCESS_GATE_REQUIRED',
-        },
-      });
-    } finally {
-      log.mockRestore();
-    }
-  });
-
-  it.each([
-    ['DB caída', pgError('ECONNREFUSED')],
-    ['conflicto agotado', new KpiSnapshotError('KPI_FINALIZE_CONFLICT')],
-  ])('%s ⇒ exit 1 (sin traducir a unavailable)', async (_name, failure) => {
-    const h = harness('2026-10-12T15:00:00.000Z');
-    h.store.transactionError = failure;
-
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(1);
-
-    const diag = h.diagnostics();
-    expect(diag.exit_code).toBe(1);
-    expect(diag.error_codes.length).toBeGreaterThan(0);
-  });
 });
 
 describe('runTelemetryCli — diagnóstico (H5)', () => {
@@ -529,12 +311,8 @@ describe('runTelemetryCli — diagnóstico (H5)', () => {
     expect(diag).toMatchObject({
       mode: 'sample',
       environment: 'dev',
-      report_date: '2026-10-12',
-      window_start: '2026-10-12T03:00:00.000Z',
-      window_end: NOW_MIDDAY,
       bucket: BUCKET_MIDDAY,
       sample: { outcome: 'healthy', inserted: true },
-      counts: { http_terminal: 10, http_pending_incomplete: 2, dependency_attempts: 4, health_samples: 4 },
       purge: { executed: false },
       error_codes: [],
       exit_code: 0,
@@ -542,22 +320,11 @@ describe('runTelemetryCli — diagnóstico (H5)', () => {
     expect(typeof diag.tool).toBe('string');
     expect(typeof diag.started_at).toBe('string');
     expect(typeof diag.finished_at).toBe('string');
-    expect(diag.kpis.map((k: Json) => k.kpi_id)).toEqual([...TELEMETRY_KPI_IDS]);
-    for (const kpi of diag.kpis) {
-      expect(Object.keys(kpi).sort()).toEqual(['kind', 'kpi_id', 'quality', 'reason', 'sample_count', 'value']);
-      expect(kpi.kind).toBe('preview');
-    }
+    expect(h.store.loadAggregates).not.toHaveBeenCalled();
   });
 
   it.each([
     ['sample con DB caída', () => sampleArgs(), (h: Harness) => h.store.insertHealthSample.mockRejectedValue(leaky())],
-    [
-      'finalize con DB caída',
-      () => finalizeArgs(['--date', '2026-10-11']),
-      (h: Harness) => {
-        h.store.transactionError = leaky();
-      },
-    ],
     [
       'openStore que lanza',
       () => sampleArgs(),

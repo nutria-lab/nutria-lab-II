@@ -2,15 +2,23 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 
 import { SupabaseKpiRemoteClient } from './supabase-kpi-remote-client';
+import { KPI_CATALOG_DEFINITIONS, validateKpiCatalogDefinitions } from './kpi-catalog-definitions';
 
 const PUBLISHABLE_KEY = 'sb_publishable_fixture_key';
 const PROJECT_KEY = 'project_fixture_key';
 const DATE = '2026-10-09';
 const ENVIRONMENT = 'prod' as const;
 const EXPECTED = [
-  { kpi_id: 'availability_rate', date: DATE, env: ENVIRONMENT, value: 99.5, run_id: 'run-86' },
-  { kpi_id: 'operations_count', date: DATE, env: ENVIRONMENT, value: 7, run_id: 'run-86' },
-] as const;
+  ['availability_rate', 99.5], ['dependency_error_rate', 4], ['error_rate', 3],
+  ['health_status', 1], ['initial_plans_count', 2], ['last_success_age_seconds', 30],
+  ['latency_p95_ms', 19], ['manual_recipes_count', 5], ['operations_count', 7], ['timeout_rate', 1],
+].map(([kpi_id, value]) => ({
+  kpi_id: kpi_id as import('./kpi-contract').KpiId,
+  date: DATE,
+  env: ENVIRONMENT,
+  value: value as number,
+  run_id: 'cbd79c1e-0f46-4e5a-b86b-02d354277791',
+}));
 const FROZEN_BYTES = Buffer.from(JSON.stringify(EXPECTED), 'utf8');
 
 type CapturedRequest = {
@@ -109,6 +117,17 @@ describe('SupabaseKpiRemoteClient POST', () => {
     }
   });
 
+  it('rejects incomplete or non-canonical batches before contacting the service', async () => {
+    const fetcher = jest.fn();
+    const invalid = Buffer.from(JSON.stringify(EXPECTED.slice(0, 9)), 'utf8');
+    const remote = new SupabaseKpiRemoteClient({
+      baseUrl: 'https://project.example', publishableKey: PUBLISHABLE_KEY, projectKey: PROJECT_KEY, fetchFn: fetcher,
+    });
+
+    await expect(remote.post(invalid)).rejects.toThrow('KPI_MEASUREMENT_SET_INVALID');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it.each([
     [400, 'definitive'],
     [401, 'definitive'],
@@ -170,6 +189,9 @@ describe('SupabaseKpiRemoteClient GET verification', () => {
       const [request] = server.requests;
       expect(request.method).toBe('GET');
       expect(request.url.pathname).toBe('/rest/v1/measurement');
+      expect(request.url.searchParams.get('select')).toBe('kpi_id,date,env,value,run_id');
+      expect(request.url.searchParams.get('date')).toBe(`eq.${DATE}`);
+      expect(request.url.searchParams.get('env')).toBe(`eq.${ENVIRONMENT}`);
       expectAuthenticatedJson(request);
     } finally {
       await server.close();
@@ -219,5 +241,54 @@ describe('SupabaseKpiRemoteClient GET verification', () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+describe('versioned KPI catalog registration', () => {
+  it('defines exactly ten valid IDs with source and justification, including no average aggregation for p95', () => {
+    expect(() => validateKpiCatalogDefinitions()).not.toThrow();
+    expect(KPI_CATALOG_DEFINITIONS).toHaveLength(10);
+    expect(KPI_CATALOG_DEFINITIONS.every(definition => definition.description.length >= 5 && definition.description.length <= 500)).toBe(true);
+    expect(KPI_CATALOG_DEFINITIONS.every(definition => definition.source && definition.justification)).toBe(true);
+    expect(KPI_CATALOG_DEFINITIONS.find(definition => definition.id === 'latency_p95_ms')).not.toHaveProperty('aggregation');
+  });
+
+  it('posts only missing catalog definitions, then re-reads and verifies the exact active set', async () => {
+    const existing = KPI_CATALOG_DEFINITIONS.slice(0, 9).map(definition => ({ ...definition, active: true }));
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(existing), { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 201 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(KPI_CATALOG_DEFINITIONS.map(definition => ({ ...definition, active: true }))), { status: 200 }));
+    const remote = new SupabaseKpiRemoteClient({ baseUrl: 'https://project.example', publishableKey: PUBLISHABLE_KEY, projectKey: PROJECT_KEY, fetchFn: fetcher });
+
+    await remote.validateIdentity();
+    await expect(remote.registerCatalog('prod')).resolves.toEqual({
+      added_ids: ['manual_recipes_count'], active_count: 10,
+    });
+
+    const catalogRequests = fetcher.mock.calls.slice(1).map(call => ({
+      url: new URL(String(call[0])), init: call[1] as RequestInit,
+    }));
+    expect(catalogRequests[0].url.pathname).toBe('/rest/v1/kpi_catalog');
+    expect(catalogRequests[0].init.method).toBe('GET');
+    expect(catalogRequests[1].init.method).toBe('POST');
+    expect(catalogRequests[1].init.headers).toMatchObject({ Prefer: 'resolution=ignore-duplicates' });
+    expect(JSON.parse(String(catalogRequests[1].init.body))).toEqual([KPI_CATALOG_DEFINITIONS[9]]);
+    expect(catalogRequests[2].init.method).toBe('GET');
+  });
+
+  it.each([
+    ['extra active entry', [...KPI_CATALOG_DEFINITIONS.map(definition => ({ ...definition, active: true })), { id: 'other', kind: 'technical', unit: '1', active: true }]],
+    ['kind mismatch', KPI_CATALOG_DEFINITIONS.map((definition, index) => ({ ...definition, active: true, ...(index === 0 ? { kind: 'business' } : {}) }))],
+  ])('fails definitively on %s without posting definitions', async (_label, catalog) => {
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(catalog), { status: 200 }));
+    const remote = new SupabaseKpiRemoteClient({ baseUrl: 'https://project.example', publishableKey: PUBLISHABLE_KEY, projectKey: PROJECT_KEY, fetchFn: fetcher });
+    await remote.validateIdentity();
+
+    await expect(remote.registerCatalog('prod')).rejects.toMatchObject({ retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });

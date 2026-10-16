@@ -30,6 +30,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - id: source
+        name: Record trusted default-branch commit
+        run: echo "source_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Prepare diagnostic artifact directory
+        run: |
+          mkdir -p "$RUNNER_TEMP/kpi-publication"
+          printf '{"tool":"nutria-kpi-publisher","status":"pending"}' > "$RUNNER_TEMP/kpi-publication/diagnostics.json"
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -41,7 +50,17 @@ jobs:
         env:
           INPUT_DATE: ${{ inputs.date }}
         run: |
-          if [[ -n "$INPUT_DATE" ]]; then REPORT_DATE="$INPUT_DATE"; else REPORT_DATE="$(TZ=America/Argentina/Buenos_Aires date +%F)"; fi
+          if [[ -n "$INPUT_DATE" ]]; then
+            REPORT_DATE="$INPUT_DATE"
+          else
+            LOCAL_DATE="$(TZ=America/Argentina/Buenos_Aires date +%F)"
+            LOCAL_HOUR="$(TZ=America/Argentina/Buenos_Aires date +%H)"
+            if (( 10#$LOCAL_HOUR < 21 )); then
+              REPORT_DATE="$(TZ=America/Argentina/Buenos_Aires date -d 'yesterday' +%F)"
+            else
+              REPORT_DATE="$LOCAL_DATE"
+            fi
+          fi
           echo "date=$REPORT_DATE" >> "$GITHUB_OUTPUT"
       - id: publish
         name: Publish frozen KPI batch
@@ -53,7 +72,7 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
           KPI_ENV: ${{ vars.KPI_ENV }}
-          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
           KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
           REPORT_DATE: ${{ steps.report-date.outputs.date }}
           TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
@@ -70,7 +89,7 @@ jobs:
           OUTCOME_PATH: ${{ runner.temp }}/kpi-publication/outcome.json
           REPORT_DATE: ${{ steps.report-date.outputs.date }}
           TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
-          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
           CLI_EXIT: ${{ steps.publish.outputs.exit_code }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -81,10 +100,10 @@ jobs:
             if (outcome.post_accepted || !outcome.retryable ||
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outcome.retry_chain_id ?? '')) return;
             await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: context.sha,
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: process.env.SOURCE_COMMIT,
               inputs: { date: process.env.REPORT_DATE, environment: process.env.TARGET_ENV,
                 retry_chain_id: outcome.retry_chain_id, attempt: '1', source_commit: process.env.SOURCE_COMMIT,
-                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? '') },
+                run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? ''), manual_recovery: 'false' },
             });
       - name: Fail the initial publication when it did not deliver
         if: always()

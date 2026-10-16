@@ -6,8 +6,7 @@ import type { TelemetryCliStore } from './db/kpi-reporting-store';
 import type { CollectionContext, KpiEnvironment, KpiId, KpiResult } from './kpi-contract';
 import { KpiCollectController } from './kpi-collect.controller';
 import { KpiTelemetryController } from './kpi-telemetry.controller';
-import { resolveFinalizeDate, scheduledBucket } from './window/kpi-window';
-import { FakeSnapshotStore, sampleAggregates } from './tests/telemetry-fakes.fixture';
+import { scheduledBucket } from './window/kpi-window';
 
 const context: CollectionContext = {
   contract_version: '1',
@@ -42,14 +41,12 @@ function allResults(): KpiResult[] {
   }));
 }
 
-class FakeTelemetryStore extends FakeSnapshotStore implements TelemetryCliStore {
+class FakeTelemetryStore implements TelemetryCliStore {
+  readonly loadAggregates = jest.fn();
   readonly insertHealthSample = jest.fn(async (_sample: Parameters<TelemetryCliStore['insertHealthSample']>[0]) => true);
   readonly purgeBatch = jest.fn(async (_table: never, _environment: KpiEnvironment, _cutoff: never, _limit: number) => 0);
   readonly close = jest.fn(async () => undefined);
 
-  constructor() {
-    super((_environment, window) => sampleAggregates(window.end));
-  }
 }
 
 const config: KpiConfig = { enabled: true, environment: 'dev', disabledReason: null };
@@ -72,7 +69,7 @@ describe('KPI internal collection endpoints', () => {
     expect(logger.collect).not.toHaveBeenCalled();
   });
 
-  it('stores one real health sample and materializes the preview through the backend store', async () => {
+  it('stores one health sample without collecting metrics or materializing snapshots', async () => {
     const store = new FakeTelemetryStore();
     const controller = new KpiTelemetryController(config, store);
     const measuredAt = new Date();
@@ -90,11 +87,11 @@ describe('KPI internal collection endpoints', () => {
       environment: 'dev', measuredAt, apiOk: true, databaseOk: true, outcome: 'healthy',
     });
     expect(response.sample).toMatchObject({ outcome: 'healthy', inserted: true });
-    expect(response.preview).toMatchObject({ executed: true });
-    expect(response.preview.results).toHaveLength(8);
+    expect(store.loadAggregates).not.toHaveBeenCalled();
+    expect(response).not.toHaveProperty('preview');
   });
 
-  it('does not synthesize health or preview results when persisting a sample fails', async () => {
+  it('does not synthesize health results when persisting a sample fails', async () => {
     const store = new FakeTelemetryStore();
     store.insertHealthSample.mockRejectedValue(new Error('database unavailable'));
     const controller = new KpiTelemetryController(config, store);
@@ -108,18 +105,7 @@ describe('KPI internal collection endpoints', () => {
       reason: null,
     })).rejects.toThrow(InternalServerErrorException);
 
-    expect(store.calls.upsertPreviews).not.toHaveBeenCalled();
+    expect(store.loadAggregates).not.toHaveBeenCalled();
   });
 
-  it('finalizes only an already elapsed fixed cut and never samples health here', async () => {
-    const store = new FakeTelemetryStore();
-    const controller = new KpiTelemetryController(config, store);
-    const date = resolveFinalizeDate(new Date()).date;
-
-    const response = await controller.finalize({ date, environment: 'dev' });
-
-    expect(response.results).toHaveLength(8);
-    expect(store.isolations).toEqual(['RepeatableRead']);
-    expect(store.insertHealthSample).not.toHaveBeenCalled();
-  });
 });

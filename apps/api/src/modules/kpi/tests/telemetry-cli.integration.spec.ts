@@ -36,7 +36,7 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
 
   beforeEach(async () => {
     await db.client.query(
-      'TRUNCATE kpi_http_event, kpi_dependency_event, kpi_health_sample, kpi_snapshot, kpi_publication',
+      'TRUNCATE kpi_http_event, kpi_dependency_event, kpi_health_sample, kpi_publication',
     );
   });
 
@@ -82,8 +82,7 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
     expect(rows[0]).toMatchObject({ outcome: 'healthy', api_ok: true, database_ok: true, reason: null });
     expect(second.diagnostics[0].sample.inserted).toBe(false);
     expect(JSON.stringify(second.diagnostics[0])).toContain('SAMPLE_BUCKET_ALREADY_RECORDED');
-    // también guardó los 8 previews del corte
-    expect(await count(`kpi_snapshot WHERE snapshot_kind = 'preview'`)).toBe(8);
+    expect((await db.client.query("SELECT to_regclass('kpi_snapshot') AS name")).rows[0].name).toBeNull();
   });
 
   it('DB inaccesible (puerto cerrado) ⇒ exit 1 y sin fila (H2)', async () => {
@@ -121,11 +120,6 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
       );
       const w = { start: `${reportDate}T03:00:00.000Z`, end: new Date(Date.parse(`${reportDate}T03:00:00.000Z`) + 21 * 3_600_000).toISOString() };
       await db.client.query(
-        `INSERT INTO kpi_snapshot (id, environment, report_date, window_start, window_end, snapshot_kind, kpi_id, value, quality, reason, sample_count, measured_at)
-         VALUES ($1, $2, $3, $4, $5, 'final', 'operations_count', 1, 'observed', NULL, 1, $5)`,
-        [randomUUID(), environment, reportDate, w.start, w.end],
-      );
-      await db.client.query(
         `INSERT INTO kpi_publication (run_id, environment, report_date, window_start, window_end, status, source_commit, retry_chain_id)
          VALUES ($1, $2, $3, $4, $5, 'preparing', 'abc123', $6)`,
         [randomUUID(), environment, reportDate, w.start, w.end, randomUUID()],
@@ -150,23 +144,19 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
       }
       expect(code).toBe(0);
 
-      // dev anterior al corte: borrado de las 4 tablas
+      // dev anterior al corte: borrado de las 3 tablas
       expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at < '2027-03-31T03:00:00Z'`)).toBe(0);
       expect(await count(`kpi_dependency_event WHERE environment = 'dev' AND started_at < '2027-03-31T03:00:00Z'`)).toBe(0);
       expect(await count(`kpi_health_sample WHERE environment = 'dev' AND scheduled_for < '2027-03-31T03:00:00Z'`)).toBe(0);
-      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date < '2027-03-31'`)).toBe(0);
       // día en preparación / desde el corte: intacto
       expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at >= '2027-04-01T03:00:00Z'`)).toBe(1);
       expect(await count(`kpi_dependency_event WHERE environment = 'dev' AND started_at >= '2027-04-01T03:00:00Z'`)).toBe(1);
-      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date = '2027-04-01' AND snapshot_kind = 'final'`)).toBe(1);
       // día anterior a D (2027-03-31 local): intacto
       expect(await count(`kpi_http_event WHERE environment = 'dev' AND started_at >= '2027-03-31T03:00:00Z' AND started_at < '2027-04-01T03:00:00Z'`)).toBe(1);
-      expect(await count(`kpi_snapshot WHERE environment = 'dev' AND report_date = '2027-03-31'`)).toBe(1);
       // otro ambiente: intacto
       expect(await count(`kpi_http_event WHERE environment = 'prod'`)).toBe(1);
       expect(await count(`kpi_dependency_event WHERE environment = 'prod'`)).toBe(1);
       expect(await count(`kpi_health_sample WHERE environment = 'prod'`)).toBe(1);
-      expect(await count(`kpi_snapshot WHERE environment = 'prod'`)).toBe(1);
       // kpi_publication nunca se toca
       expect(await count('kpi_publication')).toBe(4);
 
@@ -182,7 +172,6 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
 
       expect(await count(`kpi_http_event`)).toBe(1);
       expect(await count(`kpi_dependency_event`)).toBe(1);
-      expect(await count(`kpi_snapshot WHERE snapshot_kind = 'final'`)).toBe(1);
       expect(await count('kpi_publication')).toBe(1);
     });
   });

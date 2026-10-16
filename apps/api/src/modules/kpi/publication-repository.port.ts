@@ -43,6 +43,13 @@ export interface PublicationRepository {
    * delivery.  No separate claim table or schema field is required.
    */
   claimAttempt(retryChainId: string, attempt: number): Promise<{ claimed: boolean }>;
+  beginManualRecovery(input: {
+    environment: KpiEnvironment;
+    date: string;
+    runId: string;
+    sourceCommit: string;
+    retryChainId: string;
+  }): Promise<PublicationRecord>;
   markAccepted(runId: string, acceptedAt: string): Promise<void>;
   markDelivered(runId: string, deliveredAt: string): Promise<void>;
   markFailed(runId: string, failureCode: string): Promise<void>;

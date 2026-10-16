@@ -17,7 +17,7 @@ const SOURCE_UNAVAILABLE_CODES = new Set([
 
 @Injectable()
 export class DataKpiLogger implements KpiLogger {
-  constructor(private readonly prisma: RawQueryClient) {}
+  constructor(private readonly prisma: RawQueryClient, private readonly clock: () => Date = () => new Date()) {}
 
   async collect(context: CollectionContext): Promise<readonly KpiResult[]> {
     const start = new Date(context.window_start);
@@ -49,24 +49,19 @@ export class DataKpiLogger implements KpiLogger {
           ) AS manual_recipes_count
       `;
       const row = rows[0];
-      if (!row) {
-        throw new Error('KPI count query returned no row');
-      }
-
-      const initialPlans = countToSafeNumber(row.initial_plans_count, 'initial_plans_count');
-      const manualRecipes = countToSafeNumber(row.manual_recipes_count, 'manual_recipes_count');
+      const initialPlans = row ? countToSafeNumber(row.initial_plans_count, 'initial_plans_count') : 0;
+      const manualRecipes = row ? countToSafeNumber(row.manual_recipes_count, 'manual_recipes_count') : 0;
+      const measuredAt = this.clock().toISOString();
       return [
-        observedResult('initial_plans_count', initialPlans, context.window_end),
-        observedResult('manual_recipes_count', manualRecipes, context.window_end),
+        observedResult('initial_plans_count', initialPlans, measuredAt),
+        observedResult('manual_recipes_count', manualRecipes, measuredAt),
       ];
     } catch (error: unknown) {
       if (!isExpectedSourceFailure(error)) {
         throw error;
       }
-      return [
-        unavailableResult('initial_plans_count', context.window_end),
-        unavailableResult('manual_recipes_count', context.window_end),
-      ];
+      const measuredAt = this.clock().toISOString();
+      return [unavailableResult('initial_plans_count', measuredAt), unavailableResult('manual_recipes_count', measuredAt)];
     }
   }
 }

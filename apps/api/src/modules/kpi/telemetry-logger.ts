@@ -1,11 +1,10 @@
 // Una falla de la fuente da 8 unavailable SOURCE_UNAVAILABLE sin persistir; los errores de contrato o de SQL estructural se propagan.
-import { TELEMETRY_KPI_IDS } from './calc/telemetry-formulas';
+import { TELEMETRY_KPI_IDS, buildTelemetryResults } from './calc/telemetry-formulas';
 import { computePurgeCutoff } from './cli/purge-policy';
 import type { KpiConfig } from './config/kpi-config';
 import type { CollectionContext, KpiLogger, KpiResult } from './kpi-contract';
 import { sqlStateOf } from './events/kpi-event-writer';
-import { KpiSnapshotError } from './snapshots/telemetry-snapshot.service';
-import type { SnapshotCut, TelemetrySnapshotService } from './snapshots/telemetry-snapshot.service';
+import type { TelemetryAggregateReader } from './repo/telemetry.repository';
 import { KpiWindowError, parseReportDate, windowForDate } from './window/kpi-window';
 import type { KpiWindow } from './window/kpi-window';
 
@@ -33,7 +32,6 @@ function isStructuralSqlState(sqlState: string | null): boolean {
 }
 
 function isSourceFailure(error: unknown): boolean {
-  if (error instanceof KpiSnapshotError) return error.code === 'KPI_FINALIZE_CONFLICT';
   if (error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError) return false;
   if (isStructuralSqlState(sqlStateOf(error))) return false;
   return !(error instanceof Error && error.message.startsWith('KPI_NON_FINITE'));
@@ -51,7 +49,7 @@ function sameInstant(iso: string, expected: Date): boolean {
 
 export class TelemetryLogger implements KpiLogger {
   constructor(
-    private readonly core: Pick<TelemetrySnapshotService, 'finalizeCore' | 'readCompleteFinals'>,
+    private readonly reader: TelemetryAggregateReader,
     private readonly config: Pick<KpiConfig, 'environment'>,
     private readonly clock: () => Date = () => new Date(),
   ) {}
@@ -60,18 +58,17 @@ export class TelemetryLogger implements KpiLogger {
     const cut = this.validate(context);
     try {
       if (this.isPurged(cut)) {
-        const finals = await this.core.readCompleteFinals(cut);
-        return finals ? [...finals].sort(byKpiId) : this.unavailable(PURGED_WINDOW);
+        return this.unavailable(PURGED_WINDOW);
       }
-      const run = await this.core.finalizeCore(cut);
-      return [...run.results].sort(byKpiId);
+      const aggregates = await this.reader.loadAggregates(cut.environment, { start: cut.start, end: cut.end });
+      return buildTelemetryResults(aggregates, cut, this.clock()).sort(byKpiId);
     } catch (error) {
       if (!isSourceFailure(error)) throw error;
       return this.unavailable(SOURCE_UNAVAILABLE);
     }
   }
 
-  private isPurged(cut: SnapshotCut): boolean {
+  private isPurged(cut: KpiWindow): boolean {
     const cutoff = computePurgeCutoff(this.clock());
     return cutoff !== null && cut.date < cutoff.date;
   }
@@ -88,7 +85,7 @@ export class TelemetryLogger implements KpiLogger {
     }));
   }
 
-  private validate(context: CollectionContext): SnapshotCut {
+  private validate(context: CollectionContext): KpiWindow & Pick<CollectionContext, 'environment'> {
     if (context.contract_version !== '1') throw new KpiContextError('KPI_CONTRACT_VERSION_MISMATCH');
     if (this.config.environment === null || context.environment !== this.config.environment) {
       throw new KpiContextError('KPI_ENV_MISMATCH');

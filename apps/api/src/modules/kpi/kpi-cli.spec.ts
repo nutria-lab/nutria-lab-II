@@ -1,4 +1,4 @@
-import { parsePublishCliArgs, parseRetryCliArgs } from './kpi-cli';
+import { parseCatalogCliArgs, parsePublishCliArgs, parseRetryCliArgs } from './kpi-cli';
 
 describe('KPI CLI argument parsing', () => {
   it('accepts explicit publish date and the only publishable environments', () => {
@@ -29,14 +29,16 @@ describe('KPI CLI argument parsing', () => {
       '--retry-chain-id', 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4',
       '--attempt', '2',
       '--source-commit', 'a'.repeat(40),
-      '--run-id', 'run-86',
+      '--run-id', 'cbd79c1e-0f46-4e5a-b86b-02d354277791',
+      '--manual-recovery', 'false',
     ])).toEqual({
       date: '2026-10-09',
       environment: 'prod',
       retryChainId: 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4',
       attempt: 2,
       sourceCommit: 'a'.repeat(40),
-      runId: 'run-86',
+      runId: 'cbd79c1e-0f46-4e5a-b86b-02d354277791',
+      manualRecovery: false,
     });
   });
 
@@ -48,6 +50,9 @@ describe('KPI CLI argument parsing', () => {
     ['fourth attempt', ['--attempt', '3']],
     ['abbreviated SHA', ['--source-commit', 'abcdef0']],
     ['non-hex SHA', ['--source-commit', 'g'.repeat(40)]],
+    ['invalid run id', ['--run-id', 'run-86']],
+    ['manual recovery without explicit boolean', ['--manual-recovery', 'yes']],
+    ['manual recovery on attempt two', ['--attempt', '2', '--manual-recovery', 'true']],
   ])('rejects retry %s', (_label, replacement) => {
     const args = [
       '--date', '2026-10-09', '--environment', 'dev',
@@ -57,5 +62,11 @@ describe('KPI CLI argument parsing', () => {
     ];
 
     expect(() => parseRetryCliArgs(args)).toThrow();
+  });
+
+  it('accepts manual catalog registration only for dev/prod', () => {
+    expect(parseCatalogCliArgs(['--environment', 'dev'])).toEqual({ environment: 'dev' });
+    expect(() => parseCatalogCliArgs(['--environment', 'qa'])).toThrow();
+    expect(() => parseCatalogCliArgs(['--environment', 'prod', '--unknown'])).toThrow();
   });
 });

@@ -295,32 +295,16 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(env.join('\n')).not.toMatch(/\bqa\b/);
     });
 
-    it('workflow_dispatch: mode es choice sample/finalize', () => {
+    it('workflow_dispatch exposes only the target environment', () => {
       const wf = loadWorkflow();
-      const mode = inputBlock(workflowDispatchInputs(wf), 'mode');
-      expect(scalarValue(mode, 'type')).toBe('choice');
-      expect([...parseOptions(mode)].sort()).toEqual(['finalize', 'sample']);
+      const inputs = workflowDispatchInputs(wf);
+      expect(findKeys(inputs, 'mode', firstContentIndent(inputs))).toHaveLength(0);
+      expect(findKeys(inputs, 'date', firstContentIndent(inputs))).toHaveLength(0);
     });
 
-    it('workflow_dispatch: date es opcional y de tipo string', () => {
-      const wf = loadWorkflow();
-      const date = inputBlock(workflowDispatchInputs(wf), 'date');
-      expect(scalarValue(date, 'required')).not.toBe('true');
-      const type = scalarValue(date, 'type');
-      if (type !== undefined) expect(type).toBe('string');
-      expect(scalarValue(date, 'default') ?? '').toBe('');
-    });
 
-    it('workflow_dispatch: la descripción de date habla de la fecha local de Argentina, no de UTC', () => {
-      const wf = loadWorkflow();
-      const date = inputBlock(workflowDispatchInputs(wf), 'date');
-      expect(scalarValue(date, 'description')).toBeDefined();
-      // Bloque completo por si la descripción es multilínea (| o >).
-      const descriptionText = date.join('\n');
-      expect(descriptionText).toMatch(/America\/Argentina\/Buenos_Aires/);
-      expect(descriptionText).toMatch(/YYYY-MM-DD/);
-      expect(descriptionText).not.toMatch(/\bUTC\b/i);
-    });
+
+
 
     it('el job usa GitHub Environments con el ambiente efectivo (input o prod en schedule)', () => {
       const wf = loadWorkflow();
@@ -339,15 +323,11 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(condition).toBeUndefined();
     });
 
-    it('el schedule ejecuta sample: MODE resuelve inputs.mode o sample', () => {
+    it('both manual and scheduled runs execute sample only', () => {
       const wf = loadWorkflow();
       const step = telemetryStep(wf);
-      const modeVar = shellVarForFlag(step.run!, '--mode');
-      expect(modeVar).toBeDefined();
-      const expr = normalizeExpr(effectiveEnv(wf, step)[modeVar!] ?? '');
-      expect(expr).toMatch(/inputs\.mode/);
-      expect(expr).toMatch(/'sample'/);
-      expect(expr).not.toMatch(/'finalize'/);
+      expect(step.run).toMatch(/--mode\s+sample\b/);
+      expect(wf.text).not.toMatch(/inputs\.mode|finalize/);
     });
   });
 
@@ -420,27 +400,13 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(generate).toBeLessThan(telemetry);
     });
 
-    it('ejecuta pnpm --filter api kpi:telemetry --mode --environment por env y --date solo si viene', () => {
+    it('executes sample with the environment passed through env and no historical date flag', () => {
       const wf = loadWorkflow();
-      const step = telemetryStep(wf);
-      const run = step.run!;
-      const env = effectiveEnv(wf, step);
-
-      const modeVar = shellVarForFlag(run, '--mode');
-      const envVar = shellVarForFlag(run, '--environment');
-      expect(modeVar).toBeDefined();
-      expect(envVar).toBeDefined();
+      const run = telemetryStep(wf).run!;
+      expect(run).toMatch(/--mode\s+sample\b/);
+      expect(shellVarForFlag(run, '--environment')).toBeDefined();
       expect(run).toMatch(/--diagnostics-out[\s=]+\S+/);
-
-      // --date sólo condicional: ${DATE:+--date "$DATE"} o dentro de un if [ -n ... ].
-      const dateUses = run.match(/--date/g) ?? [];
-      expect(dateUses.length).toBeGreaterThanOrEqual(1);
-      const conditional =
-        /\$\{([A-Za-z_][A-Za-z0-9_]*):\+--date[\s=]+"?\$\{?\1\}?"?\}/.exec(run) ??
-        /if\s+\[\[?\s+-n\s+"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?\s*\]\]?[\s\S]*--date[\s=]+"?\$\{?\1\}?"?/.exec(run);
-      expect(conditional).not.toBeNull();
-      const dateVar = conditional![1];
-      expect(normalizeExpr(env[dateVar] ?? '')).toMatch(/^\$\{\{.*inputs\.date.*\}\}$/);
+      expect(run).not.toContain('--date');
     });
 
     it('nunca ejecuta migrate (dev/deploy/reset), db push ni seed', () => {

@@ -19,7 +19,15 @@ describe('AccessGateMiddleware', () => {
 
   it.each([
     '/kpi/telemetry/sample',
-    '/kpi/telemetry/finalize',
+    '/kpi/collect',
+    '/kpi/publications/reserve',
+    '/kpi/publications/get',
+    '/kpi/publications/freeze',
+    '/kpi/publications/claim-attempt',
+    '/kpi/publications/manual-recovery',
+    '/kpi/publications/mark-accepted',
+    '/kpi/publications/mark-delivered',
+    '/kpi/publications/mark-failed',
   ])('permits the internal telemetry route %s through to its token guard', path => {
     middleware.use({ method: 'POST', path, cookies: {} } as Request, response, next);
 

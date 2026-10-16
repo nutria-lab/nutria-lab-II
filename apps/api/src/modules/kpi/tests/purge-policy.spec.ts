@@ -15,7 +15,7 @@ describe('computePurgeCutoff (H6)', () => {
     expect(PURGE_BATCH_SIZE).toBe(1000);
     expect(PURGE_MAX_BATCHES).toBe(100);
     expect([...PURGE_TABLES].sort()).toEqual(
-      ['kpi_dependency_event', 'kpi_health_sample', 'kpi_http_event', 'kpi_snapshot'].sort(),
+      ['kpi_dependency_event', 'kpi_health_sample', 'kpi_http_event'].sort(),
     );
     expect(PURGE_TABLES).not.toContain('kpi_publication');
   });
@@ -74,7 +74,7 @@ describe('computePurgeCutoff (H6)', () => {
 describe('runPurge (H6)', () => {
   const CUTOFF: PurgeCutoff = { date: '2027-04-01', start: new Date('2027-04-01T03:00:00.000Z') };
 
-  it('2500 filas en una tabla ⇒ 3 lotes de ≤ 1000, sólo las 4 tablas y nunca kpi_publication', async () => {
+  it('2500 filas en una tabla ⇒ 3 lotes de ≤ 1000, sólo las 3 tablas y nunca kpi_publication', async () => {
     const remaining: Record<string, number> = { kpi_http_event: 2500 };
     const purgeBatch = jest.fn(async (table: string, _env: string, _cutoff: PurgeCutoff, limit: number) => {
       const deleted = Math.min(limit, remaining[table] ?? 0);
@@ -88,7 +88,6 @@ describe('runPurge (H6)', () => {
       kpi_http_event: 2500,
       kpi_dependency_event: 0,
       kpi_health_sample: 0,
-      kpi_snapshot: 0,
     });
     expect(result.cutoff).toBe('2027-04-01');
     for (const [table, env, cutoff, limit] of purgeBatch.mock.calls) {
