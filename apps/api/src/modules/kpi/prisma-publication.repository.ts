@@ -5,7 +5,9 @@ import type { PrismaService } from '../../prisma/prisma.service';
 
 import { canonicalPayloadBytes } from './kpi-batch';
 import type { FrozenBatch, Measurement } from './kpi-contract';
-import type { PublicationRecord, PublicationRepository, PublicationReservation, PublicationStatus } from './publication-repository.port';
+import { KpiPublicationNotFoundError } from './publication-repository.port';
+import type { AttemptClaim, PublicationRecord, PublicationRepository, PublicationReservation, PublicationStatus } from './publication-repository.port';
+import { calculateArgentinaKpiWindow } from './kpi-window';
 
 /**
  * Persistence adapter for the KpiPublication row introduced by NUT-85.
@@ -21,17 +23,28 @@ export class PrismaPublicationRepository implements PublicationRepository {
     });
     if (existing) return toPublicationRecord(existing);
 
+    const window = calculateArgentinaKpiWindow(reservation.date);
+    const suppliedStart = reservation.windowStart;
+    const suppliedEnd = reservation.windowEnd;
+    const suppliedStartMs = suppliedStart === undefined ? null : Date.parse(suppliedStart);
+    const suppliedEndMs = suppliedEnd === undefined ? null : Date.parse(suppliedEnd);
+    if ((suppliedStart === undefined) !== (suppliedEnd === undefined) ||
+      (suppliedStartMs !== null && (!Number.isFinite(suppliedStartMs) || suppliedStartMs !== Date.parse(window.window_start))) ||
+      (suppliedEndMs !== null && (!Number.isFinite(suppliedEndMs) || suppliedEndMs !== Date.parse(window.window_end)))) {
+      throw new Error('KPI_WINDOW_INVALID');
+    }
     try {
       const created = await this.prisma.kpiPublication.create({
         data: {
           runId: reservation.runId,
           environment: reservation.environment,
           reportDate: reportDate(reservation.date),
-          windowStart: reportDate(reservation.date),
-          windowEnd: reportDate(reservation.date),
+          windowStart: new Date(window.window_start),
+          windowEnd: new Date(window.window_end),
           status: 'preparing',
           sourceCommit: reservation.sourceCommit,
           retryChainId: reservation.retryChainId,
+          attemptCount: reservation.priorAttemptCount ?? 0,
           updatedAt: new Date(),
         },
       });
@@ -46,7 +59,7 @@ export class PrismaPublicationRepository implements PublicationRepository {
     const publication = await this.prisma.kpiPublication.findFirst({
       where: { environment, reportDate: reportDate(date) },
     });
-    if (!publication) throw new Error(`Unknown KPI publication: ${environment}/${date}`);
+    if (!publication) throw new KpiPublicationNotFoundError(environment, date);
     return toPublicationRecord(publication);
   }
 
@@ -54,6 +67,7 @@ export class PrismaPublicationRepository implements PublicationRepository {
     runId: string,
     batch: FrozenBatch,
     payload: Buffer,
+    options: { keepPreparing?: boolean } = {},
   ): Promise<{ won: boolean; publication: PublicationRecord }> {
     if (sha256(payload) !== batch.payload_sha256) {
       throw new Error('Frozen KPI payload does not match its SHA-256');
@@ -64,7 +78,7 @@ export class PrismaPublicationRepository implements PublicationRepository {
       data: {
         frozenBatch: batch as unknown as Prisma.InputJsonValue,
         payloadSha256: batch.payload_sha256,
-        status: 'frozen',
+        status: options.keepPreparing ? 'preparing' : 'frozen',
         windowStart: new Date(batch.context.window_start),
         windowEnd: new Date(batch.context.window_end),
         updatedAt: new Date(),
@@ -74,33 +88,64 @@ export class PrismaPublicationRepository implements PublicationRepository {
     return { won: result.count === 1, publication: toPublicationRecord(publication) };
   }
 
-  async claimAttempt(retryChainId: string, attempt: number): Promise<{ claimed: boolean }> {
-    if (attempt !== 1 && attempt !== 2) return { claimed: false };
+  async claimAttempt(claim: AttemptClaim): Promise<{ claimed: boolean }> {
+    if (claim.attempt !== 0 && claim.attempt !== 1 && claim.attempt !== 2) return { claimed: false };
     const result = await this.prisma.kpiPublication.updateMany({
       where: {
-        retryChainId,
-        attemptCount: attempt - 1,
-        status: { in: ['frozen', 'failed'] },
+        environment: claim.environment,
+        reportDate: reportDate(claim.date),
+        runId: claim.runId,
+        retryChainId: claim.retryChainId,
+        attemptCount: claim.attempt,
+        status: { in: ['preparing', 'frozen', 'failed'] },
         acceptedAt: null,
         deliveredAt: null,
       },
-      data: { attemptCount: { increment: 1 }, updatedAt: new Date() },
+      data: { attemptCount: { increment: 1 }, status: 'preparing', updatedAt: new Date() },
+    });
+    return { claimed: result.count === 1 };
+  }
+
+  async claimPostAttempt(claim: AttemptClaim): Promise<{ claimed: boolean }> {
+    if (claim.attempt !== 0 && claim.attempt !== 1 && claim.attempt !== 2) return { claimed: false };
+    const result = await this.prisma.kpiPublication.updateMany({
+      where: {
+        environment: claim.environment,
+        reportDate: reportDate(claim.date),
+        runId: claim.runId,
+        retryChainId: claim.retryChainId,
+        attemptCount: claim.attempt + 1,
+        status: 'preparing',
+        acceptedAt: null,
+        deliveredAt: null,
+      },
+      data: { status: 'frozen', updatedAt: new Date() },
     });
     return { claimed: result.count === 1 };
   }
 
   async markAccepted(runId: string, acceptedAt: string): Promise<void> {
-    await this.prisma.kpiPublication.updateMany({
+    const result = await this.prisma.kpiPublication.updateMany({
       where: { runId, acceptedAt: null, deliveredAt: null },
       data: { status: 'accepted', acceptedAt: new Date(acceptedAt), updatedAt: new Date() },
     });
+    if (result.count === 1) return;
+    const current = toPublicationRecord(await this.findByRunId(runId));
+    if (!current.acceptedAt && current.status !== 'accepted' && current.status !== 'delivered') {
+      throw new Error('KPI_PUBLICATION_ACCEPTANCE_PERSIST_FAILED');
+    }
   }
 
   async markDelivered(runId: string, deliveredAt: string): Promise<void> {
-    await this.prisma.kpiPublication.updateMany({
+    const result = await this.prisma.kpiPublication.updateMany({
       where: { runId, acceptedAt: { not: null }, deliveredAt: null },
       data: { status: 'delivered', deliveredAt: new Date(deliveredAt), updatedAt: new Date() },
     });
+    if (result.count === 1) return;
+    const current = toPublicationRecord(await this.findByRunId(runId));
+    if (!current.deliveredAt && current.status !== 'delivered') {
+      throw new Error('KPI_PUBLICATION_DELIVERY_PERSIST_FAILED');
+    }
   }
 
   async markFailed(runId: string, failureCode: string): Promise<void> {
@@ -108,6 +153,18 @@ export class PrismaPublicationRepository implements PublicationRepository {
       where: { runId, acceptedAt: null, deliveredAt: null },
       data: { status: 'failed', lastError: failureCode, updatedAt: new Date() },
     });
+  }
+
+  async recoverManually(runId: string, retryChainId: string): Promise<PublicationRecord> {
+    const result = await this.prisma.kpiPublication.updateMany({
+      where: {
+        runId, retryChainId: { not: retryChainId }, status: 'failed', acceptedAt: null, deliveredAt: null, attemptCount: 3,
+        frozenBatch: { not: Prisma.DbNull }, payloadSha256: { not: null },
+      },
+      data: { retryChainId, attemptCount: 0, status: 'frozen', lastError: null, updatedAt: new Date() },
+    });
+    if (result.count !== 1) throw new Error('KPI_MANUAL_RECOVERY_NOT_ELIGIBLE');
+    return toPublicationRecord(await this.findByRunId(runId));
   }
 
   private async findByRunId(runId: string) {

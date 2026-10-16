@@ -21,17 +21,26 @@ export function resolveArgentinaKpiWindow(
   date: string,
   clock: Clock = systemClock,
 ): ArgentinaKpiWindow {
+  const window = calculateArgentinaKpiWindow(date);
+  const windowStart = Date.parse(window.window_start);
+  const windowEnd = Date.parse(window.window_end);
+  const now = clock.now();
+
+  if (windowStart > now.getTime()) {
+    throw new Error(`KPI date ${date} is in the future`);
+  }
+  if (windowEnd > now.getTime()) {
+    throw new Error(`KPI date ${date} has not reached its 21:00 cut-off`);
+  }
+
+  return window;
+}
+
+/** Returns the contract's UTC boundaries for a local Argentina date without applying a current-time cutoff. */
+export function calculateArgentinaKpiWindow(date: string): ArgentinaKpiWindow {
   const parsed = parseLocalDate(date);
   const windowStart = new Date(Date.UTC(parsed.year, parsed.month - 1, parsed.day) + ARGENTINA_UTC_OFFSET_MS);
   const windowEnd = new Date(windowStart.getTime() + 21 * 60 * 60 * 1000);
-  const now = clock.now();
-
-  if (windowStart.getTime() > now.getTime()) {
-    throw new Error(`KPI date ${date} is in the future`);
-  }
-  if (windowEnd.getTime() > now.getTime()) {
-    throw new Error(`KPI date ${date} has not reached its 21:00 cut-off`);
-  }
 
   return {
     date,

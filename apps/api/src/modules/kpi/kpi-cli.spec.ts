@@ -29,14 +29,14 @@ describe('KPI CLI argument parsing', () => {
       '--retry-chain-id', 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4',
       '--attempt', '2',
       '--source-commit', 'a'.repeat(40),
-      '--run-id', 'run-86',
+      '--run-id', 'f66cd499-0171-41dc-858f-bef11373f1f5',
     ])).toEqual({
       date: '2026-10-09',
       environment: 'prod',
       retryChainId: 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4',
       attempt: 2,
       sourceCommit: 'a'.repeat(40),
-      runId: 'run-86',
+      runId: 'f66cd499-0171-41dc-858f-bef11373f1f5',
     });
   });
 

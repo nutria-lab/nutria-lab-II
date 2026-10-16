@@ -12,6 +12,7 @@ import { KpiPublisher } from './kpi-publisher';
 import { SupabaseKpiRemoteClient } from './supabase-kpi-remote-client';
 import { FileKpiArtifactWriter } from './file-kpi-artifact-writer';
 import { TelemetryLogger } from './telemetry-logger';
+import { resolveApprovedSupabaseOrigin } from './config/kpi-config';
 
 /** Publisher dependencies are separate from telemetry collection. */
 @Module({
@@ -34,11 +35,18 @@ import { TelemetryLogger } from './telemetry-logger';
     },
     {
       provide: SupabaseKpiRemoteClient,
-      useFactory: () => new SupabaseKpiRemoteClient({
-        baseUrl: process.env.KPI_API_BASE_URL ?? '',
-        publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '',
-        projectKey: process.env.PROJECT_KEY ?? '',
-      }),
+      useFactory: () => {
+        const environment = process.env.KPI_ENV;
+        if (environment !== 'dev' && environment !== 'prod') throw new Error('KPI_PUBLISH_CONFIGURATION_INVALID');
+        const approvedOrigin = resolveApprovedSupabaseOrigin(environment, process.env.SUPABASE_URL);
+        return new SupabaseKpiRemoteClient({
+          environment,
+          baseUrl: approvedOrigin,
+          approvedOrigin,
+          publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '',
+          projectKey: process.env.PROJECT_KEY ?? '',
+        });
+      },
     },
     {
       provide: KpiPublisher,

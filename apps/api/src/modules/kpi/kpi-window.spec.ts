@@ -21,6 +21,16 @@ describe('Argentina KPI window', () => {
     expect(selectAutomaticArgentinaKpiDate({ now: () => new Date(now) })).toBe(expectedDate);
   });
 
+  it('keeps a scheduler delayed past local midnight on the last completed cut rather than choosing today', () => {
+    const delayed = { now: () => new Date('2026-10-15T04:30:00.000Z') }; // 01:30 in Argentina on Oct 15.
+
+    expect(selectAutomaticArgentinaKpiDate(delayed)).toBe('2026-10-14');
+    expect(() => resolveArgentinaKpiWindow('2026-10-15', delayed)).toThrow(/cut-off|cutoff|21:00/i);
+    expect(resolveArgentinaKpiWindow('2026-10-14', delayed)).toMatchObject({
+      date: '2026-10-14', window_start: '2026-10-14T03:00:00.000Z', window_end: '2026-10-15T00:00:00.000Z',
+    });
+  });
+
   it('rejects malformed, future, and not-yet-closed local dates against an injected clock', () => {
     const clock = { now: () => new Date('2026-10-10T20:59:59.999Z') };
 

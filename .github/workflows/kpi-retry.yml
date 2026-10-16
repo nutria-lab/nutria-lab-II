@@ -44,99 +44,227 @@ concurrency:
 
 jobs:
   retry:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     timeout-minutes: 40
     steps:
+      # Dispatches target main. The source SHA is only a validated code lineage
+      # input, never the workflow ref itself.
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter api run prisma:generate
       - name: Validate retry identity
         env:
           RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
           ATTEMPT: ${{ inputs.attempt }}
           SOURCE_COMMIT: ${{ inputs.source_commit }}
           RETRY_AFTER_MS: ${{ inputs.retry_after_ms }}
+          RUN_ID: ${{ inputs.run_id }}
+        shell: bash
         run: |
           [[ "$ATTEMPT" == "1" || "$ATTEMPT" == "2" ]]
           [[ "$RETRY_CHAIN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
           [[ -z "$RETRY_AFTER_MS" || "$RETRY_AFTER_MS" =~ ^[0-9]+$ ]]
+          if [[ -n "$RUN_ID" ]]; then
+            [[ "$RUN_ID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$ ]]
+          fi
           git cat-file -e "${SOURCE_COMMIT}^{commit}"
-      - name: Respect backoff and Retry-After
+          git merge-base --is-ancestor "$SOURCE_COMMIT" origin/main
+      - name: Check out validated source commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: trusted-source
+        name: Confirm retry source matches the checked-out code
+        env:
+          SOURCE_COMMIT: ${{ inputs.source_commit }}
+        shell: bash
+        run: |
+          checked_out="$(git rev-parse HEAD)"
+          [[ "$checked_out" == "$SOURCE_COMMIT" ]]
+          echo "source_commit=$checked_out" >> "$GITHUB_OUTPUT"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter api run prisma:generate
+      - name: Respect backoff and Retry-After before retry preparation
         env:
           ATTEMPT: ${{ inputs.attempt }}
           RETRY_AFTER_MS: ${{ inputs.retry_after_ms }}
+          KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
+        shell: bash
         run: |
+          set -euo pipefail
+          MAX_AUTOMATIC_RETRY_DELAY_SECONDS=1800
           if [[ "$ATTEMPT" == "1" ]]; then base=300; else base=600; fi
           hint=0
-          if [[ -n "$RETRY_AFTER_MS" ]]; then hint=$(( (RETRY_AFTER_MS + 999) / 1000 )); fi
+          if [[ -n "$RETRY_AFTER_MS" ]]; then
+            digits="${RETRY_AFTER_MS#"${RETRY_AFTER_MS%%[!0]*}"}"
+            if [[ -n "$digits" ]]; then
+              if (( ${#digits} > 7 )); then
+                hint=$((MAX_AUTOMATIC_RETRY_DELAY_SECONDS + 1))
+              else
+                hint=$(( (10#$digits + 999) / 1000 ))
+              fi
+            fi
+          fi
           if (( hint > base )); then delay=$hint; else delay=$base; fi
+          if (( delay > MAX_AUTOMATIC_RETRY_DELAY_SECONDS )); then
+            mkdir -p "$KPI_ARTIFACT_DIR"
+            printf '{"status":"failed","post_accepted":false,"retryable":false,"retry_after_ms":%s,"retry_chain_id":null,"run_id":null,"failure_code":"RETRY_AFTER_EXCEEDS_WORKFLOW_WINDOW"}\n' "$RETRY_AFTER_MS" > "$KPI_ARTIFACT_DIR/outcome.json"
+            echo 'Retry-After exceeds the safe 30-minute retry window; no request sent.' >&2
+            exit 78
+          fi
           sleep "$delay"
-      - id: retry
-        name: Retry the same frozen KPI batch
+      - id: prepare
+        name: Recover the same frozen batch before the retry
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
           SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
-          KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
-          KPI_ENV: ${{ vars.KPI_ENV }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          KPI_ENV: ${{ inputs.environment }}
           KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
           REPORT_DATE: ${{ inputs.date }}
           TARGET_ENV: ${{ inputs.environment }}
           RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ steps.trusted-source.outputs.source_commit }}
           RUN_ID: ${{ inputs.run_id }}
           ATTEMPT: ${{ inputs.attempt }}
+        shell: bash
         run: |
           set +e
-          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT")
+          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT" --prepare-only)
           if [[ -n "$RUN_ID" ]]; then args+=(--run-id "$RUN_ID"); fi
           pnpm --filter api kpi:retry "${args[@]}"
           code=$?
+          outcome="$KPI_ARTIFACT_DIR/outcome.json"
+          run_id=""
+          status="failed"
+          retryable="false"
+          post_accepted="false"
+          retry_after_ms=""
+          if [[ -f "$outcome" ]]; then
+            run_id="$(jq -r '.run_id // ""' "$outcome")"
+            status="$(jq -r '.status // "failed"' "$outcome")"
+            retryable="$(jq -r '.retryable // false' "$outcome")"
+            post_accepted="$(jq -r '.post_accepted // false' "$outcome")"
+            retry_after_ms="$(jq -r '.retry_after_ms // ""' "$outcome")"
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "retryable=$retryable" >> "$GITHUB_OUTPUT"
+          echo "post_accepted=$post_accepted" >> "$GITHUB_OUTPUT"
+          echo "retry_after_ms=$retry_after_ms" >> "$GITHUB_OUTPUT"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
+      - id: batch-upload
+        name: Upload frozen retry payload before any POST
+        if: always() && steps.prepare.outputs.run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-batch-${{ steps.prepare.outputs.run_id }}
+          path: |
+            ${{ runner.temp }}/kpi-publication/payload.json
+            ${{ runner.temp }}/kpi-publication/diagnostics.json
+          if-no-files-found: error
+          retention-days: 90
+      - id: diagnostics-upload
+        name: Upload retry diagnostics when no run ID exists
+        if: always() && steps.prepare.outputs.run_id == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/kpi-publication/outcome.json
+          if-no-files-found: error
+          retention-days: 90
+      - id: retry
+        name: POST the same frozen KPI batch after artifact upload
+        if: success() && steps.prepare.outputs.exit_code == '0' && steps.prepare.outputs.status == 'prepared'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          KPI_ENV: ${{ inputs.environment }}
+          KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
+          KPI_ARTIFACT_UPLOAD_CONFIRMED: 'true'
+          REPORT_DATE: ${{ inputs.date }}
+          TARGET_ENV: ${{ inputs.environment }}
+          RETRY_CHAIN_ID: ${{ inputs.retry_chain_id }}
+          SOURCE_COMMIT: ${{ steps.trusted-source.outputs.source_commit }}
+          RUN_ID: ${{ steps.prepare.outputs.run_id }}
+          ATTEMPT: ${{ inputs.attempt }}
+        shell: bash
+        run: |
+          set +e
+          args=(--date "$REPORT_DATE" --environment "$TARGET_ENV" --retry-chain-id "$RETRY_CHAIN_ID" --attempt "$ATTEMPT" --source-commit "$SOURCE_COMMIT" --run-id "$RUN_ID" --post-frozen)
+          pnpm --filter api kpi:retry "${args[@]}"
+          code=$?
+          outcome="$KPI_ARTIFACT_DIR/outcome.json"
+          retryable="false"
+          post_accepted="false"
+          retry_after_ms=""
+          if [[ -f "$outcome" ]]; then
+            retryable="$(jq -r '.retryable // false' "$outcome")"
+            post_accepted="$(jq -r '.post_accepted // false' "$outcome")"
+            retry_after_ms="$(jq -r '.retry_after_ms // ""' "$outcome")"
+          fi
+          echo "retryable=$retryable" >> "$GITHUB_OUTPUT"
+          echo "post_accepted=$post_accepted" >> "$GITHUB_OUTPUT"
+          echo "retry_after_ms=$retry_after_ms" >> "$GITHUB_OUTPUT"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload final retry diagnostics
+        if: always() && steps.retry.outputs.exit_code != '' && steps.prepare.outputs.run_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpi-retry-result-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/kpi-publication/outcome.json
+            ${{ runner.temp }}/kpi-publication/diagnostics.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Dispatch retry two only for an eligible retry one failure
         if: always() && inputs.attempt == '1'
         uses: actions/github-script@v7
         env:
           OUTCOME_PATH: ${{ runner.temp }}/kpi-publication/outcome.json
-          CLI_EXIT: ${{ steps.retry.outputs.exit_code }}
+          CLI_EXIT: ${{ steps.retry.outputs.exit_code || steps.prepare.outputs.exit_code }}
+          BATCH_UPLOAD_OUTCOME: ${{ steps.prepare.outputs.run_id != '' && steps.batch-upload.outcome || steps.diagnostics-upload.outcome }}
           REPORT_DATE: ${{ inputs.date }}
           TARGET_ENV: ${{ inputs.environment }}
-          SOURCE_COMMIT: ${{ inputs.source_commit }}
+          SOURCE_COMMIT: ${{ steps.trusted-source.outputs.source_commit }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            if (process.env.CLI_EXIT === '0' || !fs.existsSync(process.env.OUTCOME_PATH)) return;
+            const uploadFailed = process.env.BATCH_UPLOAD_OUTCOME !== 'success';
+            if (!uploadFailed && process.env.CLI_EXIT === '0') return;
+            if (!fs.existsSync(process.env.OUTCOME_PATH)) return;
             const outcome = JSON.parse(fs.readFileSync(process.env.OUTCOME_PATH, 'utf8'));
             if (outcome.post_accepted || !outcome.retryable ||
                 !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(outcome.retry_chain_id ?? '')) return;
             await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: process.env.SOURCE_COMMIT,
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: 'kpi-retry.yml', ref: 'main',
               inputs: { date: process.env.REPORT_DATE, environment: process.env.TARGET_ENV,
                 retry_chain_id: outcome.retry_chain_id, attempt: '2', source_commit: process.env.SOURCE_COMMIT,
                 run_id: outcome.run_id ?? '', retry_after_ms: String(outcome.retry_after_ms ?? '') },
             });
-      - name: Fail the retry when it did not deliver
+      - name: Fail when retry preparation or publication failed
         if: always()
         env:
-          CLI_EXIT: ${{ steps.retry.outputs.exit_code }}
+          PREPARE_EXIT: ${{ steps.prepare.outputs.exit_code }}
+          RETRY_EXIT: ${{ steps.retry.outputs.exit_code }}
+        shell: bash
         run: |
-          [[ "$CLI_EXIT" =~ ^[0-9]+$ ]]
-          exit "$CLI_EXIT"
-      - name: Upload retry artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kpi-retry-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/kpi-publication
-          if-no-files-found: error
-          retention-days: 90
+          if [[ -n "$PREPARE_EXIT" && "$PREPARE_EXIT" != '0' ]]; then exit 1; fi
+          if [[ -n "$RETRY_EXIT" && "$RETRY_EXIT" != '0' ]]; then exit 1; fi

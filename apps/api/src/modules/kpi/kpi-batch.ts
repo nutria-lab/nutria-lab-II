@@ -9,7 +9,9 @@ export function canonicalPayloadBytes(measurements: readonly Measurement[]): Buf
 
 /** Normalizes collector results into an immutable, reproducible publication batch. */
 export function freezeBatch(context: CollectionContext, results: readonly KpiResult[]): FrozenBatch {
-  const ordered = [...results].sort((left, right) => left.kpi_id.localeCompare(right.kpi_id));
+  const ordered = [...results].sort((left, right) =>
+    left.kpi_id < right.kpi_id ? -1 : left.kpi_id > right.kpi_id ? 1 : 0,
+  );
   const measurements = ordered.map((result) => toMeasurement(context, result));
   const diagnostics = ordered.map((result) => ({
     kpi_id: result.kpi_id,

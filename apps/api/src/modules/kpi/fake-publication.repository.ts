@@ -1,5 +1,6 @@
 import type { FrozenBatch, KpiEnvironment } from './kpi-contract';
-import type { PublicationRecord, PublicationRepository, PublicationReservation } from './publication-repository.port';
+import { KpiPublicationNotFoundError } from './publication-repository.port';
+import type { AttemptClaim, PublicationRecord, PublicationRepository, PublicationReservation } from './publication-repository.port';
 
 /** Deterministic in-memory implementation used solely by unit tests. */
 export class FakePublicationRepository implements PublicationRepository {
@@ -19,9 +20,9 @@ export class FakePublicationRepository implements PublicationRepository {
       acceptedAt: null,
       deliveredAt: null,
       failureCode: null,
-      // Reserving the unique publication row is the claim for initial attempt
-      // zero.  Retry claims advance this same row through the CAS below.
-      attemptCount: 0,
+      // The initial execution claims 0 -> 1 before network I/O. Subsequent
+      // retries claim 1 -> 2 and 2 -> 3 on this same durable row.
+      attemptCount: reservation.priorAttemptCount ?? 0,
     };
     this.publications.set(key, publication);
     return publication;
@@ -29,33 +30,50 @@ export class FakePublicationRepository implements PublicationRepository {
 
   async getPublication(environment: KpiEnvironment, date: string): Promise<PublicationRecord> {
     const publication = this.publications.get(publicationKey(environment, date));
-    if (!publication) throw new Error(`Unknown KPI publication: ${environment}/${date}`);
+    if (!publication) throw new KpiPublicationNotFoundError(environment, date);
     return publication;
   }
 
-  async freezeBatchConditionally(runId: string, batch: FrozenBatch, payload: Buffer): Promise<{ won: boolean; publication: PublicationRecord }> {
+  async freezeBatchConditionally(
+    runId: string,
+    batch: FrozenBatch,
+    payload: Buffer,
+    options: { keepPreparing?: boolean } = {},
+  ): Promise<{ won: boolean; publication: PublicationRecord }> {
     const publication = this.byRunId(runId);
     if (publication.frozenBatch) return { won: false, publication };
 
     publication.frozenBatch = batch;
     publication.frozenPayload = Buffer.from(payload);
     publication.payloadSha256 = batch.payload_sha256;
-    publication.status = 'frozen';
+    publication.status = options.keepPreparing ? 'preparing' : 'frozen';
     return { won: true, publication };
   }
 
-  async claimAttempt(retryChainId: string, attempt: number): Promise<{ claimed: boolean }> {
+  async claimAttempt(claim: AttemptClaim): Promise<{ claimed: boolean }> {
     // This deliberately mirrors a single conditional UPDATE over the unique
     // environment/date row. With no await before the mutation, concurrent
     // callers observe the winner's increment and return duplicate.
-    const publication = [...this.publications.values()].find((candidate) => candidate.retryChainId === retryChainId);
-    if ((attempt !== 1 && attempt !== 2) || !publication ||
-      publication.attemptCount !== attempt - 1 ||
+    const publication = this.publications.get(publicationKey(claim.environment, claim.date));
+    if (!publication || publication.runId !== claim.runId || publication.retryChainId !== claim.retryChainId ||
+      publication.attemptCount !== claim.attempt ||
       !isRetryEligible(publication)) {
       return { claimed: false };
     }
 
     publication.attemptCount += 1;
+    publication.status = 'preparing';
+    return { claimed: true };
+  }
+
+  async claimPostAttempt(claim: AttemptClaim): Promise<{ claimed: boolean }> {
+    const publication = this.publications.get(publicationKey(claim.environment, claim.date));
+    if (!publication || publication.runId !== claim.runId || publication.retryChainId !== claim.retryChainId ||
+      publication.attemptCount !== claim.attempt + 1 || publication.status !== 'preparing' ||
+      publication.acceptedAt !== null || publication.deliveredAt !== null) {
+      return { claimed: false };
+    }
+    publication.status = 'frozen';
     return { claimed: true };
   }
 
@@ -78,6 +96,19 @@ export class FakePublicationRepository implements PublicationRepository {
     publication.failureCode = failureCode;
   }
 
+  async recoverManually(runId: string, retryChainId: string): Promise<PublicationRecord> {
+    const publication = this.byRunId(runId);
+    if (publication.status !== 'failed' || publication.attemptCount !== 3 || publication.acceptedAt || publication.deliveredAt ||
+      !publication.frozenBatch || !publication.frozenPayload || !publication.payloadSha256 || publication.retryChainId === retryChainId) {
+      throw new Error('KPI_MANUAL_RECOVERY_NOT_ELIGIBLE');
+    }
+    publication.retryChainId = retryChainId;
+    publication.attemptCount = 0;
+    publication.status = 'frozen';
+    publication.failureCode = null;
+    return publication;
+  }
+
   async corruptPayloadShaForTest(runId: string, payloadSha256: string): Promise<void> {
     this.byRunId(runId).payloadSha256 = payloadSha256;
   }
@@ -91,8 +122,8 @@ export class FakePublicationRepository implements PublicationRepository {
 }
 
 function isRetryEligible(publication: PublicationRecord): boolean {
-  return publication.status !== 'accepted' &&
-    publication.status !== 'delivered' &&
+  const eligibleStatus = ['preparing', 'frozen', 'failed'].includes(publication.status);
+  return eligibleStatus &&
     publication.acceptedAt === null &&
     publication.deliveredAt === null;
 }

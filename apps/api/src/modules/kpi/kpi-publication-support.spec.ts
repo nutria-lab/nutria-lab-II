@@ -22,6 +22,7 @@ describe('publication error classification', () => {
     const now = new Date('2026-10-10T00:00:00.000Z');
     expect(parseRetryAfter('30', now)).toBe(30_000);
     expect(parseRetryAfter('Fri, 10 Oct 2026 00:02:00 GMT', now)).toBe(120_000);
+    expect(parseRetryAfter('9'.repeat(80), now)).toBe(Number.MAX_SAFE_INTEGER);
     expect(parseRetryAfter('invalid', now)).toBeNull();
   });
 });

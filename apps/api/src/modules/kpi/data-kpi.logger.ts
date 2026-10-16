@@ -17,11 +17,12 @@ const SOURCE_UNAVAILABLE_CODES = new Set([
 
 @Injectable()
 export class DataKpiLogger implements KpiLogger {
-  constructor(private readonly prisma: RawQueryClient) {}
+  constructor(private readonly prisma: RawQueryClient, private readonly clock: { now(): Date } = { now: () => new Date() }) {}
 
   async collect(context: CollectionContext): Promise<readonly KpiResult[]> {
     const start = new Date(context.window_start);
     const end = new Date(context.window_end);
+    const measuredAt = this.clock.now().toISOString();
 
     try {
       const rows = await this.prisma.$queryRaw<CountRow[]>`
@@ -56,16 +57,16 @@ export class DataKpiLogger implements KpiLogger {
       const initialPlans = countToSafeNumber(row.initial_plans_count, 'initial_plans_count');
       const manualRecipes = countToSafeNumber(row.manual_recipes_count, 'manual_recipes_count');
       return [
-        observedResult('initial_plans_count', initialPlans, context.window_end),
-        observedResult('manual_recipes_count', manualRecipes, context.window_end),
+        observedResult('initial_plans_count', initialPlans, measuredAt),
+        observedResult('manual_recipes_count', manualRecipes, measuredAt),
       ];
     } catch (error: unknown) {
       if (!isExpectedSourceFailure(error)) {
         throw error;
       }
       return [
-        unavailableResult('initial_plans_count', context.window_end),
-        unavailableResult('manual_recipes_count', context.window_end),
+        unavailableResult('initial_plans_count', measuredAt),
+        unavailableResult('manual_recipes_count', measuredAt),
       ];
     }
   }

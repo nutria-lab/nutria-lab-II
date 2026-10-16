@@ -16,6 +16,19 @@ function queryPrisma(row: Record<string, bigint | number>) {
 }
 
 describe('DataKpiLogger', () => {
+  it('takes measured_at from one injected UTC clock instant, never the collection window end', async () => {
+    const measuredAt = '2026-10-10T12:34:56.789Z';
+    const logger = new (DataKpiLogger as unknown as new (...args: unknown[]) => DataKpiLogger)(
+      queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n }),
+      { now: () => new Date(measuredAt) },
+    );
+
+    await expect(logger.collect(context)).resolves.toEqual([
+      expect.objectContaining({ measured_at: measuredAt }),
+      expect.objectContaining({ measured_at: measuredAt }),
+    ]);
+  });
+
   it('uses one tagged, parameterized query over the UTC [start, end) bounds and maps successful counts as observed', async () => {
     const prisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
     const logger = new DataKpiLogger(prisma as never);

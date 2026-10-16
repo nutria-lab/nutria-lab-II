@@ -15,7 +15,8 @@
     "unsplash:recover-tracking": "npx tsx prisma/recover-unsplash-tracking.ts",
     "kpi:telemetry": "tsx scripts/kpi/telemetry.ts",
     "kpi:publish": "tsx scripts/kpi/publish.ts",
-    "kpi:retry": "tsx scripts/kpi/retry.ts"
+    "kpi:retry": "tsx scripts/kpi/retry.ts",
+    "kpi:catalog": "tsx scripts/kpi/catalog.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

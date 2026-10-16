@@ -62,4 +62,49 @@ describe('KPI batch freezing', () => {
     expect(changed.payload_sha256).not.toBe(first.payload_sha256);
     expect(canonicalPayloadBytes(first.measurements)).toEqual(canonicalPayloadBytes(reordered.measurements));
   });
+
+  it('orders every KPI with locale-independent code-point ordering', () => {
+    const originalLocaleCompare = String.prototype.localeCompare;
+    let localeCompareCalls = 0;
+    String.prototype.localeCompare = function (
+      this: string,
+      that: string,
+      locales?: Intl.LocalesArgument,
+      options?: Intl.CollatorOptions,
+    ) {
+      localeCompareCalls += 1;
+      return originalLocaleCompare.call(this, that, locales, options);
+    };
+    let batch;
+    try {
+      batch = freezeBatch(context, [
+        result('timeout_rate', 0),
+        result('operations_count', 0),
+        result('manual_recipes_count', 0),
+        result('latency_p95_ms', 0),
+        result('last_success_age_seconds', 0),
+        result('initial_plans_count', 0),
+        result('health_status', 0),
+        result('error_rate', 0),
+        result('dependency_error_rate', 0),
+        result('availability_rate', 0),
+      ]);
+    } finally {
+      String.prototype.localeCompare = originalLocaleCompare;
+    }
+
+    expect(localeCompareCalls).toBe(0);
+    expect(batch?.measurements.map(measurement => measurement.kpi_id)).toEqual([
+      'availability_rate',
+      'dependency_error_rate',
+      'error_rate',
+      'health_status',
+      'initial_plans_count',
+      'last_success_age_seconds',
+      'latency_p95_ms',
+      'manual_recipes_count',
+      'operations_count',
+      'timeout_rate',
+    ]);
+  });
 });

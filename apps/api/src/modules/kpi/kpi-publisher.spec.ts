@@ -24,6 +24,7 @@ function collector(): jest.Mocked<KpiLogger> {
 
 function publisherHarness(overrides: {
   repository?: PublicationRepository;
+  artifactWriter?: { write: jest.Mock };
   remoteClient?: {
     post: jest.Mock;
     verify: jest.Mock;
@@ -33,10 +34,12 @@ function publisherHarness(overrides: {
   const logger = collector();
   const defaultRemoteClient = {
     post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
-    verify: jest.fn().mockResolvedValue({ kind: 'match', status: 200 }),
+    verify: jest.fn()
+      .mockResolvedValueOnce({ kind: 'not_found', status: 404 })
+      .mockResolvedValue({ kind: 'match', status: 200 }),
   };
   const remoteClient = overrides.remoteClient ?? defaultRemoteClient;
-  const artifactWriter = { write: jest.fn().mockResolvedValue(undefined) };
+  const artifactWriter = overrides.artifactWriter ?? { write: jest.fn().mockResolvedValue(undefined) };
   const publisher = new KpiPublisher({
     repository,
     logger,
@@ -47,6 +50,12 @@ function publisherHarness(overrides: {
   });
   const request = { environment: 'prod' as const, date, sourceCommit, retryChainId, attempt: 0 };
   return { publisher, repository, logger, remoteClient, artifactWriter, request };
+}
+
+async function runPublication(publisher: KpiPublisher, request: Parameters<KpiPublisher['publish']>[0]) {
+  const prepared = await publisher.publish({ ...request, phase: 'prepare-only' });
+  if (prepared.status !== 'prepared') return prepared;
+  return publisher.publish({ ...request, phase: 'post-frozen', artifactUploadConfirmed: true, runId: prepared.runId });
 }
 
 async function frozenPublication(repository: FakePublicationRepository, status: 'frozen' | 'accepted' | 'delivered' = 'frozen') {
@@ -66,7 +75,7 @@ describe('KpiPublisher', () => {
   it('freshly collects, freezes durably, posts the exact frozen bytes, accepts, verifies MATCH, and delivers', async () => {
     const { publisher, repository, logger, remoteClient, request } = publisherHarness();
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
 
     const publication = await repository.getPublication('prod', date);
     expect(logger.collect).toHaveBeenCalledTimes(1);
@@ -74,41 +83,84 @@ describe('KpiPublisher', () => {
     expect(publication).toMatchObject({ status: 'delivered', acceptedAt: expect.any(String), frozenBatch: expect.any(Object) });
   });
 
-  it('reuses an already frozen authoritative batch without recollecting', async () => {
+  it('reconciles an already frozen authoritative batch without recollecting or reposting', async () => {
     const { publisher, repository, logger, remoteClient, request } = publisherHarness({ remoteClient: {
       post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
-      verify: jest.fn().mockResolvedValue({ kind: 'not_found', status: 404 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'match', status: 200 }),
     } });
     const publication = await frozenPublication(repository as FakePublicationRepository);
 
-    await publisher.publish(request);
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
 
     expect(logger.collect).not.toHaveBeenCalled();
-    expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+    expect(remoteClient.verify).toHaveBeenCalledWith('prod', date, publication.frozenBatch!.measurements);
+    expect(remoteClient.post).not.toHaveBeenCalled();
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({
+      status: 'delivered', acceptedAt: expect.any(String), deliveredAt: expect.any(String),
+    });
+  });
+
+  it('writes the exact frozen payload and diagnostics durably before the first POST', async () => {
+    const events: string[] = [];
+    const artifactWriter = { write: jest.fn(async (artifacts: Record<string, Buffer>) => {
+      events.push('artifact');
+      expect(artifacts['payload.json']).toBeInstanceOf(Buffer);
+      expect(artifacts['diagnostics.json']).toBeInstanceOf(Buffer);
+    }) };
+    const remoteClient = {
+      post: jest.fn(async () => { events.push('post'); return { kind: 'accepted' as const, status: 202 }; }),
+      verify: jest.fn().mockResolvedValueOnce({ kind: 'not_found', status: 404 }).mockResolvedValue({ kind: 'match', status: 200 }),
+    };
+    const { publisher, repository, request } = publisherHarness({ artifactWriter, remoteClient });
+
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+
+    const postIndex = events.indexOf('post');
+    expect(events[0]).toBe('artifact');
+    expect(postIndex).toBeGreaterThan(0);
+    expect(events.lastIndexOf('artifact')).toBeGreaterThan(postIndex);
+    const publication = await repository.getPublication('prod', date);
+    const firstArtifacts = artifactWriter.write.mock.calls[0][0] as Record<string, Buffer>;
+    const firstDiagnostics = JSON.parse(firstArtifacts['diagnostics.json'].toString('utf8')) as Record<string, unknown>;
+    expect(firstArtifacts['payload.json']).toEqual(publication.frozenPayload);
+    expect(firstDiagnostics).toMatchObject({
+      run_id: publication.runId, payload_sha256: publication.payloadSha256,
+      status: 'frozen', post_accepted: false, retry: { retry_chain_id: retryChainId, attempt: 0 },
+    });
+    const postAcceptedEvidence = artifactWriter.write.mock.calls
+      .slice(1)
+      .map(([artifacts]) => JSON.parse((artifacts as Record<string, Buffer>)['diagnostics.json'].toString('utf8')) as Record<string, unknown>);
+    expect(postAcceptedEvidence).toEqual(expect.arrayContaining([expect.objectContaining({ post_accepted: true })]));
+  });
+
+  it('does not POST if it cannot persist the pre-POST frozen artifact', async () => {
+    const artifactWriter = { write: jest.fn().mockRejectedValue(new Error('durable artifact store unavailable')) };
+    const { publisher, remoteClient, request } = publisherHarness({ artifactWriter });
+
+    await runPublication(publisher, request).catch(() => undefined);
+
+    expect(artifactWriter.write).toHaveBeenCalledWith(expect.objectContaining({
+      'payload.json': expect.any(Buffer), 'diagnostics.json': expect.any(Buffer),
+    }));
+    expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
   it.each(['accepted', 'delivered'] as const)('does not recollect or repost a previously %s publication', async (status) => {
     const { publisher, repository, logger, remoteClient, request } = publisherHarness();
     await frozenPublication(repository as FakePublicationRepository, status);
 
-    await publisher.publish(request);
+    await runPublication(publisher, request);
 
     expect(logger.collect).not.toHaveBeenCalled();
     expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
-  it('never posts when durable freeze fails, and loses a concurrent freeze race to the authoritative batch', async () => {
+  it('never posts when durable freeze fails', async () => {
     const failedFreezeRepository = new FakePublicationRepository();
     jest.spyOn(failedFreezeRepository, 'freezeBatchConditionally').mockRejectedValueOnce(new Error('db down'));
     const noFreeze = publisherHarness({ repository: failedFreezeRepository });
-    await expect(noFreeze.publisher.publish(noFreeze.request)).rejects.toThrow('db down');
+    await expect(runPublication(noFreeze.publisher, noFreeze.request)).rejects.toThrow('db down');
     expect(noFreeze.remoteClient.post).not.toHaveBeenCalled();
-
-    const race = publisherHarness();
-    const authoritative = await frozenPublication(race.repository as FakePublicationRepository);
-    race.remoteClient.verify.mockResolvedValue({ kind: 'not_found', status: 404 });
-    await race.publisher.publish(race.request);
-    expect(race.remoteClient.post).toHaveBeenCalledWith(authoritative.frozenPayload);
   });
 
   it('rejects a corrupt frozen SHA before network I/O', async () => {
@@ -116,7 +168,19 @@ describe('KpiPublisher', () => {
     await frozenPublication(repository as FakePublicationRepository);
     await (repository as FakePublicationRepository).corruptPayloadShaForTest(runId, '0'.repeat(64));
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ failureCode: 'BATCH_INTEGRITY_ERROR' });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ failureCode: 'BATCH_INTEGRITY_ERROR' });
+    expect(remoteClient.post).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without recollecting when a persisted frozen batch is missing its SHA', async () => {
+    const { publisher, repository, logger, remoteClient, request } = publisherHarness();
+    const publication = await frozenPublication(repository as FakePublicationRepository);
+    publication.payloadSha256 = null;
+
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({
+      status: 'failed', failureCode: 'BATCH_INTEGRITY_ERROR',
+    });
+    expect(logger.collect).not.toHaveBeenCalled();
     expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
@@ -126,23 +190,26 @@ describe('KpiPublisher', () => {
     const schemaCompatibleRepository = withoutLegacyPostAcceptedEvidence(repository);
     const remoteClient = {
       post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
-      verify: jest.fn().mockResolvedValue({ kind: 'match', status: 200 }),
+      verify: jest.fn().mockResolvedValueOnce({ kind: 'not_found', status: 404 }).mockResolvedValue({ kind: 'match', status: 200 }),
     };
     const first = publisherHarness({ repository: schemaCompatibleRepository, remoteClient });
 
-    await expect(first.publisher.publish(first.request)).resolves.toMatchObject({ postAccepted: true, status: 'verify_pending' });
+    await expect(runPublication(first.publisher, first.request)).resolves.toMatchObject({ postAccepted: true, status: 'verify_pending' });
     const second = publisherHarness({ repository: schemaCompatibleRepository, remoteClient });
 
-    await expect(second.publisher.publish(second.request)).resolves.toMatchObject({ postAccepted: true, status: 'delivered' });
+    await expect(runPublication(second.publisher, second.request)).resolves.toMatchObject({ postAccepted: true, status: 'delivered' });
     expect(remoteClient.post).toHaveBeenCalledTimes(1);
     expect(first.artifactWriter.write).toHaveBeenCalledWith(expect.objectContaining({
       'diagnostics.json': expect.any(Buffer),
     }));
-    expect(first.artifactWriter.write.mock.calls[0][0]['diagnostics.json'].toString('utf8')).toContain('"post_accepted":true');
+    const evidence = first.artifactWriter.write.mock.calls.map(([artifacts]) =>
+      JSON.parse((artifacts as Record<string, Buffer>)['diagnostics.json'].toString('utf8')) as Record<string, unknown>);
+    expect(evidence[0]).toMatchObject({ status: 'frozen', post_accepted: false });
+    expect(evidence.slice(1)).toEqual(expect.arrayContaining([expect.objectContaining({ post_accepted: true })]));
     await expect(repository.getPublication('prod', date)).resolves.toMatchObject({ status: 'delivered', acceptedAt: expect.any(String) });
   });
 
-  it('permits a recovered frozen batch to POST only after remote NOT_FOUND', async () => {
+  it('reuses the frozen bytes and permits a POST only after recovered-batch GET returns NOT_FOUND', async () => {
     const repository = new FakePublicationRepository();
     const publication = await frozenPublication(repository);
     const remoteClient = {
@@ -153,8 +220,10 @@ describe('KpiPublisher', () => {
     };
     const { publisher, logger, request } = publisherHarness({ repository, remoteClient });
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
     expect(logger.collect).not.toHaveBeenCalled();
+    expect(remoteClient.verify).toHaveBeenCalledWith('prod', date, publication.frozenBatch!.measurements);
+    expect(remoteClient.post).toHaveBeenCalledTimes(1);
     expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
   });
 
@@ -165,7 +234,7 @@ describe('KpiPublisher', () => {
     } });
     await frozenPublication(repository as FakePublicationRepository);
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'verify_pending', postAccepted: false });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: 'verify_pending', postAccepted: false });
     expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
@@ -176,7 +245,9 @@ describe('KpiPublisher', () => {
     } });
     await frozenPublication(repository as FakePublicationRepository);
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'verify_pending', postAccepted: false });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({
+      status: 'verify_pending', postAccepted: false, retryable: true,
+    });
     expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
@@ -187,8 +258,59 @@ describe('KpiPublisher', () => {
     } });
     await frozenPublication(repository as FakePublicationRepository);
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: 'failed', failureCode: 'REMOTE_VALUE_CONFLICT' });
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({
+      status: 'failed', failureCode: 'REMOTE_VALUE_CONFLICT',
+    });
     expect(remoteClient.post).not.toHaveBeenCalled();
+  });
+
+  it('recovers a preparing reservation with no run_id by preserving the reserved run and freezing once', async () => {
+    const repository = new FakePublicationRepository();
+    const reservation = await repository.reservePublication({
+      environment: 'prod', date, runId, sourceCommit, retryChainId,
+    });
+    await repository.claimAttempt({ environment: 'prod', date, runId: reservation.runId, retryChainId, attempt: 0 });
+    const { publisher, logger, remoteClient } = publisherHarness({ repository, remoteClient: {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn().mockResolvedValueOnce({ kind: 'not_found', status: 404 }).mockResolvedValue({ kind: 'match', status: 200 }),
+    } });
+
+    await expect(runPublication(publisher, {
+      environment: 'prod', date, sourceCommit, retryChainId, attempt: 1,
+      // runId is intentionally absent: the durable date/environment row owns it.
+    })).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+
+    expect(logger.collect).toHaveBeenCalledTimes(1);
+    expect(remoteClient.post).toHaveBeenCalledTimes(1);
+    const recovered = await repository.getPublication('prod', date);
+    expect(recovered).toMatchObject({ runId: reservation.runId, retryChainId, attemptCount: 2, status: 'delivered' });
+    expect(remoteClient.post).toHaveBeenCalledWith(recovered.frozenPayload);
+  });
+
+  it('recovers an existing frozen retry row without run_id and never recollects or replaces its payload', async () => {
+    const repository = new FakePublicationRepository();
+    const publication = await frozenPublication(repository);
+    await repository.claimAttempt({ environment: 'prod', date, runId: publication.runId, retryChainId, attempt: 0 });
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn()
+        .mockResolvedValueOnce({ kind: 'not_found', status: 404 })
+        .mockResolvedValueOnce({ kind: 'match', status: 200 }),
+    };
+    const { publisher, logger } = publisherHarness({ repository, remoteClient });
+
+    await expect(runPublication(publisher, {
+      environment: 'prod', date, sourceCommit, retryChainId, attempt: 1,
+      // The repository's unique environment/date row supplies the stable run ID.
+    })).resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+
+    expect(logger.collect).not.toHaveBeenCalled();
+    expect(remoteClient.verify).toHaveBeenCalledWith('prod', date, publication.frozenBatch!.measurements);
+    expect(remoteClient.post).toHaveBeenCalledTimes(1);
+    expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({
+      runId: publication.runId, attemptCount: 2, payloadSha256: publication.payloadSha256,
+    });
   });
 
   it.each([
@@ -200,17 +322,36 @@ describe('KpiPublisher', () => {
       verify: jest.fn().mockResolvedValue({ kind, status: kind === 'conflict' ? 409 : 503 }),
     } });
 
-    await expect(publisher.publish(request)).resolves.toMatchObject({ status: expectedStatus });
-    expect(remoteClient.post).toHaveBeenCalledTimes(1);
+    await expect(runPublication(publisher, request)).resolves.toMatchObject({ status: expectedStatus });
+    expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
-  it('skips a duplicate retry claim before it can post', async () => {
-    const { publisher, repository, remoteClient, request } = publisherHarness();
-    await frozenPublication(repository as FakePublicationRepository);
-    await repository.claimAttempt(retryChainId, 1);
+  it('allows one retry winner for a matching run_id/chain and skips a duplicate dispatch before POST', async () => {
+    const repository = new FakePublicationRepository();
+    const publication = await frozenPublication(repository);
+    await repository.claimAttempt({ environment: 'prod', date, runId: publication.runId, retryChainId, attempt: 0 });
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn()
+        .mockResolvedValueOnce({ kind: 'not_found', status: 404 })
+        .mockResolvedValueOnce({ kind: 'match', status: 200 }),
+    };
+    const first = publisherHarness({ repository, remoteClient });
+    const duplicate = publisherHarness({ repository, remoteClient });
+    const retry = { ...first.request, attempt: 1 as const, runId: publication.runId };
 
-    await expect(publisher.publish({ ...request, attempt: 1 })).resolves.toMatchObject({ status: 'skipped_duplicate' });
-    expect(remoteClient.post).not.toHaveBeenCalled();
+    const results = await Promise.all([
+      runPublication(first.publisher, retry), runPublication(duplicate.publisher, retry),
+    ]);
+
+    expect(results.filter(result => result.status === 'skipped_duplicate')).toHaveLength(1);
+    expect(remoteClient.post).toHaveBeenCalledTimes(1);
+    expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+    expect(first.logger.collect).not.toHaveBeenCalled();
+    expect(duplicate.logger.collect).not.toHaveBeenCalled();
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({
+      runId: publication.runId, retryChainId, attemptCount: 2,
+    });
   });
 });
 
@@ -220,6 +361,7 @@ function withoutLegacyPostAcceptedEvidence(repository: FakePublicationRepository
     getPublication: repository.getPublication.bind(repository),
     freezeBatchConditionally: repository.freezeBatchConditionally.bind(repository),
     claimAttempt: repository.claimAttempt.bind(repository),
+    claimPostAttempt: repository.claimPostAttempt.bind(repository),
     markAccepted: repository.markAccepted.bind(repository),
     markDelivered: repository.markDelivered.bind(repository),
     markFailed: repository.markFailed.bind(repository),
