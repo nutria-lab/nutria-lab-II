@@ -6,7 +6,8 @@ import type { PoolConfig } from 'pg';
 import { PrismaClient } from '../../../generated/prisma/client';
 
 export const KPI_POOL_MAX = 2;
-export const KPI_CLIENT_TIMEOUT_MS = 150;
+// Network round trips may outlast both the SQL execution limit and the caller's bounded wait.
+export const KPI_CLIENT_TIMEOUT_MS = 5000;
 // Abrir una conexión en frío tarda más que una consulta; el negocio no la espera (lo protege la espera acotada).
 export const KPI_CONNECT_TIMEOUT_MS = 1500;
 

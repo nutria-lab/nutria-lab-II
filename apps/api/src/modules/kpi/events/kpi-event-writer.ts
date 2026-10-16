@@ -149,6 +149,7 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
   constructor(
     private readonly client: KpiWriterClient,
     private readonly onDispose?: () => Promise<void>,
+    private readonly retainTask?: (task: Promise<void>) => void,
   ) {}
 
   insertHttpPending(event: HttpPendingEvent): Promise<void> {
@@ -260,6 +261,12 @@ export class PrismaKpiEventWriter implements KpiEventWriter {
     }
     this.inFlight.add(settled);
     void settled.then(() => this.inFlight.delete(settled));
+    // Retain the underlying write, which can outlive the caller's bounded wait.
+    try {
+      this.retainTask?.(settled);
+    } catch {
+      logger.warn('KPI_TASK_RETENTION_FAILED');
+    }
     return settled;
   }
 }

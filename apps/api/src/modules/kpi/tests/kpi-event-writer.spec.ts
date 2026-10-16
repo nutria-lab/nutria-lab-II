@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common';
-import { KPI_CONNECT_TIMEOUT_MS, createKpiPrismaClient } from '../db/kpi-prisma';
+import { KPI_CLIENT_TIMEOUT_MS, KPI_CONNECT_TIMEOUT_MS, createKpiPrismaClient } from '../db/kpi-prisma';
 import {
   KPI_DRAIN_TIMEOUT_MS,
   KPI_SQL_STATEMENT_TIMEOUT_MS,
@@ -443,6 +443,43 @@ describe('PrismaKpiEventWriter (unit)', () => {
 
     await expect(writer.drain(KPI_DRAIN_TIMEOUT_MS)).resolves.toBeUndefined();
   });
+
+  it.each([
+    ['insertHttpPending', (w: PrismaKpiEventWriter) => w.insertHttpPending(PENDING)],
+    ['closeHttp', (w: PrismaKpiEventWriter) => w.closeHttp(CLOSE)],
+    ['insertDependencyPending', (w: PrismaKpiEventWriter) => w.insertDependencyPending(DEP_PENDING)],
+    ['closeDependency', (w: PrismaKpiEventWriter) => w.closeDependency(DEP_CLOSE)],
+  ] as const)('retains the actual %s task after its caller wait expires', async (_name, run) => {
+    let finish!: (rows: number) => void;
+    const { client } = fakeClient(() => new Promise<number>(resolve => { finish = resolve; }));
+    const retained: Promise<void>[] = [];
+    const writer = new PrismaKpiEventWriter(client, undefined, task => { retained.push(task); });
+
+    const bounded = run(writer);
+    await jest.advanceTimersByTimeAsync(KPI_WRITE_WAIT_MS);
+    await bounded;
+    expect(retained).toHaveLength(1);
+    let completed = false;
+    void retained[0].then(() => { completed = true; });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(completed).toBe(false);
+    expect(writer.inFlightCount()).toBe(1);
+
+    finish(1);
+    await retained[0];
+    expect(completed).toBe(true);
+    expect(writer.inFlightCount()).toBe(0);
+  });
+
+  it('a failed task-retention hook does not fail the caller or expose its error', async () => {
+    const { client, writes } = fakeClient(async () => 1);
+    const writer = new PrismaKpiEventWriter(client, undefined, () => { throw new Error('private-hosting-detail'); });
+
+    await expect(writer.closeHttp(CLOSE)).resolves.toBeUndefined();
+    expect(writes()).toHaveLength(1);
+    expect(logs.text()).toContain('KPI_TASK_RETENTION_FAILED');
+    expect(logs.text()).not.toContain('private-hosting-detail');
+  });
 });
 
 describe('NoopKpiEventWriter', () => {
@@ -464,7 +501,7 @@ describe('createKpiPrismaClient (pool propio, D3)', () => {
     expect(KPI_SQL_STATEMENT_TIMEOUT_MS).toBe(100);
   });
 
-  it('pool dedicado chico SIN statement_timeout de arranque (PgBouncer), query_timeout 150 y connect 1500, sin conectar', async () => {
+  it('keeps caller and SQL limits separate from the 5-second network query budget', async () => {
     const handle = createKpiPrismaClient('postgresql://kpi:kpi@127.0.0.1:1/kpi', {
       options: '-c search_path=kpi_x,public',
     });
@@ -476,7 +513,8 @@ describe('createKpiPrismaClient (pool propio, D3)', () => {
       expect(options.statement_timeout).toBeUndefined();
       expect(String(options.options ?? '')).not.toMatch(/statement_timeout/i);
       expect(String(options.connectionString ?? '')).not.toMatch(/statement_timeout/i);
-      expect(options.query_timeout).toBe(150);
+      expect(options.query_timeout).toBe(5000);
+      expect(options.query_timeout).toBe(KPI_CLIENT_TIMEOUT_MS);
       // Una conexión nueva (arranque en frío Vercel+Neon) suele tardar más de 150 ms.
       expect(options.connectionTimeoutMillis).toBe(KPI_CONNECT_TIMEOUT_MS);
       expect(options.connectionTimeoutMillis).toBe(1500);

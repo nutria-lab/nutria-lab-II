@@ -4,7 +4,7 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import type { KpiPrismaHandle } from '../db/kpi-prisma';
 import type { DisposableSchema } from './kpi-test-db.fixture';
 
-// El query_timeout de 150 ms de producción vence bajo carga aunque Postgres ya respondió; los tests que fijan un SQLSTATE real usan este cliente.
+// Explicit client override for tests exercising PostgreSQL SQLSTATEs or shorter client deadlines.
 export const TEST_WRITER_QUERY_TIMEOUT_MS = 5000;
 
 export function createWideTimeoutKpiPrismaClient(

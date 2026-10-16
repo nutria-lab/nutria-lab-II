@@ -2,7 +2,7 @@
 
 ## Context
 
-The browser application must not expose the product to unauthorised visitors before login or registration. The OpenAI credential remains server-side, but an additional shared password gate is required for the production deployment.
+Thee browser application must not expose the product to unauthorised visitors before login or registration. The OpenAI credential remains server-side, but an additional shared password gate is required for the production deployment.
 
 ## Decision
 
