@@ -238,16 +238,34 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
 
   it('un error HTTP del endpoint de sample falla sin activar el fallback local', async () => {
     const h = harness();
-    const sample = jest.fn(async () => { throw new KpiResponseError(503, 'KPI_API_HTTP_ERROR'); });
+    const sample = jest.fn(async () => {
+      throw Object.assign(new KpiResponseError(401, 'KPI_API_HTTP_ERROR'), { remoteCode: 'ACCESS_GATE_REQUIRED' });
+    });
     h.apiClient.mockReturnValue({ sample, finalize: jest.fn() });
+    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
+    try {
+      await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
 
-    expect(sample).toHaveBeenCalledTimes(1);
-    expect(h.probeDatabase).not.toHaveBeenCalled();
-    expect(h.openStore).not.toHaveBeenCalled();
-    expect(h.store.insertHealthSample).not.toHaveBeenCalled();
-    expect(h.diagnostics().error_codes).toContain('KPI_API_HTTP_ERROR');
+      expect(sample).toHaveBeenCalledTimes(1);
+      expect(h.probeDatabase).not.toHaveBeenCalled();
+      expect(h.openStore).not.toHaveBeenCalled();
+      expect(h.store.insertHealthSample).not.toHaveBeenCalled();
+      expect(h.diagnostics()).toMatchObject({
+        error_codes: ['KPI_API_HTTP_ERROR'],
+        failure: {
+          stage: 'api_sample', error_code: 'KPI_API_HTTP_ERROR', http_status: 401,
+          remote_error_code: 'ACCESS_GATE_REQUIRED',
+        },
+      });
+      expect(log).toHaveBeenCalledWith(
+        'KPI_TELEMETRY_FAILED {"stage":"api_sample","error_code":"KPI_API_HTTP_ERROR","http_status":401,"remote_error_code":"ACCESS_GATE_REQUIRED"}',
+      );
+      expect(log.mock.calls.flat().join(' ')).not.toContain('internal-secret');
+      expect(log.mock.calls.flat().join(' ')).not.toContain(SECRET_API_BASE);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('bucket floor(now/30min); API primero, DB SELECT 1 de fallback con 2 s; una muestra healthy', async () => {
@@ -461,16 +479,29 @@ describe('runTelemetryCli — finalize (H4)', () => {
 
   it('un error HTTP del endpoint finalize falla sin activar el fallback local', async () => {
     const h = harness('2026-10-12T15:00:00.000Z');
-    const finalize = jest.fn(async () => { throw new KpiResponseError(503, 'KPI_API_HTTP_ERROR'); });
+    const finalize = jest.fn(async () => {
+      throw Object.assign(new KpiResponseError(401, 'KPI_API_HTTP_ERROR'), { remoteCode: 'ACCESS_GATE_REQUIRED' });
+    });
     h.apiClient.mockReturnValue({ sample: jest.fn(), finalize });
+    const log = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(1);
+    try {
+      await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(1);
 
-    expect(finalize).toHaveBeenCalledTimes(1);
-    expect(h.probeDatabase).not.toHaveBeenCalled();
-    expect(h.openStore).not.toHaveBeenCalled();
-    expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
-    expect(h.diagnostics().error_codes).toContain('KPI_API_HTTP_ERROR');
+      expect(finalize).toHaveBeenCalledTimes(1);
+      expect(h.probeDatabase).not.toHaveBeenCalled();
+      expect(h.openStore).not.toHaveBeenCalled();
+      expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
+      expect(h.diagnostics()).toMatchObject({
+        error_codes: ['KPI_API_HTTP_ERROR'],
+        failure: {
+          stage: 'api_finalize', error_code: 'KPI_API_HTTP_ERROR', http_status: 401,
+          remote_error_code: 'ACCESS_GATE_REQUIRED',
+        },
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it.each([

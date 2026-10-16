@@ -63,6 +63,12 @@ export interface TelemetryDiagnostics {
   counts: { http_terminal: number; http_pending_incomplete: number; dependency_attempts: number; health_samples: number } | null;
   purge: { executed: boolean; cutoff: string | null; deleted: Record<PurgeTable, number> | null };
   error_codes: string[];
+  failure: {
+    stage: string;
+    error_code: string;
+    http_status: number | null;
+    remote_error_code: string | null;
+  } | null;
   exit_code: number | null;
   started_at: string;
   finished_at: string | null;
@@ -118,6 +124,23 @@ function errorCodeOf(error: unknown, fallback: string): string {
   if (error instanceof KpiSnapshotError) return error.code;
   if (error instanceof KpiTransportError || error instanceof KpiResponseError) return error.code;
   return fallback;
+}
+
+function recordFailure(
+  diag: TelemetryDiagnostics,
+  stage: string,
+  errorCode: string,
+  error?: unknown,
+): void {
+  diag.error_codes.push(errorCode);
+  if (diag.failure === null) {
+    diag.failure = {
+      stage,
+      error_code: errorCode,
+      http_status: error instanceof KpiResponseError ? error.status : null,
+      remote_error_code: error instanceof KpiResponseError ? error.remoteCode : null,
+    };
+  }
 }
 
 function apiFailureReason(outcome: ApiProbeOutcome): string | null {
@@ -277,7 +300,13 @@ async function runDirectSample(
   apiFailure: string | null,
   store: () => TelemetryCliStore,
 ): Promise<number> {
-  const db = await ctx.deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS);
+  let db: DbProbeOutcome;
+  try {
+    db = await ctx.deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS);
+  } catch (error) {
+    recordFailure(ctx.diag, 'database_probe', errorCodeOf(error, 'DB_PROBE_FAILED'), error);
+    return EXIT_FAILURE;
+  }
   const dbReason = dbFailureReason(db);
   const disabled = request.reason === INSTRUMENTATION_DISABLED;
   const sample: HealthSampleInput = {
@@ -298,8 +327,8 @@ async function runDirectSample(
     const inserted = await store().insertHealthSample(sample);
     ctx.diag.sample.inserted = inserted;
     ctx.diag.sample.result = inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED';
-  } catch {
-    ctx.diag.error_codes.push('SAMPLE_WRITE_FAILED');
+  } catch (error) {
+    recordFailure(ctx.diag, 'local_sample_write', 'SAMPLE_WRITE_FAILED', error);
     return EXIT_FAILURE;
   }
   if (ctx.previewSkipReason !== null) {
@@ -311,7 +340,7 @@ async function runDirectSample(
     ctx.diag.preview = { executed: true, skip_reason: null };
     recordRun(ctx.diag, run, 'preview');
   } catch (error) {
-    ctx.diag.error_codes.push(errorCodeOf(error, 'PREVIEW_FAILED'));
+    recordFailure(ctx.diag, 'local_preview', errorCodeOf(error, 'PREVIEW_FAILED'), error);
     return EXIT_FAILURE;
   }
   const cutoff = computePurgeCutoff(ctx.now);
@@ -320,15 +349,21 @@ async function runDirectSample(
   try {
     ctx.diag.purge.deleted = (await runPurge(store(), ctx.args.environment, cutoff)).deleted;
     return EXIT_OK;
-  } catch {
-    ctx.diag.error_codes.push('PURGE_FAILED');
+  } catch (error) {
+    recordFailure(ctx.diag, 'purge', 'PURGE_FAILED', error);
     return EXIT_FAILURE;
   }
 }
 
 async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
   const healthUrl = `${ctx.apiBaseUrl.replace(/\/+$/, '')}/health`;
-  const api = await ctx.deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS);
+  let api: ApiProbeOutcome;
+  try {
+    api = await ctx.deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS);
+  } catch (error) {
+    recordFailure(ctx.diag, 'api_health_probe', errorCodeOf(error, 'API_HEALTH_PROBE_FAILED'), error);
+    return EXIT_FAILURE;
+  }
   const measuredAt = ctx.deps.clock();
   const bucket = scheduledBucket(measuredAt);
   ctx.diag.bucket = bucket.toISOString();
@@ -341,7 +376,7 @@ async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promi
     return EXIT_OK;
   } catch (error) {
     if (!(error instanceof KpiTransportError)) {
-      ctx.diag.error_codes.push(errorCodeOf(error, 'API_SAMPLE_FAILED'));
+      recordFailure(ctx.diag, 'api_sample', errorCodeOf(error, 'API_SAMPLE_FAILED'), error);
       return EXIT_FAILURE;
     }
     return runDirectSample(ctx, sample, null, store);
@@ -357,7 +392,7 @@ async function runFinalize(ctx: RunContext, store: () => TelemetryCliStore): Pro
     return EXIT_OK;
   } catch (error) {
     if (!(error instanceof KpiTransportError)) {
-      ctx.diag.error_codes.push(errorCodeOf(error, 'FINALIZE_FAILED'));
+      recordFailure(ctx.diag, 'api_finalize', errorCodeOf(error, 'FINALIZE_FAILED'), error);
       return EXIT_FAILURE;
     }
     try {
@@ -366,7 +401,7 @@ async function runFinalize(ctx: RunContext, store: () => TelemetryCliStore): Pro
       recordRun(ctx.diag, run, 'final');
       return EXIT_OK;
     } catch (fallbackError) {
-      ctx.diag.error_codes.push(errorCodeOf(fallbackError, 'FINALIZE_FAILED'));
+      recordFailure(ctx.diag, 'local_finalize', errorCodeOf(fallbackError, 'FINALIZE_FAILED'), fallbackError);
       return EXIT_FAILURE;
     }
   }
@@ -393,6 +428,7 @@ export async function runTelemetryCli(
     counts: null,
     purge: { executed: false, cutoff: null, deleted: null },
     error_codes: [],
+    failure: null,
     exit_code: null,
     started_at: startedAt.toISOString(),
     finished_at: null,
@@ -417,10 +453,10 @@ export async function runTelemetryCli(
     exitCode = args.mode === 'sample' ? await runSample(ctx, store) : await runFinalize(ctx, store);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      diag.error_codes.push(error.code);
+      recordFailure(diag, 'validation', error.code, error);
       exitCode = EXIT_USAGE;
     } else {
-      diag.error_codes.push('UNEXPECTED_ERROR');
+      recordFailure(diag, 'runtime', 'UNEXPECTED_ERROR', error);
       exitCode = EXIT_FAILURE;
     }
   } finally {
@@ -428,11 +464,14 @@ export async function runTelemetryCli(
     if (store !== null) await store.close().catch(() => undefined);
     diag.exit_code = exitCode;
     diag.finished_at = deps.clock().toISOString();
+    if (diag.failure !== null && exitCode === EXIT_FAILURE) {
+      console.error(`KPI_TELEMETRY_FAILED ${JSON.stringify(diag.failure)}`);
+    }
     if (diagnosticsDir !== undefined) {
       try {
         await deps.writeDiagnostics(diagnosticsDir, diag);
       } catch {
-        diag.error_codes.push('DIAGNOSTICS_WRITE_FAILED');
+        recordFailure(diag, 'diagnostics_write', 'DIAGNOSTICS_WRITE_FAILED');
         diag.exit_code = EXIT_FAILURE;
         exitCode = EXIT_FAILURE;
         console.error('KPI_DIAGNOSTICS_WRITE_FAILED');

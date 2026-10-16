@@ -40,7 +40,7 @@ export class KpiTransportError extends Error {
 }
 
 export class KpiResponseError extends Error {
-  constructor(readonly status: number, readonly code: string) {
+  constructor(readonly status: number, readonly code: string, readonly remoteCode: string | null = null) {
     super(code);
     this.name = 'KpiResponseError';
   }
@@ -134,7 +134,17 @@ export class KpiApiClient implements PublicationRepository {
         timeout,
       ]);
 
-      if (!response.ok) throw new KpiResponseError(response.status, 'KPI_API_HTTP_ERROR');
+      if (!response.ok) {
+        let remoteCode: string | null = null;
+        try {
+          const errorBody: unknown = await Promise.race([response.json(), timeout]);
+          remoteCode = safeRemoteErrorCode(errorBody);
+        } catch (error) {
+          if (timedOut || error instanceof KpiTransportError) throw new KpiTransportError('KPI_API_TIMEOUT');
+          // The HTTP status remains the primary failure; never expose an untrusted body/message.
+        }
+        throw new KpiResponseError(response.status, 'KPI_API_HTTP_ERROR', remoteCode);
+      }
       let payload: unknown;
       try {
         payload = await Promise.race([response.json(), timeout]);
@@ -150,6 +160,12 @@ export class KpiApiClient implements PublicationRepository {
       clearTimeout(timer!);
     }
   }
+}
+
+function safeRemoteErrorCode(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || !('code' in value)) return null;
+  const code = (value as { code?: unknown }).code;
+  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : null;
 }
 
 /** Publication state is read/written through the backend first; Prisma fallback is lazy and transport-only. */
