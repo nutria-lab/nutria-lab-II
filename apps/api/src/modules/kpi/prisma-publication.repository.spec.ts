@@ -27,6 +27,26 @@ function prismaMock(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PrismaPublicationRepository (NUT-85 adapter)', () => {
+  it('reserves the fixed Argentina report window instead of an empty interval', async () => {
+    const prisma = prismaMock({
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue(row({ status: 'preparing', frozenBatch: null, payloadSha256: null })),
+    });
+    const repository = new PrismaPublicationRepository(prisma as never);
+
+    await repository.reservePublication({
+      environment: 'dev', date: '2026-10-09', runId: 'cbd79c1e-0f46-4e5a-b86b-02d354277791',
+      sourceCommit: 'a'.repeat(40), retryChainId: 'f2b8d1ab-a737-4191-9a19-22a1f4d4ab6d',
+    });
+
+    expect(prisma.kpiPublication.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        windowStart: new Date('2026-10-09T03:00:00.000Z'),
+        windowEnd: new Date('2026-10-10T00:00:00.000Z'),
+      }),
+    }));
+  });
+
   it('reconstructs the canonical payload from JSONB and verifies the stored SHA before publishing', async () => {
     const prisma = prismaMock({ findUnique: jest.fn().mockResolvedValue(row()), updateMany: jest.fn().mockResolvedValue({ count: 1 }) });
     const repository = new PrismaPublicationRepository(prisma as never);

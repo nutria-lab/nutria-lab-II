@@ -1,7 +1,6 @@
 name: KPI Telemetry
 
-# Inactivo hasta que la variable de repo KPI_TELEMETRY_ENABLED sea 'true': requiere el script kpi:telemetry en apps/api/package.json.
-# Rollback: borrar esa variable o deshabilitar este workflow.
+# Rollback: deshabilitar este workflow o apagar KPI_INSTRUMENTATION_ENABLED en el backend.
 
 on:
   schedule:
@@ -40,7 +39,6 @@ permissions:
 jobs:
   telemetry:
     name: KPI Telemetry
-    if: ${{ vars.KPI_TELEMETRY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     # schedule => prod; workflow_dispatch => input elegido.
     environment: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
@@ -72,6 +70,7 @@ jobs:
           TARGET_ENV: ${{ github.event_name == 'schedule' && 'prod' || inputs.environment }}
           DATE: ${{ inputs.date }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KPI_INTERNAL_TOKEN: ${{ secrets.KPI_INTERNAL_TOKEN }}
           KPI_ENV: ${{ vars.KPI_ENV }}
           KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
         run: |

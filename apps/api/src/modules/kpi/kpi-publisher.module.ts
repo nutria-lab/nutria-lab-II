@@ -12,10 +12,13 @@ import { KpiPublisher } from './kpi-publisher';
 import { SupabaseKpiRemoteClient } from './supabase-kpi-remote-client';
 import { FileKpiArtifactWriter } from './file-kpi-artifact-writer';
 import { TelemetryLogger } from './telemetry-logger';
+import { KpiCollectController } from './kpi-collect.controller';
+import { KpiPublicationController } from './kpi-publication.controller';
 
 /** Publisher dependencies are separate from telemetry collection. */
 @Module({
   imports: [PrismaModule, KpiModule],
+  controllers: [KpiCollectController, KpiPublicationController],
   providers: [
     {
       provide: DataKpiLogger,
@@ -35,7 +38,7 @@ import { TelemetryLogger } from './telemetry-logger';
     {
       provide: SupabaseKpiRemoteClient,
       useFactory: () => new SupabaseKpiRemoteClient({
-        baseUrl: process.env.KPI_API_BASE_URL ?? '',
+        baseUrl: process.env.SUPABASE_URL ?? '',
         publishableKey: process.env.SUPABASE_PUBLISHABLE_KEY ?? '',
         projectKey: process.env.PROJECT_KEY ?? '',
       }),

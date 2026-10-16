@@ -3,7 +3,7 @@ import { Controller, Get, Header, Inject, Logger, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import type { KpiConfig } from '../config/kpi-config';
 import { DB_HEALTH_PROBE, KPI_CONFIG } from '../kpi.tokens';
-import { HEALTH_DB_TIMEOUT_MS, HEALTH_RESULT_TTL_MS } from './db-health-probe';
+import { HEALTH_DB_TIMEOUT_MS } from './db-health-probe';
 import type { DbHealthProbe } from './db-health-probe';
 
 const OK_BODY = { status: 'ok', database: 'ok' } as const;
@@ -34,19 +34,14 @@ export class HealthController {
   }
 
   private inFlight: Promise<ProbeResult> | null = null;
-  private cached: { result: ProbeResult; at: number } | null = null;
-
   private pingWithDeadline(): Promise<ProbeResult> {
-    if (this.cached && Date.now() - this.cached.at < HEALTH_RESULT_TTL_MS) return Promise.resolve(this.cached.result);
     if (!this.inFlight) {
-      const flight = this.withDeadline(this.startProbe()).then(result => {
-        this.cached = { result, at: Date.now() };
-        this.inFlight = null;
-        return result;
+      const flight = this.withDeadline(this.startProbe()).finally(() => {
+        if (this.inFlight === flight) this.inFlight = null;
       });
       this.inFlight = flight;
     }
-    return this.withDeadline(this.inFlight);
+    return this.inFlight;
   }
 
   private startProbe(): Promise<ProbeResult> {

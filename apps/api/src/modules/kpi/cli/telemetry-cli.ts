@@ -19,12 +19,15 @@ import { KpiWindowError, resolveFinalizeDate, resolvePreviewWindow, scheduledBuc
 import type { KpiWindow, PreviewWindow } from '../window/kpi-window';
 import { computePurgeCutoff, runPurge } from './purge-policy';
 import type { PurgeTable } from './purge-policy';
+import { KpiApiClient, KpiResponseError, KpiTransportError, KPI_API_REQUEST_TIMEOUT_MS } from '../kpi-api-client';
+import type { KpiSampleRequest, KpiSampleResponse } from '../kpi-api-client';
 
 export type { HealthSampleInput } from '../repo/telemetry.repository';
 export type { TelemetryCliStore } from '../db/kpi-reporting-store';
 
 export const API_PROBE_TIMEOUT_MS = 5000;
 export const DB_PROBE_TIMEOUT_MS = 2000;
+export const KPI_ENDPOINT_TIMEOUT_MS = KPI_API_REQUEST_TIMEOUT_MS;
 export const DIAGNOSTICS_FILE_NAME = 'kpi-telemetry-diagnostics.json';
 const TOOL_NAME = 'nutria-kpi-telemetry';
 
@@ -40,6 +43,7 @@ export interface TelemetryCliDeps {
   clock(): Date;
   probeApi(healthUrl: string, timeoutMs: number): Promise<ApiProbeOutcome>;
   probeDatabase(databaseUrl: string, timeoutMs: number): Promise<DbProbeOutcome>;
+  apiClient(baseUrl: string, token: string): Pick<KpiApiClient, 'sample' | 'finalize'>;
   openStore(databaseUrl: string): TelemetryCliStore;
   writeDiagnostics(dir: string, diagnostics: TelemetryDiagnostics): Promise<void>;
 }
@@ -112,6 +116,7 @@ function parseArgs(values: Map<string, string>, invalid: boolean): CliArgs {
 
 function errorCodeOf(error: unknown, fallback: string): string {
   if (error instanceof KpiSnapshotError) return error.code;
+  if (error instanceof KpiTransportError || error instanceof KpiResponseError) return error.code;
   return fallback;
 }
 
@@ -170,6 +175,7 @@ interface ResolvedRun {
   args: CliArgs;
   databaseUrl: string;
   apiBaseUrl: string;
+  internalToken: string;
   now: Date;
   cut: SnapshotCut;
   previewSkipReason: string | null;
@@ -189,7 +195,9 @@ function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
   const databaseUrl = env.DATABASE_URL;
   if (!databaseUrl) throw new CliUsageError('DATABASE_URL_MISSING');
   const apiBaseUrl = env.KPI_API_BASE_URL;
-  if (args.mode === 'sample' && !apiBaseUrl) throw new CliUsageError('KPI_API_BASE_URL_MISSING');
+  if (!apiBaseUrl) throw new CliUsageError('KPI_API_BASE_URL_MISSING');
+  const internalToken = env.KPI_INTERNAL_TOKEN;
+  if (!internalToken) throw new CliUsageError('KPI_INTERNAL_TOKEN_MISSING');
 
   let window: KpiWindow;
   let previewSkipReason: PreviewWindow['skipReason'] = null;
@@ -212,86 +220,155 @@ function resolveRun(args: CliArgs, env: KpiEnvSource, now: Date): ResolvedRun {
     args,
     databaseUrl,
     apiBaseUrl: apiBaseUrl ?? '',
+    internalToken,
     now,
     cut: { environment: args.environment, date: window.date, start: window.start, end: window.end },
     previewSkipReason,
   };
 }
 
-async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
-  const { args, deps, diag, now } = ctx;
-  const bucket = scheduledBucket(now);
-  diag.bucket = bucket.toISOString();
-
-  const healthUrl = `${ctx.apiBaseUrl.replace(/\/+$/, '')}/health`;
-  const [api, db] = await Promise.all([
-    deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS),
-    deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS),
-  ]);
-  const measuredAt = deps.clock();
-  const apiReason = apiFailureReason(api);
-  const dbReason = dbFailureReason(db);
-  const sample: HealthSampleInput = {
-    environment: args.environment,
-    scheduledFor: bucket,
-    measuredAt,
-    apiOk: apiReason === null,
-    databaseOk: dbReason === null,
-    outcome: apiReason === null && dbReason === null ? 'healthy' : 'unhealthy',
-    // La instrumentación apagada tiene prioridad; el detalle de salud queda en api_ok/database_ok.
-    reason: instrumentationDisabled(api) ? INSTRUMENTATION_DISABLED : (apiReason ?? dbReason),
+function sampleRequest(
+  api: ApiProbeOutcome,
+  measuredAt: Date,
+  bucket: Date,
+  previewDate?: string,
+): KpiSampleRequest {
+  const request: KpiSampleRequest = {
+    scheduled_for: bucket.toISOString(),
+    measured_at: measuredAt.toISOString(),
+    api_ok: false,
+    database_ok: null,
+    reason: null,
   };
-  diag.sample = { outcome: sample.outcome, inserted: false, reason: sample.reason, result: 'SAMPLE_WRITE_FAILED' };
+  if (api.kind === 'timeout' || api.kind === 'network_error') {
+    request.reason = apiFailureReason(api);
+  } else if (api.status === 200) {
+    const body = api.body as { status?: unknown; database?: unknown } | null;
+    request.api_ok = body?.status === 'ok';
+    request.database_ok = body?.database === 'ok' ? true : body?.database === 'error' ? false : null;
+    request.reason = request.api_ok && request.database_ok === true ? null : 'API_HTTP_NON_OK';
+  } else if (api.status === 503) {
+    request.database_ok = false;
+    request.reason = 'API_HTTP_503';
+  } else {
+    request.reason = apiFailureReason(api) ?? 'API_HTTP_NON_OK';
+  }
+  if (instrumentationDisabled(api)) request.reason = INSTRUMENTATION_DISABLED;
+  if (previewDate !== undefined) request.preview_date = previewDate;
+  return request;
+}
 
+function recordApiSample(diag: TelemetryDiagnostics, result: KpiSampleResponse): void {
+  diag.sample = {
+    outcome: result.sample.outcome,
+    inserted: result.sample.inserted,
+    reason: result.sample.reason,
+    result: result.sample.inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED',
+  };
+  diag.preview = { executed: result.preview.executed, skip_reason: result.preview.skip_reason };
+  if (result.preview.executed) diag.kpis = kpisOf(result.preview.results, 'preview');
+  diag.counts = result.counts;
+  diag.purge = result.purge;
+}
+
+async function runDirectSample(
+  ctx: RunContext,
+  request: KpiSampleRequest,
+  apiFailure: string | null,
+  store: () => TelemetryCliStore,
+): Promise<number> {
+  const db = await ctx.deps.probeDatabase(ctx.databaseUrl, DB_PROBE_TIMEOUT_MS);
+  const dbReason = dbFailureReason(db);
+  const disabled = request.reason === INSTRUMENTATION_DISABLED;
+  const sample: HealthSampleInput = {
+    environment: ctx.args.environment,
+    scheduledFor: new Date(request.scheduled_for),
+    measuredAt: new Date(request.measured_at),
+    apiOk: request.api_ok,
+    databaseOk: db === 'ok' ? (request.database_ok ?? true) : false,
+    outcome: request.api_ok === false || db !== 'ok' || request.database_ok === false
+      ? 'unhealthy'
+      : request.api_ok === null || request.database_ok === null
+        ? 'unknown'
+        : 'healthy',
+    reason: disabled ? INSTRUMENTATION_DISABLED : (request.reason ?? apiFailure ?? dbReason),
+  };
+  ctx.diag.sample = { outcome: sample.outcome, inserted: false, reason: sample.reason, result: 'SAMPLE_WRITE_FAILED' };
   try {
     const inserted = await store().insertHealthSample(sample);
-    diag.sample.inserted = inserted;
-    diag.sample.result = inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED';
+    ctx.diag.sample.inserted = inserted;
+    ctx.diag.sample.result = inserted ? 'SAMPLE_RECORDED' : 'SAMPLE_BUCKET_ALREADY_RECORDED';
   } catch {
-    diag.error_codes.push('SAMPLE_WRITE_FAILED');
+    ctx.diag.error_codes.push('SAMPLE_WRITE_FAILED');
     return EXIT_FAILURE;
   }
-  // Sin --date, un bucket repetido no rehace preview ni purga: ya los hizo la corrida original.
-  if (!diag.sample.inserted && args.date === undefined) {
-    diag.preview = { executed: false, skip_reason: 'SAMPLE_BUCKET_ALREADY_RECORDED' };
+  if (ctx.previewSkipReason !== null) {
+    ctx.diag.preview = { executed: false, skip_reason: ctx.previewSkipReason };
     return EXIT_OK;
   }
-
-  if (ctx.previewSkipReason !== null) {
-    diag.preview = { executed: false, skip_reason: ctx.previewSkipReason };
-  } else {
-    try {
-      const run = await new TelemetrySnapshotService(store(), deps.clock).preview(ctx.cut);
-      diag.preview = { executed: true, skip_reason: null };
-      recordRun(diag, run, 'preview');
-    } catch (error) {
-      diag.error_codes.push(errorCodeOf(error, 'PREVIEW_FAILED'));
-      return EXIT_FAILURE;
-    }
-  }
-
-  const cutoff = computePurgeCutoff(now);
-  if (cutoff === null) return EXIT_OK;
-  diag.purge = { executed: true, cutoff: cutoff.date, deleted: null };
   try {
-    const result = await runPurge(store(), args.environment, cutoff);
-    diag.purge.deleted = result.deleted;
-  } catch {
-    diag.error_codes.push('PURGE_FAILED');
+    const run = await new TelemetrySnapshotService(store(), ctx.deps.clock).preview(ctx.cut);
+    ctx.diag.preview = { executed: true, skip_reason: null };
+    recordRun(ctx.diag, run, 'preview');
+  } catch (error) {
+    ctx.diag.error_codes.push(errorCodeOf(error, 'PREVIEW_FAILED'));
     return EXIT_FAILURE;
   }
-  return EXIT_OK;
+  const cutoff = computePurgeCutoff(ctx.now);
+  if (cutoff === null) return EXIT_OK;
+  ctx.diag.purge = { executed: true, cutoff: cutoff.date, deleted: null };
+  try {
+    ctx.diag.purge.deleted = (await runPurge(store(), ctx.args.environment, cutoff)).deleted;
+    return EXIT_OK;
+  } catch {
+    ctx.diag.error_codes.push('PURGE_FAILED');
+    return EXIT_FAILURE;
+  }
+}
+
+async function runSample(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
+  const healthUrl = `${ctx.apiBaseUrl.replace(/\/+$/, '')}/health`;
+  const api = await ctx.deps.probeApi(healthUrl, API_PROBE_TIMEOUT_MS);
+  const measuredAt = ctx.deps.clock();
+  const bucket = scheduledBucket(measuredAt);
+  ctx.diag.bucket = bucket.toISOString();
+  const sample = sampleRequest(api, measuredAt, bucket, ctx.args.date);
+
+  if (api.kind !== 'response') return runDirectSample(ctx, sample, apiFailureReason(api), store);
+  try {
+    const result = await ctx.deps.apiClient(ctx.apiBaseUrl, ctx.internalToken).sample(sample);
+    recordApiSample(ctx.diag, result);
+    return EXIT_OK;
+  } catch (error) {
+    if (!(error instanceof KpiTransportError)) {
+      ctx.diag.error_codes.push(errorCodeOf(error, 'API_SAMPLE_FAILED'));
+      return EXIT_FAILURE;
+    }
+    return runDirectSample(ctx, sample, null, store);
+  }
 }
 
 async function runFinalize(ctx: RunContext, store: () => TelemetryCliStore): Promise<number> {
   try {
-    const run = await new TelemetrySnapshotService(store(), ctx.deps.clock).finalizeCore(ctx.cut);
-    ctx.diag.reused = run.reused;
-    recordRun(ctx.diag, run, 'final');
+    const result = await ctx.deps.apiClient(ctx.apiBaseUrl, ctx.internalToken).finalize(ctx.cut.date, ctx.args.environment);
+    ctx.diag.reused = result.reused;
+    ctx.diag.kpis = kpisOf(result.results, 'final');
+    ctx.diag.counts = result.aggregates ? countsOf(result.aggregates) : null;
     return EXIT_OK;
   } catch (error) {
-    ctx.diag.error_codes.push(errorCodeOf(error, 'FINALIZE_FAILED'));
-    return EXIT_FAILURE;
+    if (!(error instanceof KpiTransportError)) {
+      ctx.diag.error_codes.push(errorCodeOf(error, 'FINALIZE_FAILED'));
+      return EXIT_FAILURE;
+    }
+    try {
+      const run = await new TelemetrySnapshotService(store(), ctx.deps.clock).finalizeCore(ctx.cut);
+      ctx.diag.reused = run.reused;
+      recordRun(ctx.diag, run, 'final');
+      return EXIT_OK;
+    } catch (fallbackError) {
+      ctx.diag.error_codes.push(errorCodeOf(fallbackError, 'FINALIZE_FAILED'));
+      return EXIT_FAILURE;
+    }
   }
 }
 
@@ -355,6 +432,10 @@ export async function runTelemetryCli(
       try {
         await deps.writeDiagnostics(diagnosticsDir, diag);
       } catch {
+        diag.error_codes.push('DIAGNOSTICS_WRITE_FAILED');
+        diag.exit_code = EXIT_FAILURE;
+        exitCode = EXIT_FAILURE;
+        console.error('KPI_DIAGNOSTICS_WRITE_FAILED');
         // Un fallo al escribir el diagnóstico no cambia el código de salida.
       }
     }
@@ -414,6 +495,7 @@ export function createDefaultDeps(): TelemetryCliDeps {
     clock: () => new Date(),
     probeApi: probeApiHealth,
     probeDatabase: probeDatabaseHealth,
+    apiClient: (baseUrl, token) => new KpiApiClient(baseUrl, token),
     openStore: createReportingStore,
     writeDiagnostics: writeDiagnosticsFile,
   };

@@ -6,10 +6,13 @@ import type { KpiConfig } from './config/kpi-config';
 import { KpiDependencyInstrumentation } from './dependencies/dependency-instrumentation';
 import { createKpiPrismaClient, disposeKpiPrismaClient } from './db/kpi-prisma';
 import { createReportingStore } from './db/kpi-reporting-store';
+import type { TelemetryCliStore } from './db/kpi-reporting-store';
 import { KPI_DRAIN_TIMEOUT_MS, NoopKpiEventWriter, PrismaKpiEventWriter } from './events/kpi-event-writer';
 import type { KpiEventWriter } from './events/kpi-event-writer';
 import { PgDbHealthProbe } from './health/db-health-probe';
 import { HealthController } from './health/health.controller';
+import { KpiTelemetryController } from './kpi-telemetry.controller';
+import { KpiInternalAuthGuard } from './kpi-internal-auth.guard';
 import { KpiHttpMiddleware } from './http/kpi-http.middleware';
 import {
   DB_HEALTH_PROBE,
@@ -42,7 +45,7 @@ function kpiEventWriterFactory(config: KpiConfig): KpiEventWriter {
   return new PrismaKpiEventWriter(handle.prisma, () => disposeKpiPrismaClient(handle));
 }
 
-type ReportingStore = SnapshotStore & { close(): Promise<void> };
+type ReportingStore = TelemetryCliStore & SnapshotStore;
 
 function reportingStoreFactory(): ReportingStore {
   const databaseUrl = process.env.DATABASE_URL;
@@ -50,6 +53,8 @@ function reportingStoreFactory(): ReportingStore {
     // Sin DB: collect traduce la falla a SOURCE_UNAVAILABLE.
     return {
       transaction: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
+      insertHealthSample: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
+      purgeBatch: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
       close: async () => undefined,
     };
   }
@@ -58,7 +63,7 @@ function reportingStoreFactory(): ReportingStore {
 
 @Global()
 @Module({
-  controllers: [HealthController],
+  controllers: [HealthController, KpiTelemetryController],
   providers: [
     { provide: KPI_CONFIG, useFactory: kpiConfigFactory },
     { provide: KPI_EVENT_WRITER, useFactory: kpiEventWriterFactory, inject: [KPI_CONFIG] },
@@ -69,6 +74,7 @@ function reportingStoreFactory(): ReportingStore {
     },
     { provide: DB_HEALTH_PROBE, useFactory: () => new PgDbHealthProbe(process.env.DATABASE_URL) },
     KpiHttpMiddleware,
+    KpiInternalAuthGuard,
     { provide: KPI_REPORTING_STORE, useFactory: reportingStoreFactory },
     {
       provide: TelemetryLogger,
@@ -77,7 +83,7 @@ function reportingStoreFactory(): ReportingStore {
       inject: [KPI_REPORTING_STORE, KPI_CONFIG],
     },
   ],
-  exports: [KPI_CONFIG, KPI_EVENT_WRITER, DEPENDENCY_INSTRUMENTATION, TelemetryLogger],
+  exports: [KPI_CONFIG, KPI_EVENT_WRITER, DEPENDENCY_INSTRUMENTATION, TelemetryLogger, KpiInternalAuthGuard],
 })
 export class KpiModule implements NestModule, OnApplicationShutdown {
   constructor(

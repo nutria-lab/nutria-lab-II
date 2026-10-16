@@ -58,7 +58,7 @@ describeIfKpiDb('telemetry-cli (integración Postgres)', () => {
     };
   }
 
-  const env = (databaseUrl: string) => ({ KPI_ENV: 'dev', DATABASE_URL: databaseUrl, KPI_API_BASE_URL: API_BASE });
+  const env = (databaseUrl: string) => ({ KPI_ENV: 'dev', DATABASE_URL: databaseUrl, KPI_API_BASE_URL: API_BASE, KPI_INTERNAL_TOKEN: 'integration-token' });
   const sampleArgs = ['--mode', 'sample', '--environment', 'dev', '--diagnostics-out', '/tmp/kpi-it-diag'];
 
   async function count(sql: string, params: unknown[] = []): Promise<number> {

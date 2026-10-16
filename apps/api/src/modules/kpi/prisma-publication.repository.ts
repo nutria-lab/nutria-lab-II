@@ -6,6 +6,7 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import { canonicalPayloadBytes } from './kpi-batch';
 import type { FrozenBatch, Measurement } from './kpi-contract';
 import type { PublicationRecord, PublicationRepository, PublicationReservation, PublicationStatus } from './publication-repository.port';
+import { windowForDate } from './window/kpi-window';
 
 /**
  * Persistence adapter for the KpiPublication row introduced by NUT-85.
@@ -16,6 +17,7 @@ export class PrismaPublicationRepository implements PublicationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async reservePublication(reservation: PublicationReservation): Promise<PublicationRecord> {
+    const window = windowForDate(reservation.date);
     const existing = await this.prisma.kpiPublication.findFirst({
       where: { environment: reservation.environment, reportDate: reportDate(reservation.date) },
     });
@@ -27,8 +29,8 @@ export class PrismaPublicationRepository implements PublicationRepository {
           runId: reservation.runId,
           environment: reservation.environment,
           reportDate: reportDate(reservation.date),
-          windowStart: reportDate(reservation.date),
-          windowEnd: reportDate(reservation.date),
+          windowStart: window.start,
+          windowEnd: window.end,
           status: 'preparing',
           sourceCommit: reservation.sourceCommit,
           retryChainId: reservation.retryChainId,

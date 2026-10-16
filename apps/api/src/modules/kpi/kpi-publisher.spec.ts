@@ -63,6 +63,15 @@ async function frozenPublication(repository: FakePublicationRepository, status: 
 }
 
 describe('KpiPublisher', () => {
+  it('rejects a future cut before reserving the publication row', async () => {
+    const h = publisherHarness();
+    const reserve = jest.spyOn(h.repository, 'reservePublication');
+
+    await expect(h.publisher.publish({ ...h.request, date: '2026-10-10' })).rejects.toThrow();
+
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
   it('freshly collects, freezes durably, posts the exact frozen bytes, accepts, verifies MATCH, and delivers', async () => {
     const { publisher, repository, logger, remoteClient, request } = publisherHarness();
 

@@ -6,7 +6,6 @@ import { HEALTH_DB_TIMEOUT_MS } from '../health/db-health-probe';
 import type { DbHealthProbe } from '../health/db-health-probe';
 import { HealthController } from '../health/health.controller';
 
-const TTL_MS = 5000;
 const OK_BODY = { status: 'ok', database: 'ok' };
 const ERROR_BODY = { status: 'error', database: 'error' };
 const ENABLED: KpiConfig = { enabled: true, environment: 'dev', disabledReason: null };
@@ -73,7 +72,7 @@ async function checkWithHeaders(controller: HealthController) {
   return { status: res.statusCode, body, instrumentation: res.headers['x-kpi-instrumentation'] };
 }
 
-describe('GET /health — single-flight y ventana corta de reutilización', () => {
+describe('GET /health — single-flight sin cachear resultados terminados', () => {
   let spies: jest.SpyInstance[] = [];
 
   beforeEach(() => {
@@ -89,8 +88,8 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     jest.useRealTimers();
   });
 
-  it('constante de la ventana: HEALTH_RESULT_TTL_MS = 5000 ms; el límite de la sonda sigue en 2 s', () => {
-    expect((probeModule as Record<string, unknown>).HEALTH_RESULT_TTL_MS).toBe(TTL_MS);
+  it('no exporta una ventana de cache; el límite de la sonda sigue en 2 s', () => {
+    expect(probeModule).not.toHaveProperty('HEALTH_RESULT_TTL_MS');
     expect(HEALTH_DB_TIMEOUT_MS).toBe(2000);
   });
 
@@ -110,23 +109,18 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     for (const result of results) expect(result).toEqual({ status: 200, body: OK_BODY });
   });
 
-  it('un ok se reutiliza dentro de la ventana y se vuelve a sondear al vencer', async () => {
+  it('vuelve a consultar la DB en cada petición no concurrente', async () => {
     const probe: DbHealthProbe = { ping: jest.fn(async () => undefined) };
     const controller = new HealthController(probe, ENABLED);
 
     expect(await check(controller)).toEqual({ status: 200, body: OK_BODY });
     expect(probe.ping).toHaveBeenCalledTimes(1);
 
-    await jest.advanceTimersByTimeAsync(TTL_MS - 100);
-    expect(await check(controller)).toEqual({ status: 200, body: OK_BODY });
-    expect(probe.ping).toHaveBeenCalledTimes(1);
-
-    await jest.advanceTimersByTimeAsync(200);
     expect(await check(controller)).toEqual({ status: 200, body: OK_BODY });
     expect(probe.ping).toHaveBeenCalledTimes(2);
   });
 
-  it('un fallo se reutiliza como 503 sólo dentro de la ventana; después se reintenta y puede volver a 200', async () => {
+  it('una falla no se cachea: la petición siguiente observa la recuperación', async () => {
     const ping = jest
       .fn<Promise<void>, []>()
       .mockRejectedValueOnce(Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' }))
@@ -134,16 +128,11 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     const controller = new HealthController({ ping }, ENABLED);
 
     expect(await check(controller)).toEqual({ status: 503, body: ERROR_BODY });
-    await jest.advanceTimersByTimeAsync(1000);
-    expect(await check(controller)).toEqual({ status: 503, body: ERROR_BODY });
-    expect(ping).toHaveBeenCalledTimes(1);
-
-    await jest.advanceTimersByTimeAsync(TTL_MS);
     expect(await check(controller)).toEqual({ status: 200, body: OK_BODY });
     expect(ping).toHaveBeenCalledTimes(2);
   });
 
-  it('sonda colgada: requests concurrentes comparten el 503 a los 2 s y, vencida la ventana, se sondea de nuevo', async () => {
+  it('sonda colgada: requests concurrentes comparten el 503; una petición posterior vuelve a sondear', async () => {
     const ping = jest
       .fn<Promise<void>, []>()
       .mockImplementationOnce(() => new Promise<void>(() => undefined))
@@ -160,7 +149,6 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     expect(await second).toEqual({ status: 503, body: ERROR_BODY });
     expect(ping).toHaveBeenCalledTimes(1);
 
-    await jest.advanceTimersByTimeAsync(TTL_MS + 100);
     expect(await check(controller)).toEqual({ status: 200, body: OK_BODY });
     expect(ping).toHaveBeenCalledTimes(2);
   });
@@ -182,17 +170,17 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     expect(await late).toEqual({ status: 503, body: ERROR_BODY });
   });
 
-  it('instrumentación apagada: la respuesta fresca y la reutilizada llevan X-KPI-Instrumentation: disabled', async () => {
+  it('instrumentación apagada mantiene X-KPI-Instrumentation: disabled en cada sonda', async () => {
     const probe: DbHealthProbe = { ping: jest.fn(async () => undefined) };
     const controller = new HealthController(probe, DISABLED);
 
     expect(await checkWithHeaders(controller)).toEqual({ status: 200, body: OK_BODY, instrumentation: 'disabled' });
     await jest.advanceTimersByTimeAsync(100);
     expect(await checkWithHeaders(controller)).toEqual({ status: 200, body: OK_BODY, instrumentation: 'disabled' });
-    expect(probe.ping).toHaveBeenCalledTimes(1);
+    expect(probe.ping).toHaveBeenCalledTimes(2);
   });
 
-  it('instrumentación habilitada: 200 y 503 (también reutilizado) llevan X-KPI-Instrumentation: enabled', async () => {
+  it('instrumentación habilitada mantiene X-KPI-Instrumentation: enabled en cada sonda', async () => {
     const ping = jest
       .fn<Promise<void>, []>()
       .mockRejectedValueOnce(new Error('ECONNREFUSED'))
@@ -200,8 +188,7 @@ describe('GET /health — single-flight y ventana corta de reutilización', () =
     const controller = new HealthController({ ping }, ENABLED);
 
     expect(await checkWithHeaders(controller)).toEqual({ status: 503, body: ERROR_BODY, instrumentation: 'enabled' });
-    expect(await checkWithHeaders(controller)).toEqual({ status: 503, body: ERROR_BODY, instrumentation: 'enabled' });
-    await jest.advanceTimersByTimeAsync(TTL_MS + 100);
     expect(await checkWithHeaders(controller)).toEqual({ status: 200, body: OK_BODY, instrumentation: 'enabled' });
+    expect(ping).toHaveBeenCalledTimes(2);
   });
 });

@@ -83,8 +83,10 @@ jobs:
         name: Retry the same frozen KPI batch
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          KPI_INTERNAL_TOKEN: ${{ secrets.KPI_INTERNAL_TOKEN }}
           PROJECT_KEY: ${{ secrets.PROJECT_KEY }}
           SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           KPI_API_BASE_URL: ${{ vars.KPI_API_BASE_URL }}
           KPI_ENV: ${{ vars.KPI_ENV }}
           KPI_ARTIFACT_DIR: ${{ runner.temp }}/kpi-publication
