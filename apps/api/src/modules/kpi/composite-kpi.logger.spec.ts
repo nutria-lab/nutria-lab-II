@@ -1,6 +1,7 @@
 import { CompositeKpiLogger } from './composite-kpi.logger';
 import type { CollectionContext, KpiId, KpiResult } from './kpi-contract';
 import { TelemetryLogger } from './telemetry-logger';
+import { sampleAggregates } from './tests/telemetry-fakes.fixture';
 
 const context: CollectionContext = {
   contract_version: '1',
@@ -64,29 +65,22 @@ describe('CompositeKpiLogger', () => {
   });
 
   it('composes the NUT-85 TelemetryLogger implementation with the business logger', async () => {
-    const core = {
-      finalizeCore: jest.fn().mockResolvedValue({
-        results: telemetryIds.map((id) => observed(id)),
-        reused: false,
-        aggregates: null,
-      }),
-      readCompleteFinals: jest.fn(),
-    };
-    const telemetry = new TelemetryLogger(core, { environment: 'qa' }, () => new Date('2026-10-10T00:00:01.000Z'));
+    const reader = { loadAggregates: jest.fn(async () => sampleAggregates(new Date(context.window_end))) };
+    const telemetry = new TelemetryLogger(reader, { environment: 'qa' }, () => new Date('2026-10-10T00:00:01.000Z'));
     const data = loggerFor(dataIds.map((id) => observed(id)));
 
     const results = await new CompositeKpiLogger(telemetry, data).collect(context);
 
     expect(results).toHaveLength(10);
     expect(results.map((result) => result.kpi_id)).toEqual([...telemetryIds, ...dataIds].sort());
-    expect(core.finalizeCore).toHaveBeenCalledTimes(1);
+    expect(reader.loadAggregates).toHaveBeenCalledTimes(1);
   });
 
   it('maps an expected telemetry source failure to all eight unavailable technical IDs while retaining observed business values', async () => {
     const telemetry = { collect: jest.fn().mockRejectedValue({ code: 'SOURCE_UNAVAILABLE' }) };
     const data = loggerFor(dataIds.map((id) => observed(id, 0)));
 
-    await expect(new CompositeKpiLogger(telemetry, data).collect(context)).resolves.toEqual([
+    await expect(new CompositeKpiLogger(telemetry, data, () => new Date(context.window_end)).collect(context)).resolves.toEqual([
       ...telemetryIds.map((id) => unavailable(id)),
       ...dataIds.map((id) => observed(id, 0)),
     ].sort((left, right) => left.kpi_id.localeCompare(right.kpi_id)));
@@ -96,7 +90,7 @@ describe('CompositeKpiLogger', () => {
     const telemetry = loggerFor(telemetryIds.map((id) => observed(id, 0)));
     const data = { collect: jest.fn().mockRejectedValue({ code: 'SOURCE_UNAVAILABLE' }) };
 
-    await expect(new CompositeKpiLogger(telemetry, data).collect(context)).resolves.toEqual([
+    await expect(new CompositeKpiLogger(telemetry, data, () => new Date(context.window_end)).collect(context)).resolves.toEqual([
       ...telemetryIds.map((id) => observed(id, 0)),
       ...dataIds.map((id) => unavailable(id)),
     ].sort((left, right) => left.kpi_id.localeCompare(right.kpi_id)));

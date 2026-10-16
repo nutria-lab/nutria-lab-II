@@ -32,6 +32,7 @@ describe('publication artifacts', () => {
     const artifacts = buildPublicationArtifacts({
       frozenPayload: payload,
       runId: 'run-86', date: '2026-10-09', environment: 'prod', payloadSha256: 'a'.repeat(64),
+      windowStart: '2026-10-09T03:00:00.000Z', windowEnd: '2026-10-10T00:00:00.000Z',
       diagnostics: [{ kpi_id: 'operations_count', quality: 'observed', reason: null, sample_count: 0 }],
       postAccepted: true, status: 'verify_pending', failureCode: null,
       retry: { retryChainId: 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4', attempt: 1 },
@@ -42,6 +43,8 @@ describe('publication artifacts', () => {
     expect(artifacts['payload.json']).toEqual(payload);
     const diagnostics = artifacts['diagnostics.json'].toString('utf8');
     expect(diagnostics).toContain('"post_accepted":true');
+    expect(diagnostics).toContain('"window_start":"2026-10-09T03:00:00.000Z"');
+    expect(diagnostics).toContain('"sample_count":0');
     expect(diagnostics).not.toMatch(/PROJECT_KEY|Authorization|fixture-token|fixture-project-key/i);
   });
 });

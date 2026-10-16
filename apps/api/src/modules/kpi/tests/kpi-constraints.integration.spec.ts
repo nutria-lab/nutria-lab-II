@@ -301,7 +301,7 @@ describeIfKpiDb('NUT-85 A2 — CHECK y UNIQUE de las tablas kpi_ sobre Postgres 
   beforeAll(async () => {
     expect(findKpiMigrationDirs()).toHaveLength(1);
     db = await createDisposableSchema();
-    await applyMigrations(db.client);
+    await applyMigrations(db.client, { upTo: findKpiMigrationDirs()[0] });
   });
 
   afterAll(async () => {

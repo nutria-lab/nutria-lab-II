@@ -163,7 +163,7 @@ describeIfKpiDb('NUT-85 A2/A4 — migración sobre Postgres desechable', () => {
     beforeAll(async () => {
       expect(findKpiMigrationDirs()).toHaveLength(1);
       db = await createDisposableSchema();
-      await applyMigrations(db.client);
+      await applyMigrations(db.client, { upTo: findKpiMigrationDirs()[0] });
       indexes = (await db.client.query<IndexRow>(INDEX_INFO_SQL, [db.schema])).rows;
     });
 
@@ -309,7 +309,7 @@ describeIfKpiDb('NUT-85 A2/A4 — migración sobre Postgres desechable', () => {
       expect(before['count:recipes']).toBe('2');
       expect(before['count:meal_plans']).toBe('1');
 
-      const applied = await applyMigrations(db.client, { after: PRE_KPI_BASELINE_MIGRATION });
+      const applied = await applyMigrations(db.client, { after: PRE_KPI_BASELINE_MIGRATION, upTo: findKpiMigrationDirs()[0] });
       expect(applied).toEqual(findKpiMigrationDirs());
 
       const after = await snapshotBusiness();

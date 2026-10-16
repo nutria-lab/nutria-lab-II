@@ -30,6 +30,10 @@ describe('KPI publication workflows', () => {
     expect(content).toMatch(/workflow_dispatch:/);
     expect(content).toMatch(/date:\s*[\s\S]*environment:/);
     expect(content).toMatch(/date:\s*[\s\S]*?required:\s*true\s*[\s\S]*?type:\s*string/);
+    expect(content).toMatch(/github\.event\.repository\.default_branch/);
+    expect(content).toContain('git rev-parse HEAD');
+    expect(content).toMatch(/LOCAL_HOUR[\s\S]*10#\$LOCAL_HOUR\s*<\s*21[\s\S]*date\s+-d\s+'yesterday'/);
+    expect(content).toContain('Prepare diagnostic artifact directory');
     expectCommonSafetyGuards(content, 10);
   });
 
@@ -38,6 +42,7 @@ describe('KPI publication workflows', () => {
 
     expect(content).toMatch(/pnpm\s+--filter\s+api\s+kpi:publish\s+--date\s+["']?\$REPORT_DATE["']?\s+--environment\s+["']?\$TARGET_ENV["']?/);
     expect(content).toContain('kpi-retry.yml');
+    expect(content).toContain('ref: process.env.SOURCE_COMMIT');
     expect(content).toContain("attempt: '1'");
     expect(content).toMatch(/outcome\.post_accepted\s*\|\|\s*!outcome\.retryable/);
     expect(content).toMatch(/Fail the initial publication[\s\S]*exit\s+["']?\$CLI_EXIT["']?/);
@@ -54,6 +59,10 @@ describe('KPI publication workflows', () => {
     expect(content).toMatch(/Validate retry identity/);
     expect(content).toMatch(/SOURCE_COMMIT/);
     expect(content).toMatch(/git cat-file -e/);
+    expect(content).toMatch(/git merge-base --is-ancestor/);
+    expect(content).toMatch(/git checkout --detach/);
+    expect(content).toMatch(/manual_recovery:/);
+    expect(content).toMatch(/MANUAL_RECOVERY/);
     expect(content).toMatch(/\[\[\s*["']?\$ATTEMPT["']?\s*==\s*["']1["']\s*\|\|\s*["']?\$ATTEMPT["']?\s*==\s*["']2["']/);
     expect(content).toMatch(/base\s*=\s*300/);
     expect(content).toMatch(/base\s*=\s*600/);
@@ -71,7 +80,9 @@ describe('KPI publication workflows', () => {
 
     expect(scripts['kpi:publish']).toBe('tsx scripts/kpi/publish.ts');
     expect(scripts['kpi:retry']).toBe('tsx scripts/kpi/retry.ts');
+    expect(scripts['kpi:catalog']).toBe('tsx scripts/kpi/catalog.ts');
     expect(existsSync(resolve(__dirname, '../../../scripts/kpi/publish.ts'))).toBe(true);
     expect(existsSync(resolve(__dirname, '../../../scripts/kpi/retry.ts'))).toBe(true);
+    expect(existsSync(resolve(__dirname, '../../../scripts/kpi/catalog.ts'))).toBe(true);
   });
 });

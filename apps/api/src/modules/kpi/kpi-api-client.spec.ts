@@ -78,11 +78,34 @@ describe('KpiApiClient', () => {
     }));
   });
 
+  it('starts manual recovery on the existing publication without creating a new run ID', async () => {
+    const { frozenPayload: _unused, ...dto } = publication();
+    const fetcher = jest.fn(async () => new Response(JSON.stringify(dto), { status: 200 }));
+    const client = new KpiApiClient('https://nutria.example/', 'internal-secret', 1000, fetcher);
+    const input = {
+      environment: 'dev' as const,
+      date: '2026-10-12',
+      runId: context.run_id,
+      sourceCommit: 'a'.repeat(40),
+      retryChainId: reservation.retryChainId,
+    };
+
+    await expect(client.beginManualRecovery(input)).resolves.toMatchObject({ runId: context.run_id });
+    expect(fetcher).toHaveBeenCalledWith('https://nutria.example/kpi/publications/manual-recovery', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        environment: input.environment,
+        date: input.date,
+        run_id: input.runId,
+        source_commit: input.sourceCommit,
+        retry_chain_id: input.retryChainId,
+      }),
+    }));
+  });
+
   it('validates health sample endpoint response shape before accepting it', async () => {
     const sampleResponse = {
       sample: { outcome: 'healthy', inserted: true, reason: null },
-      preview: { executed: true, skip_reason: null, reused: false, results: results().slice(0, 8) },
-      counts: { http_terminal: 3, http_pending_incomplete: 0, dependency_attempts: 1, health_samples: 1 },
       purge: { executed: false, cutoff: null, deleted: null },
     };
     const fetcher = jest.fn(async () => new Response(JSON.stringify(sampleResponse), { status: 200 }));
@@ -106,36 +129,6 @@ describe('KpiApiClient', () => {
       code: 'KPI_API_HTTP_ERROR',
     });
     expect(fallback.collect).not.toHaveBeenCalled();
-  });
-
-  it('extracts only a safe technical error code from a non-2xx response body', async () => {
-    const fetcher = jest.fn(async () => new Response(JSON.stringify({
-      code: 'ACCESS_GATE_REQUIRED',
-      message: 'Do not include this message in diagnostics.',
-    }), { status: 401 }));
-    const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
-
-    await expect(client.sample({
-      scheduled_for: '2026-10-12T15:30:00.000Z', measured_at: '2026-10-12T15:47:12.345Z',
-      api_ok: true, database_ok: true, reason: null,
-    })).rejects.toMatchObject({
-      status: 401,
-      code: 'KPI_API_HTTP_ERROR',
-      remoteCode: 'ACCESS_GATE_REQUIRED',
-    });
-  });
-
-  it('ignores unsafe or non-technical error details from a non-2xx response body', async () => {
-    const fetcher = jest.fn(async () => new Response(JSON.stringify({
-      code: 'raw response includes private data',
-      message: 'Do not include this message in diagnostics.',
-    }), { status: 401 }));
-    const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
-
-    await expect(client.sample({
-      scheduled_for: '2026-10-12T15:30:00.000Z', measured_at: '2026-10-12T15:47:12.345Z',
-      api_ok: true, database_ok: true, reason: null,
-    })).rejects.toMatchObject({ status: 401, remoteCode: null });
   });
 
   it('uses the DB-backed logger only when no HTTP response arrives', async () => {
@@ -195,6 +188,7 @@ describe('ApiFirstPublicationRepository', () => {
       getPublication: jest.fn(async (_environment: KpiEnvironment, _date: string) => publication()),
       freezeBatchConditionally: jest.fn(async (_runId: string, _batch: FrozenBatch, _payload: Buffer) => ({ won: true, publication: publication() })),
       claimAttempt: jest.fn(async (_retryChainId: string, _attempt: number) => ({ claimed: true })),
+      beginManualRecovery: jest.fn(async (_input) => publication()),
       markAccepted: jest.fn(async (_runId: string, _acceptedAt: string) => undefined),
       markDelivered: jest.fn(async (_runId: string, _deliveredAt: string) => undefined),
       markFailed: jest.fn(async (_runId: string, _failureCode: string) => undefined),

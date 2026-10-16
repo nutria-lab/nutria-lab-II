@@ -82,13 +82,52 @@ export class PrismaPublicationRepository implements PublicationRepository {
       where: {
         retryChainId,
         attemptCount: attempt - 1,
-        status: { in: ['frozen', 'failed'] },
+        status: { in: ['preparing', 'frozen', 'failed'] },
         acceptedAt: null,
         deliveredAt: null,
       },
       data: { attemptCount: { increment: 1 }, updatedAt: new Date() },
     });
     return { claimed: result.count === 1 };
+  }
+
+  async beginManualRecovery(input: {
+    environment: PublicationReservation['environment'];
+    date: string;
+    runId: string;
+    sourceCommit: string;
+    retryChainId: string;
+  }): Promise<PublicationRecord> {
+    const publication = await this.getPublication(input.environment, input.date);
+    if (publication.runId !== input.runId || publication.sourceCommit !== input.sourceCommit || publication.acceptedAt || publication.deliveredAt) {
+      throw new Error('KPI_MANUAL_RECOVERY_IDENTITY_MISMATCH');
+    }
+    if (publication.retryChainId === input.retryChainId && (publication.status === 'preparing' || publication.status === 'frozen')) {
+      return publication;
+    }
+    if (publication.status !== 'failed') throw new Error('KPI_MANUAL_RECOVERY_NOT_FAILED');
+
+    const nextStatus = publication.frozenBatch ? 'frozen' : 'preparing';
+    const updated = await this.prisma.kpiPublication.updateMany({
+      where: {
+        runId: publication.runId,
+        retryChainId: publication.retryChainId,
+        attemptCount: publication.attemptCount,
+        status: 'failed',
+        acceptedAt: null,
+        deliveredAt: null,
+      },
+      data: {
+        retryChainId: input.retryChainId,
+        attemptCount: 0,
+        status: nextStatus,
+        lastError: null,
+        updatedAt: new Date(),
+      },
+    });
+    const recovered = await this.getPublication(input.environment, input.date);
+    if (updated.count === 1 || recovered.retryChainId === input.retryChainId) return recovered;
+    throw new Error('KPI_MANUAL_RECOVERY_RACE_LOST');
   }
 
   async markAccepted(runId: string, acceptedAt: string): Promise<void> {
@@ -107,7 +146,7 @@ export class PrismaPublicationRepository implements PublicationRepository {
 
   async markFailed(runId: string, failureCode: string): Promise<void> {
     await this.prisma.kpiPublication.updateMany({
-      where: { runId, acceptedAt: null, deliveredAt: null },
+      where: { runId, deliveredAt: null },
       data: { status: 'failed', lastError: failureCode, updatedAt: new Date() },
     });
   }

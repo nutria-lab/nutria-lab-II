@@ -70,20 +70,44 @@ describe('PrismaPublicationRepository (NUT-85 adapter)', () => {
     expect(prisma.kpiPublication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         retryChainId: 'f2b8d1ab-a737-4191-9a19-22a1f4d4ab6d', attemptCount: 1,
-        status: { in: ['frozen', 'failed'] }, acceptedAt: null, deliveredAt: null,
+        status: { in: ['preparing', 'frozen', 'failed'] }, acceptedAt: null, deliveredAt: null,
       }),
       data: expect.objectContaining({ attemptCount: { increment: 1 } }),
     }));
   });
 
-  it('never transitions an accepted row back to failed', async () => {
-    const prisma = prismaMock({ updateMany: jest.fn().mockResolvedValue({ count: 0 }) });
+  it('starts an explicit manual recovery with a new chain while retaining run_id and frozen bytes', async () => {
+    const nextChainId = '2a6557ab-24b8-4fa1-93ae-3b2d1b5d2fd2';
+    const failed = row({ status: 'failed', attemptCount: 3, lastError: 'REMOTE_POST_ERROR' });
+    const recovered = row({ status: 'frozen', attemptCount: 0, retryChainId: nextChainId, lastError: null });
+    const prisma = prismaMock({
+      findFirst: jest.fn().mockResolvedValueOnce(failed).mockResolvedValueOnce(recovered),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    });
     const repository = new PrismaPublicationRepository(prisma as never);
 
-    await repository.markFailed('cbd79c1e-0f46-4e5a-b86b-02d354277791', 'REMOTE_POST_ERROR');
+    const result = await repository.beginManualRecovery({
+      environment: 'dev', date: '2026-10-09', runId: failed.runId, sourceCommit: failed.sourceCommit,
+      retryChainId: nextChainId,
+    });
+
+    expect(result).toMatchObject({ runId: failed.runId, retryChainId: nextChainId, attemptCount: 0, status: 'frozen' });
+    expect(result.frozenPayload).toEqual(payload);
+    expect(prisma.kpiPublication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ runId: failed.runId, status: 'failed', attemptCount: 3, acceptedAt: null }),
+      data: expect.objectContaining({ retryChainId: nextChainId, attemptCount: 0, status: 'frozen', lastError: null }),
+    }));
+  });
+
+  it('records a post-accepted remote conflict as failed while preserving its acceptance timestamp', async () => {
+    const prisma = prismaMock({ updateMany: jest.fn().mockResolvedValue({ count: 1 }) });
+    const repository = new PrismaPublicationRepository(prisma as never);
+
+    await repository.markFailed('cbd79c1e-0f46-4e5a-b86b-02d354277791', 'REMOTE_VALUE_CONFLICT');
 
     expect(prisma.kpiPublication.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ acceptedAt: null, deliveredAt: null }),
+      where: expect.objectContaining({ runId: 'cbd79c1e-0f46-4e5a-b86b-02d354277791', deliveredAt: null }),
+      data: expect.objectContaining({ status: 'failed', lastError: 'REMOTE_VALUE_CONFLICT' }),
     }));
   });
 });

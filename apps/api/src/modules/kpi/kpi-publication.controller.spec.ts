@@ -60,6 +60,7 @@ function setup() {
     getPublication: jest.fn(async (_environment: KpiEnvironment, _date: string) => publication()),
     freezeBatchConditionally: jest.fn(async (_runId: string, _batch: FrozenBatch, _payload: Buffer) => ({ won: true, publication: publication({ frozenBatch: batch }) })),
     claimAttempt: jest.fn(async (_retryChainId: string, _attempt: number) => ({ claimed: true })),
+    beginManualRecovery: jest.fn(async (_input) => publication()),
     markAccepted: jest.fn(async (_runId: string, _acceptedAt: string) => undefined),
     markDelivered: jest.fn(async (_runId: string, _deliveredAt: string) => undefined),
     markFailed: jest.fn(async (_runId: string, _failureCode: string) => undefined),
@@ -115,5 +116,20 @@ describe('KpiPublicationController', () => {
 
     expect(repository.freezeBatchConditionally).not.toHaveBeenCalled();
     expect(repository.markFailed).not.toHaveBeenCalled();
+  });
+
+  it('accepts an explicit recovery request without changing the measurement context', async () => {
+    const { repository, controller } = setup();
+    const nextChainId = '2a6557ab-24b8-4fa1-93ae-3b2d1b5d2fd2';
+
+    await controller.manualRecovery({
+      environment: 'dev', date: context.date, run_id: context.run_id,
+      source_commit: 'a'.repeat(40), retry_chain_id: nextChainId,
+    });
+
+    expect(repository.beginManualRecovery).toHaveBeenCalledWith({
+      environment: 'dev', date: context.date, runId: context.run_id,
+      sourceCommit: 'a'.repeat(40), retryChainId: nextChainId,
+    });
   });
 });

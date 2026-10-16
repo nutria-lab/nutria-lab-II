@@ -21,8 +21,6 @@ import {
   KPI_EVENT_WRITER,
   KPI_REPORTING_STORE,
 } from './kpi.tokens';
-import { TelemetrySnapshotService } from './snapshots/telemetry-snapshot.service';
-import type { SnapshotStore } from './snapshots/telemetry-snapshot.service';
 import { TelemetryLogger } from './telemetry-logger';
 
 const logger = new Logger('KpiModule');
@@ -45,14 +43,14 @@ function kpiEventWriterFactory(config: KpiConfig): KpiEventWriter {
   return new PrismaKpiEventWriter(handle.prisma, () => disposeKpiPrismaClient(handle));
 }
 
-type ReportingStore = TelemetryCliStore & SnapshotStore;
+type ReportingStore = TelemetryCliStore;
 
 function reportingStoreFactory(): ReportingStore {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     // Sin DB: collect traduce la falla a SOURCE_UNAVAILABLE.
     return {
-      transaction: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
+      loadAggregates: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
       insertHealthSample: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
       purgeBatch: () => Promise.reject(new Error('KPI_DATABASE_URL_MISSING')),
       close: async () => undefined,
@@ -79,7 +77,7 @@ function reportingStoreFactory(): ReportingStore {
     {
       provide: TelemetryLogger,
       useFactory: (store: ReportingStore, config: KpiConfig) =>
-        new TelemetryLogger(new TelemetrySnapshotService(store, () => new Date()), config),
+        new TelemetryLogger(store, config),
       inject: [KPI_REPORTING_STORE, KPI_CONFIG],
     },
   ],

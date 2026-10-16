@@ -100,10 +100,17 @@ describe('KpiPublisher', () => {
     const { publisher, repository, logger, remoteClient, request } = publisherHarness();
     await frozenPublication(repository as FakePublicationRepository, status);
 
-    await publisher.publish(request);
+    const result = await publisher.publish(request);
 
     expect(logger.collect).not.toHaveBeenCalled();
     expect(remoteClient.post).not.toHaveBeenCalled();
+    if (status === 'accepted') {
+      expect(remoteClient.verify).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ status: 'delivered', postAccepted: true });
+    } else {
+      expect(remoteClient.verify).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ status: 'delivered', postAccepted: true });
+    }
   });
 
   it('never posts when durable freeze fails, and loses a concurrent freeze race to the authoritative batch', async () => {
@@ -213,6 +220,23 @@ describe('KpiPublisher', () => {
     expect(remoteClient.post).toHaveBeenCalledTimes(1);
   });
 
+  it('records an accepted POST with a conflicting GET as terminal failed and never permits retry', async () => {
+    const repository = new FakePublicationRepository();
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 201 }),
+      verify: jest.fn().mockResolvedValue({ kind: 'conflict', status: 200 }),
+    };
+    const { publisher, request } = publisherHarness({ repository, remoteClient });
+
+    await expect(publisher.publish(request)).resolves.toMatchObject({
+      status: 'failed', postAccepted: true, failureCode: 'REMOTE_VALUE_CONFLICT',
+    });
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({
+      status: 'failed', acceptedAt: expect.any(String), failureCode: 'REMOTE_VALUE_CONFLICT',
+    });
+    expect(remoteClient.post).toHaveBeenCalledTimes(1);
+  });
+
   it('skips a duplicate retry claim before it can post', async () => {
     const { publisher, repository, remoteClient, request } = publisherHarness();
     await frozenPublication(repository as FakePublicationRepository);
@@ -220,6 +244,29 @@ describe('KpiPublisher', () => {
 
     await expect(publisher.publish({ ...request, attempt: 1 })).resolves.toMatchObject({ status: 'skipped_duplicate' });
     expect(remoteClient.post).not.toHaveBeenCalled();
+  });
+
+  it('starts an explicit manual recovery with a new retry chain and reuses the existing frozen batch', async () => {
+    const repository = new FakePublicationRepository();
+    const original = await frozenPublication(repository);
+    await repository.markFailed(original.runId, 'REMOTE_POST_ERROR');
+    const newChainId = '2a6557ab-24b8-4fa1-93ae-3b2d1b5d2fd2';
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'accepted', status: 202 }),
+      verify: jest.fn()
+        .mockResolvedValueOnce({ kind: 'not_found', status: 404 })
+        .mockResolvedValueOnce({ kind: 'match', status: 200 }),
+    };
+    const { publisher, logger, request } = publisherHarness({ repository, remoteClient });
+
+    await expect(publisher.publish({ ...request, attempt: 1, retryChainId: newChainId, manualRecovery: true }))
+      .resolves.toMatchObject({ status: 'delivered', postAccepted: true });
+
+    expect(logger.collect).not.toHaveBeenCalled();
+    expect(remoteClient.post).toHaveBeenCalledWith(original.frozenPayload);
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({
+      runId: original.runId, retryChainId: newChainId, status: 'delivered',
+    });
   });
 });
 
@@ -229,6 +276,7 @@ function withoutLegacyPostAcceptedEvidence(repository: FakePublicationRepository
     getPublication: repository.getPublication.bind(repository),
     freezeBatchConditionally: repository.freezeBatchConditionally.bind(repository),
     claimAttempt: repository.claimAttempt.bind(repository),
+    beginManualRecovery: repository.beginManualRecovery.bind(repository),
     markAccepted: repository.markAccepted.bind(repository),
     markDelivered: repository.markDelivered.bind(repository),
     markFailed: repository.markFailed.bind(repository),

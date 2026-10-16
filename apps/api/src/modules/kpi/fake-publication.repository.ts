@@ -59,6 +59,22 @@ export class FakePublicationRepository implements PublicationRepository {
     return { claimed: true };
   }
 
+  async beginManualRecovery(input: {
+    environment: KpiEnvironment; date: string; runId: string; sourceCommit: string; retryChainId: string;
+  }): Promise<PublicationRecord> {
+    const publication = await this.getPublication(input.environment, input.date);
+    if (publication.runId !== input.runId || publication.sourceCommit !== input.sourceCommit || publication.acceptedAt || publication.deliveredAt) {
+      throw new Error('KPI_MANUAL_RECOVERY_IDENTITY_MISMATCH');
+    }
+    if (publication.retryChainId === input.retryChainId && (publication.status === 'preparing' || publication.status === 'frozen')) return publication;
+    if (publication.status !== 'failed') throw new Error('KPI_MANUAL_RECOVERY_NOT_FAILED');
+    publication.retryChainId = input.retryChainId;
+    publication.attemptCount = 0;
+    publication.status = publication.frozenBatch ? 'frozen' : 'preparing';
+    publication.failureCode = null;
+    return publication;
+  }
+
   async markAccepted(runId: string, acceptedAt: string): Promise<void> {
     const publication = this.byRunId(runId);
     publication.status = 'accepted';
@@ -73,7 +89,7 @@ export class FakePublicationRepository implements PublicationRepository {
 
   async markFailed(runId: string, failureCode: string): Promise<void> {
     const publication = this.byRunId(runId);
-    if (publication.acceptedAt) return;
+    if (publication.deliveredAt) return;
     publication.status = 'failed';
     publication.failureCode = failureCode;
   }

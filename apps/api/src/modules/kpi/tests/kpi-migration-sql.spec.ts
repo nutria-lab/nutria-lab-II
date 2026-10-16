@@ -54,9 +54,9 @@ describe('NUT-85 A2/A3 — migración *_add_kpi_telemetry (estático)', () => {
   it('existe exactamente una migración *_add_kpi_telemetry posterior a 20260930220304_add_recipe_image', () => {
     const dirs = findKpiMigrationDirs();
     expect(dirs).toHaveLength(1);
-    // Es la última migración: no queda nada intercalado después en esta rama.
+    // La migración original permanece en el historial aunque existan migraciones posteriores.
     const all = listMigrationDirs();
-    expect(all[all.length - 1]).toBe(dirs[0]);
+    expect(all).toContain(dirs[0]);
     expect(all.filter(name => /add_kpi_telemetry/.test(name))).toEqual(dirs);
   });
 

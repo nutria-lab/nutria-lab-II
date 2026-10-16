@@ -4,15 +4,13 @@ import { Pool } from 'pg';
 import { PrismaClient } from '../../../generated/prisma/client';
 import type { PurgePort } from '../cli/purge-policy';
 import { TelemetryRepository } from '../repo/telemetry.repository';
-import type { HealthSampleInput } from '../repo/telemetry.repository';
-import { PrismaSnapshotStore } from '../snapshots/telemetry-snapshot.service';
-import type { SnapshotStore } from '../snapshots/telemetry-snapshot.service';
+import type { HealthSampleInput, TelemetryAggregateReader } from '../repo/telemetry.repository';
 
 export const REPORTING_POOL_MAX = 3;
 export const REPORTING_CONNECT_TIMEOUT_MS = 5000;
 export const REPORTING_QUERY_TIMEOUT_MS = 30_000;
 
-export interface TelemetryCliStore extends SnapshotStore, PurgePort {
+export interface TelemetryCliStore extends TelemetryAggregateReader, PurgePort {
   // false: el bucket ya estaba registrado y la muestra original no cambia.
   insertHealthSample(sample: HealthSampleInput): Promise<boolean>;
   close(): Promise<void>;
@@ -29,10 +27,12 @@ export function createReportingStore(databaseUrl: string): TelemetryCliStore {
   // Sin este listener, un error de un cliente inactivo tiraría el proceso.
   pool.on('error', () => undefined);
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool), errorFormat: 'minimal' });
-  const snapshots = new PrismaSnapshotStore(prisma);
   const repository = new TelemetryRepository(prisma);
   return {
-    transaction: (isolation, fn) => snapshots.transaction(isolation, fn),
+    loadAggregates: (environment, window) => prisma.$transaction(
+      tx => new TelemetryRepository(tx).loadAggregates(environment, window),
+      { isolationLevel: 'RepeatableRead', maxWait: 5000, timeout: 30_000 },
+    ),
     insertHealthSample: sample => repository.insertHealthSample(sample),
     purgeBatch: (table, environment, cutoff, limit) => repository.purgeBatch(table, environment, cutoff, limit),
     close: async () => {

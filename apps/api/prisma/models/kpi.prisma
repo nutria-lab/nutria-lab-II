@@ -50,24 +50,6 @@ model KpiHealthSample {
   @@map("kpi_health_sample")
 }
 
-model KpiSnapshot {
-  id           String   @id @db.Uuid
-  environment  String
-  reportDate   DateTime @map("report_date") @db.Date
-  windowStart  DateTime @map("window_start") @db.Timestamptz(3)
-  windowEnd    DateTime @map("window_end") @db.Timestamptz(3)
-  snapshotKind String   @map("snapshot_kind")
-  kpiId        String   @map("kpi_id")
-  value        Float?   @db.DoublePrecision
-  quality      String
-  reason       String?
-  sampleCount  BigInt   @map("sample_count")
-  measuredAt   DateTime @map("measured_at") @db.Timestamptz(3)
-
-  @@unique([environment, reportDate, windowEnd, snapshotKind, kpiId], map: "kpi_snapshot_cut_key")
-  @@index([environment, reportDate, snapshotKind], map: "kpi_snapshot_environment_report_date_snapshot_kind_idx")
-  @@map("kpi_snapshot")
-}
 
 // updatedAt se setea explícitamente (sin @updatedAt).
 model KpiPublication {

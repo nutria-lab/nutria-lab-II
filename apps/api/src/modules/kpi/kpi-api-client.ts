@@ -8,7 +8,6 @@ import type {
   PublicationReservation,
 } from './publication-repository.port';
 import type { HealthSampleInput } from './repo/telemetry.repository';
-import type { SnapshotCut, SnapshotRun } from './snapshots/telemetry-snapshot.service';
 
 export const KPI_API_REQUEST_TIMEOUT_MS = 15_000;
 
@@ -18,18 +17,11 @@ export interface KpiSampleRequest {
   api_ok: boolean | null;
   database_ok: boolean | null;
   reason: string | null;
-  preview_date?: string;
 }
 
 export interface KpiSampleResponse {
   sample: { outcome: HealthSampleInput['outcome']; inserted: boolean; reason: string | null };
-  preview: { executed: boolean; skip_reason: string | null; reused: boolean; results: readonly KpiResult[] };
-  counts: { http_terminal: number; http_pending_incomplete: number; dependency_attempts: number; health_samples: number } | null;
   purge: { executed: boolean; cutoff: string | null; deleted: Record<string, number> | null };
-}
-
-export interface KpiFinalizeResponse extends SnapshotRun {
-  cut: SnapshotCut;
 }
 
 export class KpiTransportError extends Error {
@@ -40,7 +32,7 @@ export class KpiTransportError extends Error {
 }
 
 export class KpiResponseError extends Error {
-  constructor(readonly status: number, readonly code: string, readonly remoteCode: string | null = null) {
+  constructor(readonly status: number, readonly code: string) {
     super(code);
     this.name = 'KpiResponseError';
   }
@@ -56,10 +48,6 @@ export class KpiApiClient implements PublicationRepository {
 
   sample(request: KpiSampleRequest): Promise<KpiSampleResponse> {
     return this.post('/kpi/telemetry/sample', request, isSampleResponse);
-  }
-
-  finalize(date: string, environment: string): Promise<KpiFinalizeResponse> {
-    return this.post('/kpi/telemetry/finalize', { date, environment }, isFinalizeResponse);
   }
 
   collect(context: CollectionContext): Promise<readonly KpiResult[]> {
@@ -88,6 +76,22 @@ export class KpiApiClient implements PublicationRepository {
 
   claimAttempt(retryChainId: string, attempt: number): Promise<{ claimed: boolean }> {
     return this.post('/kpi/publications/claim-attempt', { retry_chain_id: retryChainId, attempt }, isClaimResponse);
+  }
+
+  async beginManualRecovery(input: {
+    environment: PublicationReservation['environment'];
+    date: string;
+    runId: string;
+    sourceCommit: string;
+    retryChainId: string;
+  }): Promise<PublicationRecord> {
+    return this.postPublication('/kpi/publications/manual-recovery', {
+      environment: input.environment,
+      date: input.date,
+      run_id: input.runId,
+      source_commit: input.sourceCommit,
+      retry_chain_id: input.retryChainId,
+    });
   }
 
   async markAccepted(runId: string, acceptedAt: string): Promise<void> {
@@ -134,17 +138,7 @@ export class KpiApiClient implements PublicationRepository {
         timeout,
       ]);
 
-      if (!response.ok) {
-        let remoteCode: string | null = null;
-        try {
-          const errorBody: unknown = await Promise.race([response.json(), timeout]);
-          remoteCode = safeRemoteErrorCode(errorBody);
-        } catch (error) {
-          if (timedOut || error instanceof KpiTransportError) throw new KpiTransportError('KPI_API_TIMEOUT');
-          // The HTTP status remains the primary failure; never expose an untrusted body/message.
-        }
-        throw new KpiResponseError(response.status, 'KPI_API_HTTP_ERROR', remoteCode);
-      }
+      if (!response.ok) throw new KpiResponseError(response.status, 'KPI_API_HTTP_ERROR');
       let payload: unknown;
       try {
         payload = await Promise.race([response.json(), timeout]);
@@ -160,12 +154,6 @@ export class KpiApiClient implements PublicationRepository {
       clearTimeout(timer!);
     }
   }
-}
-
-function safeRemoteErrorCode(value: unknown): string | null {
-  if (typeof value !== 'object' || value === null || !('code' in value)) return null;
-  const code = (value as { code?: unknown }).code;
-  return typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? code : null;
 }
 
 /** Publication state is read/written through the backend first; Prisma fallback is lazy and transport-only. */
@@ -192,6 +180,10 @@ export class ApiFirstPublicationRepository implements PublicationRepository {
 
   claimAttempt(retryChainId: string, attempt: number): Promise<{ claimed: boolean }> {
     return this.withFallback(() => this.api.claimAttempt(retryChainId, attempt), repo => repo.claimAttempt(retryChainId, attempt));
+  }
+
+  beginManualRecovery(input: Parameters<PublicationRepository['beginManualRecovery']>[0]): Promise<PublicationRecord> {
+    return this.withFallback(() => this.api.beginManualRecovery(input), repo => repo.beginManualRecovery(input));
   }
 
   markAccepted(runId: string, acceptedAt: string): Promise<void> {
@@ -293,30 +285,12 @@ function isOkResponse(value: unknown): value is { ok: true } {
 }
 
 function isSampleResponse(value: unknown): value is KpiSampleResponse {
-  if (!isRecord(value) || !isRecord(value.sample) || !isRecord(value.preview) || !isRecord(value.purge)) return false;
-  const { sample, preview, purge } = value;
+  if (!isRecord(value) || !isRecord(value.sample) || !isRecord(value.purge)) return false;
+  const { sample, purge } = value;
   if (!['healthy', 'unhealthy', 'unknown'].includes(String(sample.outcome)) || typeof sample.inserted !== 'boolean' ||
-    !(sample.reason === null || typeof sample.reason === 'string') || typeof preview.executed !== 'boolean' ||
-    !(preview.skip_reason === null || typeof preview.skip_reason === 'string') || typeof preview.reused !== 'boolean') return false;
-  if (preview.executed ? !isKpiResultArray(preview.results, TELEMETRY_KPI_IDS) : !Array.isArray(preview.results) || preview.results.length !== 0) return false;
-  if (value.counts !== null && !isCountRecord(value.counts)) return false;
+    !(sample.reason === null || typeof sample.reason === 'string')) return false;
   return typeof purge.executed === 'boolean' && (purge.cutoff === null || typeof purge.cutoff === 'string') &&
     (purge.deleted === null || isCountRecord(purge.deleted));
-}
-
-function isFinalizeResponse(value: unknown): value is KpiFinalizeResponse {
-  return isRecord(value) && isRecord(value.cut) && isTelemetryResults(value.results) &&
-    typeof value.reused === 'boolean' && isSnapshotCut(value.cut) &&
-    (value.aggregates === null || isRecord(value.aggregates));
-}
-
-const TELEMETRY_KPI_IDS = [
-  'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
-  'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-] as const;
-
-function isTelemetryResults(value: unknown): value is readonly KpiResult[] {
-  return isKpiResultArray(value, TELEMETRY_KPI_IDS);
 }
 
 function isKpiResultArray(value: unknown, expectedIds: readonly string[]): value is readonly KpiResult[] {
@@ -340,9 +314,3 @@ function isCountRecord(value: unknown): value is Record<string, number> {
   return isRecord(value) && Object.values(value).every(item => Number.isInteger(item) && (item as number) >= 0);
 }
 
-function isSnapshotCut(value: Record<string, unknown>): boolean {
-  return (value.environment === 'dev' || value.environment === 'qa' || value.environment === 'prod') &&
-    typeof value.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.date) &&
-    typeof value.start === 'string' && Number.isFinite(Date.parse(value.start)) &&
-    typeof value.end === 'string' && Number.isFinite(Date.parse(value.end));
-}
