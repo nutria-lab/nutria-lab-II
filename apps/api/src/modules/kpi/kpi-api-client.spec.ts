@@ -108,6 +108,36 @@ describe('KpiApiClient', () => {
     expect(fallback.collect).not.toHaveBeenCalled();
   });
 
+  it('extracts only a safe technical error code from a non-2xx response body', async () => {
+    const fetcher = jest.fn(async () => new Response(JSON.stringify({
+      code: 'ACCESS_GATE_REQUIRED',
+      message: 'Do not include this message in diagnostics.',
+    }), { status: 401 }));
+    const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
+
+    await expect(client.sample({
+      scheduled_for: '2026-10-12T15:30:00.000Z', measured_at: '2026-10-12T15:47:12.345Z',
+      api_ok: true, database_ok: true, reason: null,
+    })).rejects.toMatchObject({
+      status: 401,
+      code: 'KPI_API_HTTP_ERROR',
+      remoteCode: 'ACCESS_GATE_REQUIRED',
+    });
+  });
+
+  it('ignores unsafe or non-technical error details from a non-2xx response body', async () => {
+    const fetcher = jest.fn(async () => new Response(JSON.stringify({
+      code: 'raw response includes private data',
+      message: 'Do not include this message in diagnostics.',
+    }), { status: 401 }));
+    const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
+
+    await expect(client.sample({
+      scheduled_for: '2026-10-12T15:30:00.000Z', measured_at: '2026-10-12T15:47:12.345Z',
+      api_ok: true, database_ok: true, reason: null,
+    })).rejects.toMatchObject({ status: 401, remoteCode: null });
+  });
+
   it('uses the DB-backed logger only when no HTTP response arrives', async () => {
     const fetcher = jest.fn(async () => { throw new TypeError('network down'); });
     const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
