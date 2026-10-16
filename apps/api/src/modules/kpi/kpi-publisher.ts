@@ -72,6 +72,8 @@ export class KpiPublisher {
     retryable?: boolean;
     retryAfterMs?: number | null;
   }> {
+    // Validate the immutable local cut before reserving any durable state.
+    const window = resolveArgentinaKpiWindow(request.date, this.dependencies.clock);
     let publication = await this.dependencies.repository.reservePublication({
       environment: request.environment,
       date: request.date,
@@ -94,7 +96,6 @@ export class KpiPublisher {
 
     let recoveredFrozenBatch = publication.frozenBatch !== null;
     if (!publication.frozenBatch) {
-      const window = resolveArgentinaKpiWindow(request.date, this.dependencies.clock);
       const context: CollectionContext = { contract_version: '1', ...window, environment: request.environment, run_id: publication.runId };
       const batch = freezeBatch(context, await this.dependencies.logger.collect(context));
       const freeze = await this.dependencies.repository.freezeBatchConditionally(publication.runId, batch, Buffer.from(JSON.stringify(batch.measurements), 'utf8'));

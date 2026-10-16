@@ -2,7 +2,6 @@
 import { Client } from 'pg';
 
 export const HEALTH_DB_TIMEOUT_MS = 2000;
-export const HEALTH_RESULT_TTL_MS = 5000;
 
 export interface DbHealthProbe {
   ping(): Promise<void>;

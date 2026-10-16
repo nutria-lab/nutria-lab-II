@@ -333,11 +333,10 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(expr).not.toMatch(/'dev'|'qa'/);
     });
 
-    it('el job solo corre con vars.KPI_TELEMETRY_ENABLED == true (no se activa hasta que exista kpi:telemetry)', () => {
+    it('el workflow queda habilitado sin una guarda de configuración de repo', () => {
       const wf = loadWorkflow();
       const condition = jobScalar(wf, 'if');
-      expect(condition).toBeDefined();
-      expect(normalizeExpr(condition!).replace(/^\$\{\{\s*|\s*\}\}$/g, '')).toBe("vars.KPI_TELEMETRY_ENABLED == 'true'");
+      expect(condition).toBeUndefined();
     });
 
     it('el schedule ejecuta sample: MODE resuelve inputs.mode o sample', () => {
@@ -475,17 +474,18 @@ describe('NUT-85 T6 — workflow .github/workflows/kpi-telemetry.yml', () => {
       expect(wf.steps.indexOf(upload)).toBeGreaterThan(wf.steps.indexOf(telemetryStep(wf)));
     });
 
-    it('solo usa secrets.DATABASE_URL y vars KPI_ENV / KPI_API_BASE_URL (más la guarda KPI_TELEMETRY_ENABLED)', () => {
+    it('usa DB/token secretos y la URL/ambiente del API desde variables protegidas', () => {
       const wf = loadWorkflow();
       const secrets = new Set([...wf.text.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map(m => m[1]));
       const vars = new Set([...wf.text.matchAll(/vars\.([A-Za-z0-9_]+)/g)].map(m => m[1]));
-      expect([...secrets]).toEqual(['DATABASE_URL']);
-      expect([...vars].sort()).toEqual(['KPI_API_BASE_URL', 'KPI_ENV', 'KPI_TELEMETRY_ENABLED']);
+      expect([...secrets].sort()).toEqual(['DATABASE_URL', 'KPI_INTERNAL_TOKEN']);
+      expect([...vars].sort()).toEqual(['KPI_API_BASE_URL', 'KPI_ENV']);
       expect(wf.text).not.toMatch(/DATABASE_URL_UNPOOLED|PROJECT_KEY|SUPABASE_|service_role/);
       expect(wf.text).not.toMatch(/secrets\s*\[|toJSON\(\s*secrets/);
 
       const env = effectiveEnv(wf, telemetryStep(wf));
       expect(normalizeExpr(env.DATABASE_URL ?? '')).toBe('${{ secrets.DATABASE_URL }}');
+      expect(normalizeExpr(env.KPI_INTERNAL_TOKEN ?? '')).toBe('${{ secrets.KPI_INTERNAL_TOKEN }}');
       expect(normalizeExpr(env.KPI_ENV ?? '')).toBe('${{ vars.KPI_ENV }}');
       expect(normalizeExpr(env.KPI_API_BASE_URL ?? '')).toBe('${{ vars.KPI_API_BASE_URL }}');
     });

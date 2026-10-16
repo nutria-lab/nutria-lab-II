@@ -16,6 +16,7 @@ import { TelemetryLogger } from '../telemetry-logger';
 import { SupabaseKpiRemoteClient } from '../supabase-kpi-remote-client';
 import { resolveKpiConfig } from '../config/kpi-config';
 import { TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
+import { ApiFirstKpiLogger, ApiFirstPublicationRepository, KpiApiClient } from '../kpi-api-client';
 
 const OUTCOME_FILE = 'outcome.json';
 
@@ -42,21 +43,38 @@ async function run(argv: readonly string[], environment: NodeJS.ProcessEnv, mode
   let outcome: KpiPublisherCliOutcome = emptyOutcome();
   let prismaHandle: ReturnType<typeof createKpiPrismaClient> | null = null;
   let reportingStore: ReturnType<typeof createReportingStore> | null = null;
+  let fallbackDatabaseUrl: string | null = null;
+  const openPrisma = () => {
+    if (fallbackDatabaseUrl === null) throw new Error('KPI_PUBLISH_CONFIGURATION_INVALID');
+    prismaHandle ??= createKpiPrismaClient(fallbackDatabaseUrl);
+    return prismaHandle;
+  };
   try {
     const parsed: PublishCliArgs | RetryCliArgs = mode === 'publish' ? parsePublishCliArgs(argv) : parseRetryCliArgs(argv);
     const config = requireConfiguration(environment, parsed.environment);
-    prismaHandle = createKpiPrismaClient(config.databaseUrl);
-    reportingStore = createReportingStore(config.databaseUrl);
-
-    const telemetry = new TelemetryLogger(
-      new TelemetrySnapshotService(reportingStore, () => new Date()),
-      { environment: parsed.environment },
-    );
+    fallbackDatabaseUrl = config.databaseUrl;
     const remoteClient = new SupabaseKpiRemoteClient(config);
     if (!(await remoteClient.validateIdentity())) throw new Error('KPI_REMOTE_IDENTITY_INVALID');
+    const api = new KpiApiClient(config.apiBaseUrl, config.internalToken);
+    const localPublicationRepository = () => new PrismaPublicationRepository(openPrisma().prisma as never);
+    const publicationRepository = new ApiFirstPublicationRepository(api, localPublicationRepository);
+    const localLogger = {
+      collect: async (context: Parameters<CompositeKpiLogger['collect']>[0]) => {
+        const prisma = openPrisma();
+        reportingStore ??= createReportingStore(config.databaseUrl);
+        const telemetry = new TelemetryLogger(
+          new TelemetrySnapshotService(reportingStore, () => new Date()),
+          { environment: parsed.environment },
+        );
+        return new CompositeKpiLogger(telemetry, new DataKpiLogger(prisma.prisma as never)).collect(context);
+      },
+    };
     const publisher = new KpiPublisher({
-      repository: new PrismaPublicationRepository(prismaHandle.prisma as never),
-      logger: new CompositeKpiLogger(telemetry, new DataKpiLogger(prismaHandle.prisma)),
+      repository: publicationRepository,
+      logger: new ApiFirstKpiLogger(
+        api,
+        localLogger,
+      ),
       remoteClient,
       artifactWriter: new FileKpiArtifactWriter(artifactDirectory),
       clock: { now: () => new Date() },
@@ -78,7 +96,7 @@ async function run(argv: readonly string[], environment: NodeJS.ProcessEnv, mode
           attempt: (parsed as RetryCliArgs).attempt,
         };
     const result = await publisher.publish(request);
-    const publication = await new PrismaPublicationRepository(prismaHandle.prisma as never).getPublication(parsed.environment, parsed.date);
+    const publication = await publicationRepository.getPublication(parsed.environment, parsed.date);
     outcome = {
       status: result.status,
       post_accepted: result.postAccepted,
@@ -99,24 +117,30 @@ async function run(argv: readonly string[], environment: NodeJS.ProcessEnv, mode
     };
   } finally {
     await writeOutcome(artifactDirectory, outcome);
-    await reportingStore?.close().catch(() => undefined);
+    await closeReportingStore(reportingStore as ReturnType<typeof createReportingStore> | null);
     if (prismaHandle) await disposeKpiPrismaClient(prismaHandle);
   }
   return outcome.status === 'delivered' || outcome.status === 'skipped_duplicate' ? 0 : 1;
+}
+
+async function closeReportingStore(store: ReturnType<typeof createReportingStore> | null): Promise<void> {
+  await store?.close().catch(() => undefined);
 }
 
 function requireConfiguration(environment: NodeJS.ProcessEnv, expectedEnvironment: KpiEnvironment) {
   const config = resolveKpiConfig(environment);
   if (config.environment !== expectedEnvironment) throw new Error('KPI_ENV_MISMATCH');
   const databaseUrl = environment.DATABASE_URL;
-  const baseUrl = environment.KPI_API_BASE_URL;
+  const baseUrl = environment.SUPABASE_URL;
+  const apiBaseUrl = environment.KPI_API_BASE_URL;
+  const internalToken = environment.KPI_INTERNAL_TOKEN;
   const publishableKey = environment.SUPABASE_PUBLISHABLE_KEY;
   const projectKey = environment.PROJECT_KEY;
   const sourceCommit = environment.SOURCE_COMMIT ?? environment.GITHUB_SHA;
-  if (!databaseUrl || !baseUrl || !publishableKey || !projectKey || !sourceCommit || !/^[0-9a-f]{40}$/i.test(sourceCommit)) {
+  if (!databaseUrl || !baseUrl || !apiBaseUrl || !internalToken || !publishableKey || !projectKey || !sourceCommit || !/^[0-9a-f]{40}$/i.test(sourceCommit)) {
     throw new Error('KPI_PUBLISH_CONFIGURATION_INVALID');
   }
-  return { databaseUrl, baseUrl, publishableKey, projectKey, sourceCommit };
+  return { databaseUrl, baseUrl, apiBaseUrl, internalToken, publishableKey, projectKey, sourceCommit };
 }
 
 function emptyOutcome(): KpiPublisherCliOutcome {

@@ -11,7 +11,9 @@ import type {
 } from '../cli/telemetry-cli';
 import * as http from 'http';
 import type { AddressInfo } from 'node:net';
-import type { KpiEnvironment } from '../kpi-contract';
+import type { KpiEnvironment, KpiResult } from '../kpi-contract';
+import { KpiResponseError, KpiTransportError } from '../kpi-api-client';
+import type { KpiSampleResponse } from '../kpi-api-client';
 import { KpiSnapshotError, TelemetrySnapshotService } from '../snapshots/telemetry-snapshot.service';
 import { FakeSnapshotStore, pgError, sampleAggregates, storedFinals } from './telemetry-fakes.fixture';
 
@@ -21,7 +23,7 @@ type Json = any;
 const DIAG_DIR = '/tmp/kpi-diagnostics-test';
 const SECRET_DB_URL = 'postgresql://secret-user:secret-pass@db.internal.example:5432/nutria';
 const SECRET_API_BASE = 'https://api.secret-host.example';
-const BASE_ENV = { KPI_ENV: 'dev', DATABASE_URL: SECRET_DB_URL, KPI_API_BASE_URL: SECRET_API_BASE };
+const BASE_ENV = { KPI_ENV: 'dev', DATABASE_URL: SECRET_DB_URL, KPI_API_BASE_URL: SECRET_API_BASE, KPI_INTERNAL_TOKEN: 'internal-secret' };
 const NOW_MIDDAY = '2026-10-12T15:47:12.345Z'; // 12:47 local AR
 const BUCKET_MIDDAY = '2026-10-12T15:30:00.000Z';
 
@@ -38,6 +40,7 @@ interface Harness {
   store: FakeCliStore;
   probeApi: jest.Mock;
   probeDatabase: jest.Mock;
+  apiClient: jest.Mock;
   openStore: jest.Mock;
   writeDiagnostics: jest.Mock;
   diagnostics(): Json;
@@ -53,12 +56,21 @@ function harness(nowIso = NOW_MIDDAY): Harness {
     }),
   );
   const probeDatabase = jest.fn(async (_url: string, _timeout: number): Promise<DbProbeOutcome> => 'ok');
+  const apiClient = jest.fn(() => ({
+    sample: jest.fn(async (_request: unknown): Promise<KpiSampleResponse> => {
+      throw new KpiTransportError('KPI_API_NETWORK_ERROR');
+    }),
+    finalize: jest.fn(async (_date: string, _environment: string): Promise<never> => {
+      throw new KpiTransportError('KPI_API_NETWORK_ERROR');
+    }),
+  }));
   const openStore = jest.fn((_url: string) => store);
   const writeDiagnostics = jest.fn(async (_dir: string, _diag: unknown) => undefined);
   const deps: TelemetryCliDeps = {
     clock: () => new Date(nowIso),
     probeApi,
     probeDatabase,
+    apiClient,
     openStore,
     writeDiagnostics,
   };
@@ -67,6 +79,7 @@ function harness(nowIso = NOW_MIDDAY): Harness {
     store,
     probeApi,
     probeDatabase,
+    apiClient,
     openStore,
     writeDiagnostics,
     diagnostics: () => {
@@ -100,6 +113,7 @@ function expectNoSideEffects(h: Harness): void {
   expect(h.openStore).not.toHaveBeenCalled();
   expect(h.probeApi).not.toHaveBeenCalled();
   expect(h.probeDatabase).not.toHaveBeenCalled();
+  expect(h.apiClient).not.toHaveBeenCalled();
   expect(h.store.insertHealthSample).not.toHaveBeenCalled();
   expect(h.store.isolations).toHaveLength(0);
 }
@@ -151,6 +165,14 @@ describe('runTelemetryCli — argumentos y configuración (exit 2)', () => {
     expect(h.diagnostics().error_codes).toContain('DATABASE_URL_MISSING');
   });
 
+  it('KPI_INTERNAL_TOKEN faltante ⇒ exit 2 sin tocar fuentes', async () => {
+    const h = harness();
+    const { KPI_INTERNAL_TOKEN: _omit, ...env } = BASE_ENV;
+    await expect(runTelemetryCli(sampleArgs(), env, h.deps)).resolves.toBe(2);
+    expectNoSideEffects(h);
+    expect(h.diagnostics().error_codes).toContain('KPI_INTERNAL_TOKEN_MISSING');
+  });
+
   it('finalize con corte futuro ⇒ exit 2 FUTURE_CUT', async () => {
     const h = harness('2026-10-12T15:00:00.000Z'); // 12:00 local: el corte de hoy todavía no pasó
     await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-12']), BASE_ENV, h.deps)).resolves.toBe(2);
@@ -178,7 +200,57 @@ describe('runTelemetryCli — argumentos y configuración (exit 2)', () => {
 });
 
 describe('runTelemetryCli — sample (H1, H2, H3)', () => {
-  it('bucket floor(now/30min); API /health con 5 s y DB SELECT 1 con 2 s; una muestra healthy', async () => {
+  it('cuando la API responde guarda sample y preview allí sin abrir conexión directa', async () => {
+    const h = harness();
+    const results: KpiResult[] = TELEMETRY_KPI_IDS.map(kpi_id => ({
+      kpi_id,
+      value: null,
+      quality: 'unavailable',
+      reason: 'NO_SAMPLE',
+      sample_count: 0,
+      measured_at: NOW_MIDDAY,
+    }));
+    const sample = jest.fn(async () => ({
+      sample: { outcome: 'healthy' as const, inserted: true, reason: null },
+      preview: { executed: true, skip_reason: null, reused: false, results },
+      counts: { http_terminal: 4, http_pending_incomplete: 0, dependency_attempts: 1, health_samples: 1 },
+      purge: { executed: false, cutoff: null, deleted: null },
+    }));
+    h.apiClient.mockReturnValue({ sample, finalize: jest.fn() });
+
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
+
+    expect(h.probeApi).toHaveBeenCalledTimes(1);
+    expect(sample).toHaveBeenCalledWith(expect.objectContaining({
+      scheduled_for: BUCKET_MIDDAY,
+      measured_at: NOW_MIDDAY,
+      api_ok: true,
+      database_ok: true,
+    }));
+    expect(h.probeDatabase).not.toHaveBeenCalled();
+    expect(h.openStore).not.toHaveBeenCalled();
+    expect(h.diagnostics()).toMatchObject({
+      sample: { inserted: true, outcome: 'healthy' },
+      preview: { executed: true },
+      counts: { http_terminal: 4 },
+    });
+  });
+
+  it('un error HTTP del endpoint de sample falla sin activar el fallback local', async () => {
+    const h = harness();
+    const sample = jest.fn(async () => { throw new KpiResponseError(503, 'KPI_API_HTTP_ERROR'); });
+    h.apiClient.mockReturnValue({ sample, finalize: jest.fn() });
+
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
+
+    expect(sample).toHaveBeenCalledTimes(1);
+    expect(h.probeDatabase).not.toHaveBeenCalled();
+    expect(h.openStore).not.toHaveBeenCalled();
+    expect(h.store.insertHealthSample).not.toHaveBeenCalled();
+    expect(h.diagnostics().error_codes).toContain('KPI_API_HTTP_ERROR');
+  });
+
+  it('bucket floor(now/30min); API primero, DB SELECT 1 de fallback con 2 s; una muestra healthy', async () => {
     const h = harness();
 
     await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
@@ -204,7 +276,7 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
 
   it.each<[string, ApiProbeOutcome, DbProbeOutcome, Partial<HealthSampleInput>]>([
     ['timeout de API', { kind: 'timeout' }, 'ok', { apiOk: false, databaseOk: true, reason: 'API_TIMEOUT' }],
-    ['API 503', { kind: 'response', status: 503, body: {} }, 'ok', { apiOk: false, reason: 'API_HTTP_5XX' }],
+    ['API 503', { kind: 'response', status: 503, body: {} }, 'ok', { apiOk: false, databaseOk: false, reason: 'API_HTTP_503' }],
     ['API 500', { kind: 'response', status: 500, body: {} }, 'ok', { apiOk: false, reason: 'API_HTTP_5XX' }],
     ['API de red', { kind: 'network_error' }, 'ok', { apiOk: false, reason: 'API_NETWORK_ERROR' }],
     ['API 200 con body no ok', { kind: 'response', status: 200, body: { status: 'error' } }, 'ok', { apiOk: false }],
@@ -221,7 +293,7 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(h.store.insertHealthSample.mock.calls[0][0]).toMatchObject({ outcome: 'unhealthy', ...expected });
   });
 
-  it('bucket ya registrado ⇒ exit 0, inserted:false, SAMPLE_BUCKET_ALREADY_RECORDED (H1)', async () => {
+  it('bucket ya registrado conserva la muestra y vuelve a completar el preview', async () => {
     const h = harness();
     h.store.insertHealthSample.mockResolvedValue(false);
 
@@ -232,6 +304,7 @@ describe('runTelemetryCli — sample (H1, H2, H3)', () => {
     expect(diag.sample.inserted).toBe(false);
     expect(JSON.stringify(diag)).toContain('SAMPLE_BUCKET_ALREADY_RECORDED');
     expect(h.store.insertHealthSample).toHaveBeenCalledTimes(1);
+    expect(h.store.calls.upsertPreviews).toHaveBeenCalledTimes(1);
   });
 
   it('sample --date D explícito recalcula el preview de D aunque el bucket actual ya esté registrado (D25 sólo sin --date)', async () => {
@@ -341,7 +414,7 @@ describe('runTelemetryCli — finalize (H4)', () => {
   it('no toma muestra de salud, usa REPEATABLE READ y measured_at real (no las 21:00)', async () => {
     const h = harness('2026-10-12T15:00:00.000Z');
     const coreSpy = jest.spyOn(TelemetrySnapshotService.prototype, 'finalizeCore');
-    const { KPI_API_BASE_URL: _omit, ...env } = BASE_ENV; // finalize no necesita la URL de la API
+    const env = BASE_ENV;
 
     try {
       await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), env, h.deps)).resolves.toBe(0);
@@ -384,6 +457,20 @@ describe('runTelemetryCli — finalize (H4)', () => {
 
     expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
     expect(h.diagnostics().kpis).toHaveLength(8);
+  });
+
+  it('un error HTTP del endpoint finalize falla sin activar el fallback local', async () => {
+    const h = harness('2026-10-12T15:00:00.000Z');
+    const finalize = jest.fn(async () => { throw new KpiResponseError(503, 'KPI_API_HTTP_ERROR'); });
+    h.apiClient.mockReturnValue({ sample: jest.fn(), finalize });
+
+    await expect(runTelemetryCli(finalizeArgs(['--date', '2026-10-11']), BASE_ENV, h.deps)).resolves.toBe(1);
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(h.probeDatabase).not.toHaveBeenCalled();
+    expect(h.openStore).not.toHaveBeenCalled();
+    expect(h.store.calls.insertFinals).not.toHaveBeenCalled();
+    expect(h.diagnostics().error_codes).toContain('KPI_API_HTTP_ERROR');
   });
 
   it.each([
@@ -464,10 +551,10 @@ describe('runTelemetryCli — diagnóstico (H5)', () => {
     expect(text).not.toContain(DIAG_DIR);
   });
 
-  it('un fallo al escribir el diagnóstico no cambia el código de salida', async () => {
+  it('un fallo al escribir el diagnóstico convierte la corrida en error visible', async () => {
     const h = harness();
     h.writeDiagnostics.mockRejectedValue(new Error('disk full'));
-    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(0);
+    await expect(runTelemetryCli(sampleArgs(), BASE_ENV, h.deps)).resolves.toBe(1);
   });
 });
 
@@ -526,7 +613,7 @@ describe('runTelemetryCli — sample con instrumentación apagada (X-KPI-Instrum
       'API 503',
       { kind: 'response', status: 503, body: { status: 'error', database: 'error' }, instrumentation: 'disabled' },
       'ok',
-      { outcome: 'unhealthy', apiOk: false, databaseOk: true },
+      { outcome: 'unhealthy', apiOk: false, databaseOk: false },
     ],
     [
       'API 200 con body no ok',
@@ -583,7 +670,7 @@ describe('runTelemetryCli — sample con instrumentación apagada (X-KPI-Instrum
       'header ausente y API 503',
       { kind: 'response', status: 503, body: {}, instrumentation: null },
       'ok',
-      { outcome: 'unhealthy', apiOk: false, reason: 'API_HTTP_5XX' },
+      { outcome: 'unhealthy', apiOk: false, reason: 'API_HTTP_503' },
     ],
   ])('%s ⇒ reason como antes', async (_name, api, db, expected) => {
     const h = harness();

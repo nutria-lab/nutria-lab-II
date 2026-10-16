@@ -51,15 +51,30 @@ export class KpiHttpMiddleware implements NestMiddleware {
     const id = randomUUID();
     const startedAt = new Date();
     const startedMono = performance.now();
+    const socket = req.socket;
+    let serverTimedOut = false;
+    let disconnectedBeforeSetup: HttpOutcomeInput | null = null;
+    const onSocketTimeout = () => {
+      serverTimedOut = true;
+    };
+    socket?.on('timeout', onSocketTimeout);
+    const onEarlyClose = () => {
+      if (!res.writableFinished) {
+        disconnectedBeforeSetup = serverTimedOut
+          ? { statusCode: null, serverTimedOut: true }
+          : { statusCode: null, clientDisconnected: true };
+      }
+    };
+    res.once('close', onEarlyClose);
 
     await awaitWriteBounded(
       () => this.writer.insertHttpPending({ id, environment, operation: UNRESOLVED_OPERATION, startedAt }),
       'insert_http',
       MIDDLEWARE_WAIT_MS,
     );
+    res.removeListener('close', onEarlyClose);
 
     let closing: Promise<void> | undefined;
-    let serverTimedOut = false;
 
     const close = (input: HttpOutcomeInput): Promise<void> => {
       if (closing) return closing;
@@ -81,12 +96,6 @@ export class KpiHttpMiddleware implements NestMiddleware {
 
     // Timeout del socket señalado por el propio servidor (timeout confirmado). Un listener en el socket no
     // cambia el comportamiento por defecto de Node (que destruye el socket).
-    const socket = req.socket;
-    const onSocketTimeout = () => {
-      serverTimedOut = true;
-    };
-    socket?.on('timeout', onSocketTimeout);
-
     res.once('close', () => {
       socket?.removeListener('timeout', onSocketTimeout);
       if (!res.writableFinished && !closing) {
@@ -105,6 +114,12 @@ export class KpiHttpMiddleware implements NestMiddleware {
       });
       return res;
     } as Response['end'];
+
+    if (disconnectedBeforeSetup !== null) {
+      socket?.removeListener('timeout', onSocketTimeout);
+      await close(disconnectedBeforeSetup);
+      return;
+    }
 
     runWithKpiRequestContext({ operationId: id, attempts: new Map() }, () => next());
   }

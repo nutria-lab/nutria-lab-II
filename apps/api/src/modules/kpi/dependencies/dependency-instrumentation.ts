@@ -5,7 +5,7 @@ import { awaitWriteBounded } from '../events/kpi-event-writer';
 import type { KpiEventWriter } from '../events/kpi-event-writer';
 import { getKpiRequestContext } from '../http/kpi-request-context';
 
-export type KpiDependency = 'gemini' | 'unsplash_search' | 'unsplash_download';
+export type KpiDependency = 'gemini' | 'openai' | 'unsplash_search' | 'unsplash_download';
 export type DependencyTerminalOutcome = 'success' | 'error' | 'timeout';
 export type DependencyCallResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
 

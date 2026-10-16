@@ -1,5 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DEPENDENCY_INSTRUMENTATION } from '../kpi/kpi.tokens';
+import { NOOP_DEPENDENCY_INSTRUMENTATION } from '../kpi/dependencies/dependency-instrumentation';
+import type { DependencyInstrumentation } from '../kpi/dependencies/dependency-instrumentation';
 import { AiProviderUnavailableError, OPENAI_ATTEMPT_TIMEOUT_MS, OPENAI_MODEL_CHAIN, OPENAI_PROVIDER, OPENAI_REQUEST_TIMEOUT_MS } from './openai.constants';
 import { JsonSchema, toStrictJsonSchema } from './openai-schema';
 import { CURRENT_PROMPT_VERSION, REPLACEMENT_PROMPT_VERSION, ReplacementPromptCriteria } from '../plans/openai/prompts';
@@ -19,11 +22,16 @@ interface OpenAIRequestError extends Error {
 export class OpenAIService {
   private readonly logger = new Logger(OpenAIService.name);
   private readonly apiKey: string;
+  private readonly instrumentation: DependencyInstrumentation;
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    @Optional() @Inject(DEPENDENCY_INSTRUMENTATION) instrumentation?: DependencyInstrumentation,
+  ) {
     const apiKey = config.get<string>('OPENAI_API_KEY');
     if (!apiKey) throw new Error('OPENAI_API_KEY is missing');
     this.apiKey = apiKey;
+    this.instrumentation = instrumentation ?? NOOP_DEPENDENCY_INSTRUMENTATION;
   }
 
   generateMealPlan(profile: unknown, weekStart: Date, onModelSelected?: (model: string) => void | Promise<void>): Promise<string> {
@@ -76,39 +84,43 @@ export class OpenAIService {
       this.logger.log({ event: 'openai_attempt_started', provider: OPENAI_PROVIDER, model, attempt });
 
       try {
-        const response = await fetch('https://api.openai.com/v1/responses', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            input: prompt,
-            store: false,
-            reasoning: { effort: 'none' },
-            max_output_tokens: 32_000,
-            text: {
-              verbosity: 'medium',
-              format: {
-                type: 'json_schema',
-                name: schemaName,
-                strict: true,
-                schema: toStrictJsonSchema(schema),
+        const result = await this.instrumentation.run(
+          'openai',
+          async () => {
+            const response = await fetch('https://api.openai.com/v1/responses', {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
               },
-            },
-          }),
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          const error: OpenAIRequestError = new Error('OpenAI request failed');
-          error.status = response.status;
-          error.code = response.status === 429 ? 'RATE_LIMITED' : undefined;
-          throw error;
-        }
-
-        const result = await response.json() as OpenAIResponse;
+              body: JSON.stringify({
+                model,
+                input: prompt,
+                store: false,
+                reasoning: { effort: 'none' },
+                max_output_tokens: 32_000,
+                text: {
+                  verbosity: 'medium',
+                  format: {
+                    type: 'json_schema',
+                    name: schemaName,
+                    strict: true,
+                    schema: toStrictJsonSchema(schema),
+                  },
+                },
+              }),
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              const error: OpenAIRequestError = new Error('OpenAI request failed');
+              error.status = response.status;
+              error.code = response.status === 429 ? 'RATE_LIMITED' : undefined;
+              throw error;
+            }
+            return await response.json() as OpenAIResponse;
+          },
+          result => result.ok ? 'success' : controller.signal.aborted ? 'timeout' : 'error',
+        );
         output = (result.output ?? [])
           .filter(item => item.type === 'message')
           .flatMap(item => item.content ?? [])
