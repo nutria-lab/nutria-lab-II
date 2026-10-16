@@ -2,6 +2,33 @@
 
 The GitHub `KPI Telemetry` workflow invokes `kpi:telemetry`. It probes `/health`, then sends a bearer-authenticated POST to `/kpi/telemetry/sample`. The backend persists the current health sample in NutrIA PostgreSQL. Telemetry has no finalize mode, historical-date input, previews, or KPI snapshot dependency. Publish collects all ten metrics from current event and business tables when preparing its initial batch, then posts that batch to Supabase.
 
+## Terminal events and network latency
+
+Runtime logs identified `KPI_WRITE_TIMEOUT op=close_http sqlstate=none code=CLIENT_QUERY_TIMEOUT`: the former 150 ms client query deadline could expire while a valid database response was still in transit. A successful pending insert followed by a failed terminal update left the event without a duration. The same writer handles HTTP and dependency events.
+
+The writer now separates three limits:
+
+- Caller wait: 250 ms, preserving the existing bound on business-request overhead.
+- SQL execution: 100 ms per statement, applied with `SET LOCAL` inside the transaction.
+- Client query/network response: 5000 ms, allowing network round trips without cancelling otherwise valid writes.
+
+Application assembly passes Vercel's documented [`waitUntil`](https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil) hook to the writer. It retains the actual persistence promise after the caller's bounded wait, until the task settles or the platform's function-duration limit is reached. Other runtimes do not need the Vercel request context. Error handling remains non-fatal to the business request.
+
+With the disposable PostgreSQL instance below running, reproduce the network boundary with:
+
+```sh
+KPI_TEST_DATABASE_URL=postgresql://postgres:local-kpi-only@127.0.0.1:55432/nutria_kpi \
+  npx --yes pnpm@9.0.0 --filter api exec jest --runInBand --runTestsByPath \
+  src/modules/kpi/tests/kpi-event-writer-latency.integration.spec.ts \
+  src/modules/kpi/tests/kpi-task-retention.spec.ts
+```
+
+The latency regression uses the actual runtime writer and a local TCP proxy delaying database responses by 200 ms. It verifies stored terminal rows for both HTTP and dependencies, rather than replacing the production query budget with a special test client. Unit tests verify that retained tasks outlive the bounded caller wait and that application assembly invokes `waitUntil`.
+
+The fix preserves the chosen `KPI_ENV`; changing it during testing can legitimately leave both `dev` and `prod` records in one database branch. It introduces no schema migration and does not rewrite old pending rows, whose actual outcomes and durations cannot be inferred reliably.
+
+Validation on 2026-10-16: both latency regressions failed before the fix, then passed with persisted terminal results. The patched GitHub main revision `8a84bc40093efbafa9de596027b7ee40996c95e5` passed all 51 KPI/access suites (884 tests), API lint and API build. Tests wrote only to disposable localhost PostgreSQL. The new code has not been deployed; production persistence must be checked again after deployment.
+
 ## Reproduced failure and fix
 
 The deployed sample endpoint returned HTTP 401 with `code: ACCESS_GATE_REQUIRED`. The browser access middleware intercepted the request before `KpiInternalAuthGuard`, so even a correct internal token could not reach its guard without a browser cookie. The fix exempts only the nine existing internal KPI POST paths from that cookie requirement. Their controllers still require `KpiInternalAuthGuard`; missing or wrong tokens remain unauthorized. Business paths, unknown KPI paths, and other HTTP methods remain gated.

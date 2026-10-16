@@ -206,7 +206,7 @@ describeIfKpiDb('PrismaKpiEventWriter (integración Postgres)', () => {
   });
 
   it('B6: el cierre (UPDATE) con la tabla bloqueada también da KPI_WRITE_TIMEOUT (SET LOCAL 57014) acotado', async () => {
-    // Cliente con query_timeout amplio: bajo carga el temporizador de 150 ms del cliente puede ganarle al 57014 de Postgres.
+    // Isolate PostgreSQL's statement timeout from client-side query timing.
     const wide = createWideTimeoutKpiPrismaClient(db);
     const writer = new PrismaKpiEventWriter(wide.prisma);
     const id = randomUUID();

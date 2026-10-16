@@ -1,6 +1,7 @@
 // @Global para que Gemini y Unsplash reciban DEPENDENCY_INSTRUMENTATION sin importar KpiModule (inyección @Optional).
 import { Global, Inject, Logger, Module, RequestMethod } from '@nestjs/common';
 import type { MiddlewareConsumer, NestModule, OnApplicationShutdown } from '@nestjs/common';
+import { waitUntil } from '@vercel/functions';
 import { resolveKpiConfig } from './config/kpi-config';
 import type { KpiConfig } from './config/kpi-config';
 import { KpiDependencyInstrumentation } from './dependencies/dependency-instrumentation';
@@ -40,7 +41,7 @@ function kpiEventWriterFactory(config: KpiConfig): KpiEventWriter {
     return new NoopKpiEventWriter();
   }
   const handle = createKpiPrismaClient(databaseUrl);
-  return new PrismaKpiEventWriter(handle.prisma, () => disposeKpiPrismaClient(handle));
+  return new PrismaKpiEventWriter(handle.prisma, () => disposeKpiPrismaClient(handle), waitUntil);
 }
 
 type ReportingStore = TelemetryCliStore;
