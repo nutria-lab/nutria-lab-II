@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DashboardView } from '@/modules/dashboard/components/DashboardView';
 import { DASHBOARD_FIXTURES, selectDashboardFixture, type DashboardFixtureKey } from '@/modules/dashboard/fixtures';
-import type { CardState, DashboardViewModel, TodayMeal, TodayMealsData } from '@/modules/dashboard/types';
+import type {
+  CardState,
+  DashboardViewModel,
+  MealCompletionStatus,
+  TodayMeal,
+  TodayMealsData,
+} from '@/modules/dashboard/types';
 import { nextMealToLog } from '@/modules/dashboard/utils';
 import { MEAL_TYPE_LABELS } from '@/modules/meal-plan/utils';
 
@@ -89,6 +95,12 @@ describe('DashboardView greeting', () => {
     expect(view.getByText('Hoy es un buen día para nutrirte.')).toBeInTheDocument();
   });
 
+  it('lets a long greeting wrap instead of overflowing (break-words)', () => {
+    const { view } = renderView(viewModel({ userName: 'Maximilianaconstanzaguadalupeesperanza' }));
+
+    expect(view.getByRole('heading', { level: 1 })).toHaveClass('break-words');
+  });
+
   it('renders "Hola" without comma when there is no name', () => {
     const { view } = renderView(viewModel({ userName: null }));
 
@@ -128,6 +140,17 @@ describe('DashboardView today meals list', () => {
       expect(within(item).getByText(chip!)).toBeInTheDocument();
       expect(within(item).getByText(title!)).toBeInTheDocument();
     });
+  });
+
+  it('uses an explicit single-column track below md so a long title cannot widen it', () => {
+    const longTitle = `Ensalada ${'muy larga de quinoa con vegetales asados y aderezo '.repeat(3)}`.trim();
+    expect(longTitle.length).toBeGreaterThanOrEqual(120);
+    const meals = [meal({ plannedMealId: 'lunch', mealType: 'LUNCH', title: longTitle })];
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(meals) }));
+
+    const list = todayMealsList(view);
+    expect(within(list).getByText(longTitle)).toBeInTheDocument();
+    expect(list).toHaveClass('grid', 'grid-cols-1');
   });
 
   it('renders the comidas fixture sorted with one chip per meal', () => {
@@ -223,6 +246,66 @@ describe('DashboardView card states', () => {
 
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+  });
+
+  it('loading: every skeleton carries visually hidden "Cargando…" text for screen readers', () => {
+    const { container, view } = renderFixture('loading');
+
+    const skeletons = Array.from(container.querySelectorAll<HTMLElement>('[aria-busy="true"]'));
+    expect(skeletons.length).toBeGreaterThan(0);
+    expect(view.getAllByText('Cargando…')).toHaveLength(skeletons.length);
+    for (const skeleton of skeletons) {
+      expect(within(skeleton).getByText('Cargando…')).toHaveClass('sr-only');
+    }
+  });
+
+  it('empty meals array: shows the no-meals-today state, without empty list nor highlight', () => {
+    const { view } = renderView(viewModel({ todayMeals: { kind: 'ready', data: { kind: 'meals', meals: [] } } }));
+
+    const region = view.getByRole('region', { name: 'Comidas de hoy' });
+    expect(within(region).getByText('No hay comidas planificadas para hoy.')).toBeInTheDocument();
+    expect(within(region).getByRole('link', { name: 'Ver plan semanal' })).toHaveAttribute('href', '/meal-plan');
+    expect(within(region).queryByRole('list')).not.toBeInTheDocument();
+    expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+    expect(view.queryByText(ALL_LOGGED)).not.toBeInTheDocument();
+  });
+
+  it('mixed null and known statuses: no highlight, no chips and the unavailable-status note', () => {
+    const meals = [
+      meal({ plannedMealId: 'breakfast', mealType: 'BREAKFAST', status: null }),
+      meal({ plannedMealId: 'lunch', mealType: 'LUNCH', status: 'NOT_LOGGED' }),
+      meal({ plannedMealId: 'dinner', mealType: 'DINNER', status: 'COMPLETED' }),
+    ];
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(meals) }));
+
+    expect(within(todayMealsList(view)).getAllByRole('listitem')).toHaveLength(3);
+    expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+    expect(view.queryByText(ALL_LOGGED)).not.toBeInTheDocument();
+    for (const chip of STATUS_CHIPS) {
+      expect(view.queryByText(chip)).not.toBeInTheDocument();
+    }
+    expect(view.getByText(PARTIAL_NOTE)).toBeInTheDocument();
+  });
+
+  it('unknown status string from the backend: does not throw and that row shows no chip', () => {
+    const meals = [
+      meal({ plannedMealId: 'breakfast', mealType: 'BREAKFAST', status: 'PARTIAL' as MealCompletionStatus }),
+      meal({ plannedMealId: 'lunch', mealType: 'LUNCH', status: 'NOT_LOGGED' }),
+    ];
+
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(meals) }));
+
+    const items = within(todayMealsList(view)).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    const breakfast = items[0]!;
+    expect(within(breakfast).getByText('Receta de prueba breakfast')).toBeInTheDocument();
+    for (const chip of STATUS_CHIPS) {
+      expect(within(breakfast).queryByText(chip)).not.toBeInTheDocument();
+    }
+    expect(breakfast.textContent ?? '').not.toMatch(/PARTIAL|undefined/);
+    expect(within(items[1]!).getByText('Receta de prueba lunch')).toBeInTheDocument();
+    expect(view.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeInTheDocument();
+    expect(view.getByRole('navigation', { name: 'Accesos rápidos' })).toBeInTheDocument();
   });
 
   it('error: shows both error messages as alerts and no retry button without retry', () => {

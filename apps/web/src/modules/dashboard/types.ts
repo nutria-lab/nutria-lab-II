@@ -1,4 +1,4 @@
-import type { MealType } from '@/services/mealPlanService';
+import type { MealType } from '../../services/mealPlanService';
 
 export type MealCompletionStatus = 'NOT_LOGGED' | 'COMPLETED' | 'SKIPPED';
 

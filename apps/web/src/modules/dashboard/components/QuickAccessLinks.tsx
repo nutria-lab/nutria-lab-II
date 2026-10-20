@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 
-import { FOCUS_VISIBLE_CLASSES } from './CardStates';
+import { FOCUS_VISIBLE_CLASSES } from './classNames';
 
 const QUICK_ACCESS_ITEMS = [
   {

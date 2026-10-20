@@ -1,13 +1,11 @@
 import { Link } from 'react-router-dom';
 
-export const FOCUS_VISIBLE_CLASSES =
-  'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green';
-
-export const PRIMARY_CTA_CLASSES = `inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-brand-green px-6 py-3 text-sm font-bold text-on-primary shadow-md transition-all hover:opacity-90 active:scale-[0.98] ${FOCUS_VISIBLE_CLASSES}`;
+import { PRIMARY_CTA_CLASSES } from './classNames';
 
 export function CardSkeleton({ rows }: { rows: number }) {
   return (
     <div className="animate-pulse space-y-3" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Cargando…</span>
       {Array.from({ length: rows }).map((_, index) => (
         <div key={index} className="h-16 rounded-xl bg-surface-container-high" />
       ))}

@@ -1,8 +1,7 @@
-import { MEAL_TYPE_LABELS } from '@/modules/meal-plan/utils';
-import { RecipeImage } from '@/modules/recipes/components/RecipeImage';
-
+import { MEAL_TYPE_LABELS } from '../../meal-plan/utils';
+import { RecipeImage } from '../../recipes/components/RecipeImage';
 import type { CardState, TodayMeal, TodayMealsData } from '../types';
-import { sortMealsByType } from '../utils';
+import { hasUnknownStatus, sortMealsByType } from '../utils';
 import { CardError, CardNotice, CardSkeleton } from './CardStates';
 import { MealStatusChip } from './MealStatusChip';
 
@@ -11,12 +10,22 @@ type Props = {
   className?: string;
 };
 
+function NoMealsTodayNotice() {
+  return (
+    <CardNotice
+      icon="event_busy"
+      title="No hay comidas planificadas para hoy."
+      action={{ label: 'Ver plan semanal', to: '/meal-plan' }}
+    />
+  );
+}
+
 function TodayMealsList({ meals }: { meals: TodayMeal[] }) {
-  const statusUnknown = meals.some((meal) => meal.status === null);
+  const statusUnknown = hasUnknownStatus(meals);
   return (
     <>
       {/* role="list" conserva la semántica en Safari con list-style none + grid. */}
-      <ul role="list" className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <ul role="list" className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
         {sortMealsByType(meals).map((meal) => (
           <li
             key={meal.plannedMealId}
@@ -65,15 +74,10 @@ function TodayMealsBody({ state }: { state: CardState<TodayMealsData> }) {
             />
           );
         case 'noMealsToday':
-          return (
-            <CardNotice
-              icon="event_busy"
-              title="No hay comidas planificadas para hoy."
-              action={{ label: 'Ver plan semanal', to: '/meal-plan' }}
-            />
-          );
+          return <NoMealsTodayNotice />;
         case 'meals':
-          return <TodayMealsList meals={state.data.meals} />;
+          // Una lista vacía equivale a no tener comidas hoy: nunca se muestra una lista vacía.
+          return state.data.meals.length === 0 ? <NoMealsTodayNotice /> : <TodayMealsList meals={state.data.meals} />;
       }
   }
 }

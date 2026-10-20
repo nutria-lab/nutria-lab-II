@@ -1,28 +1,16 @@
 import { Link } from 'react-router-dom';
 
-import { MEAL_TYPE_LABELS } from '@/modules/meal-plan/utils';
-import { RecipeImage } from '@/modules/recipes/components/RecipeImage';
-
-import type { CardState, TodayMeal, TodayMealsData } from '../types';
-import { nextMealToLog } from '../utils';
-import { CardSkeleton, PRIMARY_CTA_CLASSES } from './CardStates';
+import { MEAL_TYPE_LABELS } from '../../meal-plan/utils';
+import { RecipeImage } from '../../recipes/components/RecipeImage';
+import type { CardState, TodayMealsData } from '../types';
+import { hasNextMealColumn, nextMealToLog } from '../utils';
+import { CardSkeleton } from './CardStates';
+import { PRIMARY_CTA_CLASSES } from './classNames';
 
 type Props = {
   state: CardState<TodayMealsData>;
   className?: string;
 };
-
-// Sin estado de registro conocido (error parcial) no se resalta ninguna comida.
-function mealsWithKnownStatus(state: CardState<TodayMealsData>): TodayMeal[] | null {
-  if (state.kind !== 'ready' || state.data.kind !== 'meals') return null;
-  const { meals } = state.data;
-  if (meals.length === 0 || meals.some((meal) => meal.status === null)) return null;
-  return meals;
-}
-
-export function hasNextMealColumn(state: CardState<TodayMealsData>): boolean {
-  return state.kind === 'loading' || mealsWithKnownStatus(state) !== null;
-}
 
 export function NextMealHighlight({ state, className = '' }: Props) {
   if (state.kind === 'loading') {
@@ -33,10 +21,10 @@ export function NextMealHighlight({ state, className = '' }: Props) {
     );
   }
 
-  const meals = mealsWithKnownStatus(state);
-  if (!meals) return null;
+  // Sin lista o con algún estado desconocido no hay columna ni resaltado.
+  if (!hasNextMealColumn(state) || state.kind !== 'ready' || state.data.kind !== 'meals') return null;
 
-  const next = nextMealToLog(meals);
+  const next = nextMealToLog(state.data.meals);
   if (!next) {
     return (
       <div className={`flex items-center gap-4 rounded-xl bg-surface-container-low p-6 ${className}`}>

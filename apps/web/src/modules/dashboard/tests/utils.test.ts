@@ -15,6 +15,8 @@ import {
   buildGreeting,
   buildUnavailableViewModel,
   getMealStatusLabel,
+  hasNextMealColumn,
+  hasUnknownStatus,
   nextMealToLog,
   selectTodayMeals,
   sortMealsByType,
@@ -264,6 +266,15 @@ describe('nextMealToLog', () => {
     expect(nextMealToLog([])).toBeNull();
   });
 
+  it('returns null when any status is unavailable, even with a NOT_LOGGED meal', () => {
+    const meals = [
+      meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: null }),
+      meal({ plannedMealId: 'l', mealType: 'LUNCH', status: 'NOT_LOGGED' }),
+    ];
+
+    expect(nextMealToLog(meals)).toBeNull();
+  });
+
   it('returns the same meal regardless of the time of day', () => {
     const meals = [
       meal({ plannedMealId: 'd', mealType: 'DINNER', status: 'NOT_LOGGED' }),
@@ -300,6 +311,81 @@ describe('meal status labels', () => {
 
   it('returns null for an unavailable status', () => {
     expect(getMealStatusLabel(null)).toBeNull();
+  });
+
+  it('returns null for an unknown status string from the backend', () => {
+    expect(getMealStatusLabel('PARTIAL' as MealCompletionStatus)).toBeNull();
+  });
+});
+
+describe('hasUnknownStatus', () => {
+  it('is true when any meal has a null status', () => {
+    expect(
+      hasUnknownStatus([
+        meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: 'COMPLETED' }),
+        meal({ plannedMealId: 'l', mealType: 'LUNCH', status: null }),
+      ]),
+    ).toBe(true);
+  });
+
+  it('is false when every status is known', () => {
+    expect(
+      hasUnknownStatus([
+        meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: 'COMPLETED' }),
+        meal({ plannedMealId: 'l', mealType: 'LUNCH', status: 'NOT_LOGGED' }),
+        meal({ plannedMealId: 's', mealType: 'SNACK', status: 'SKIPPED' }),
+      ]),
+    ).toBe(false);
+  });
+
+  it('is false for an empty list', () => {
+    expect(hasUnknownStatus([])).toBe(false);
+  });
+});
+
+describe('hasNextMealColumn', () => {
+  const ready = (data: TodayMealsData): CardState<TodayMealsData> => ({ kind: 'ready', data });
+
+  it('is true while loading', () => {
+    expect(hasNextMealColumn({ kind: 'loading' })).toBe(true);
+  });
+
+  it('is true for meals with known statuses (pending or all logged)', () => {
+    expect(hasNextMealColumn(ready({ kind: 'meals', meals: [meal({ plannedMealId: 'l', mealType: 'LUNCH' })] }))).toBe(
+      true,
+    );
+    expect(
+      hasNextMealColumn(
+        ready({ kind: 'meals', meals: [meal({ plannedMealId: 'l', mealType: 'LUNCH', status: 'COMPLETED' })] }),
+      ),
+    ).toBe(true);
+  });
+
+  it('is false for an empty meals array', () => {
+    expect(hasNextMealColumn(ready({ kind: 'meals', meals: [] }))).toBe(false);
+  });
+
+  it('is false when any status is unknown', () => {
+    expect(
+      hasNextMealColumn(
+        ready({
+          kind: 'meals',
+          meals: [
+            meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: null }),
+            meal({ plannedMealId: 'l', mealType: 'LUNCH', status: 'NOT_LOGGED' }),
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it.each<[string, CardState<TodayMealsData>]>([
+    ['error', { kind: 'error', message: 'fallo' }],
+    ['unavailable', { kind: 'unavailable' }],
+    ['noPlan', { kind: 'ready', data: { kind: 'noPlan' } }],
+    ['noMealsToday', { kind: 'ready', data: { kind: 'noMealsToday' } }],
+  ])('is false for %s', (_label, state) => {
+    expect(hasNextMealColumn(state)).toBe(false);
   });
 });
 

@@ -10,8 +10,10 @@ const CHIP_STYLES: Record<MealCompletionStatus, { className: string; icon: strin
 // El chip siempre lleva texto: el color nunca es la única señal del estado.
 export function MealStatusChip({ status }: { status: MealCompletionStatus | null }) {
   const label = getMealStatusLabel(status);
-  if (status === null || label === null) return null;
-  const { className, icon } = CHIP_STYLES[status];
+  // Un estado desconocido del backend no tiene etiqueta ni estilo: se omite el chip.
+  const style = status !== null && Object.hasOwn(CHIP_STYLES, status) ? CHIP_STYLES[status] : null;
+  if (label === null || style === null) return null;
+  const { className, icon } = style;
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
       {icon && (
