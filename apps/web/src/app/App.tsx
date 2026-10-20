@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import { AccessGateBoundary } from '../features/access/AccessGateBoundary';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
 import { RegistrationPage } from '../features/auth/RegistrationPage';
+import { DashboardPage } from '../modules/dashboard/pages/DashboardPage';
 import { PreferencesPage } from '../modules/profile/pages/PreferencesPage';
 import { LoginRequestError } from '../services/authService';
 import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
@@ -79,7 +80,7 @@ function AuthenticatedApp() {
           <ProtectedApp>
             <Routes>
               <Route path="/" element={<Navigate to="/goals" replace />} />
-              <Route path="/dashboard" element={<PlaceholderPage title="Dashboard" />} />
+              <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/meal-plan" element={<MealPlanPage />} />
               <Route path="/recipes" element={<RecipesListPage />} />
               <Route path="/recipes/generate" element={<RecipeGenerationPage />} />
