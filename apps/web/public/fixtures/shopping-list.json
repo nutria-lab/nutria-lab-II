@@ -1,0 +1,45 @@
+{
+  "populated": {
+    "weekStart": "2026-10-19",
+    "plan": {
+      "id": "00000000-0000-4000-8000-000000000087",
+      "version": 2,
+      "updatedAt": "2026-10-19T12:00:00.000Z"
+    },
+    "items": [
+      {
+        "key": "f052cb9860542fcdbea36f627e02ad2ab1afdac2450015e05956dd72ee20400b",
+        "name": "arroz",
+        "quantity": 300,
+        "unit": "g",
+        "checked": false,
+        "sources": [
+          { "plannedMealId": "meal-fixture-1", "recipeId": "recipe-fixture-1", "ingredientIndex": 0, "quantity": 200, "unit": "g" },
+          { "plannedMealId": "meal-fixture-2", "recipeId": "recipe-fixture-2", "ingredientIndex": 0, "quantity": 100, "unit": "g" }
+        ]
+      },
+      {
+        "key": "427d04457822830aad7d1c6291cd03c74632bef6c5bea2b96c12f87f5bfb912d",
+        "name": "sal",
+        "quantity": null,
+        "unit": "g",
+        "checked": false,
+        "sources": [
+          { "plannedMealId": "meal-fixture-3", "recipeId": "recipe-fixture-3", "ingredientIndex": 0, "quantity": null, "unit": "g" }
+        ]
+      }
+    ],
+    "summary": { "totalItems": 2, "checkedItems": 0 },
+    "warnings": [
+      { "code": "INVALID_INGREDIENT", "plannedMealId": "meal-fixture-3", "ingredientIndex": 0 },
+      { "code": "MISSING_RECIPE", "plannedMealId": "meal-fixture-4" }
+    ]
+  },
+  "empty": {
+    "weekStart": "2026-10-19",
+    "plan": null,
+    "items": [],
+    "summary": { "totalItems": 0, "checkedItems": 0 },
+    "warnings": []
+  }
+}

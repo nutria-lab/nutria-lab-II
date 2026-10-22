@@ -10,6 +10,7 @@ import { KpiModule } from '@/modules/kpi/kpi.module';
 import { KpiPublisherModule } from '@/modules/kpi/kpi-publisher.module';
 import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-generation.module';
 import { AccessModule } from '@/modules/access/access.module';
+import { ShoppingListModule } from '@/modules/shopping-list/shopping-list.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AccessModule } from '@/modules/access/access.module';
     KpiPublisherModule,
     RecipeGenerationModule,
     AccessModule,
+    ShoppingListModule,
   ],
   controllers: [],
   providers: [],
