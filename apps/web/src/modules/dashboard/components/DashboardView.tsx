@@ -18,7 +18,7 @@ export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) 
       </div>
       <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
         <header>
-          <h1 className="break-words font-headline text-3xl font-bold leading-tight text-on-surface">
+          <h1 className="break-words font-headline text-2xl font-bold md:text-3xl leading-tight text-on-surface">
             {buildGreeting(viewModel.userName)}
           </h1>
           <p className="mt-1 text-on-surface-variant">Hoy es un buen día para nutrirte.</p>

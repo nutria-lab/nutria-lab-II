@@ -208,6 +208,27 @@ describe('selectTodayMeals', () => {
     });
   });
 
+  it('maps contract A meals without inventing an image', () => {
+    const result = selectTodayMeals(
+      adherence({
+        days: [
+          adherenceDay(TODAY, [
+            adherenceMeal({ plannedMealId: 'l', mealType: 'LUNCH', title: 'Almuerzo X' }),
+            adherenceMeal({ plannedMealId: 'b', mealType: 'BREAKFAST', title: 'Desayuno X', recipeId: null }),
+          ]),
+        ],
+      }),
+    );
+
+    expect(result.kind).toBe('meals');
+    if (result.kind !== 'meals') return;
+    expect(result.meals.map((m) => m.plannedMealId)).toEqual(['b', 'l']);
+    for (const todayMeal of result.meals) {
+      expect(todayMeal.image).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(todayMeal, 'image') && todayMeal.image !== undefined).toBe(false);
+    }
+  });
+
   it('does not depend on the system clock', () => {
     const input = adherence({
       days: [

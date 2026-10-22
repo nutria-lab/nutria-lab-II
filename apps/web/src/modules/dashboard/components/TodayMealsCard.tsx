@@ -25,20 +25,27 @@ function TodayMealsList({ meals }: { meals: TodayMeal[] }) {
   return (
     <>
       {/* role="list" conserva la semántica en Safari con list-style none + grid. */}
-      <ul role="list" className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+      <ul role="list" className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-2">
         {sortMealsByType(meals).map((meal) => (
           <li
             key={meal.plannedMealId}
             className="flex items-center gap-3 rounded-xl border border-outline-variant/40 bg-surface-container-low p-3"
           >
-            <RecipeImage image={null} title={meal.title} compact className="h-14 w-14 shrink-0 rounded-lg" />
+            {/* La miniatura se omite (sin placeholder) si la comida no trae imagen. */}
+            {meal.image && (
+              <RecipeImage image={meal.image} title={meal.title} compact className="h-14 w-14 shrink-0 rounded-lg" />
+            )}
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">
                 {MEAL_TYPE_LABELS[meal.mealType]}
               </p>
-              <p className="truncate font-medium text-on-surface">{meal.title}</p>
+              <p className="line-clamp-2 break-words font-medium text-on-surface">{meal.title}</p>
+              {!statusUnknown && (
+                <div className="mt-1">
+                  <MealStatusChip status={meal.status} />
+                </div>
+              )}
             </div>
-            {!statusUnknown && <MealStatusChip status={meal.status} />}
           </li>
         ))}
       </ul>

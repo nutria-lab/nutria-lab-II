@@ -426,3 +426,69 @@ describe('DashboardView exclusions', () => {
     expect(view.queryByRole('button', { name: /notificaci/i })).not.toBeInTheDocument();
   });
 });
+
+// §15: ajustes tras la comparación visual con Stitch.
+describe('DashboardView Stitch visual fixes (§15)', () => {
+  it('places each status chip after the title, inside the same text column', () => {
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(UNORDERED_MEALS) }));
+
+    const items = within(todayMealsList(view)).getAllByRole('listitem');
+    const expected = [
+      ['Receta de prueba breakfast', 'Registrada'],
+      ['Receta de prueba lunch', 'Pendiente'],
+      ['Receta de prueba snack', 'Salteada'],
+      ['Receta de prueba dinner', 'Pendiente'],
+    ];
+    items.forEach((item, index) => {
+      const [titleText, chipText] = expected[index]!;
+      const title = within(item).getByText(titleText!);
+      const chip = within(item).getByText(chipText!);
+      const textColumn = title.parentElement!;
+
+      expect(textColumn).not.toBe(item);
+      expect(textColumn).toContainElement(chip);
+      expect(title.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+  });
+
+  it('renders no image nor image placeholder in the next meal highlight when the meal has no image', () => {
+    const { view } = renderFixture('comidas');
+
+    const highlight = view.getByRole('region', { name: NEXT_MEAL_TITLE });
+    expect(within(highlight).queryByRole('img')).not.toBeInTheDocument();
+    expect(highlight.querySelector('img')).toBeNull();
+    expect(within(highlight).queryByLabelText(/Imagen no disponible/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the heading as the region name with the meal-type chip in its header row, before the card body', () => {
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(UNORDERED_MEALS) }));
+
+    const highlight = view.getByRole('region', { name: NEXT_MEAL_TITLE });
+    const heading = within(highlight).getByRole('heading', { name: NEXT_MEAL_TITLE });
+    const chip = within(highlight).getByText('Almuerzo');
+    const title = within(highlight).getByText('Receta de prueba lunch');
+    const headerRow = heading.parentElement!;
+
+    expect(headerRow).toContainElement(chip);
+    expect(headerRow).not.toContainElement(title);
+    expect(heading.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(headerRow.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('sizes the greeting text-2xl on mobile and text-3xl from md', () => {
+    const { view } = renderView(viewModel({ userName: 'María José' }));
+
+    expect(view.getByRole('heading', { level: 1 })).toHaveClass('text-2xl', 'md:text-3xl');
+  });
+
+  it('wraps each quick-access icon in a 48px tile (h-12 w-12)', () => {
+    const { view } = renderFixture('comidas');
+
+    const nav = view.getByRole('navigation', { name: 'Accesos rápidos' });
+    const links = within(nav).getAllByRole('link');
+    expect(links).toHaveLength(3);
+    for (const link of links) {
+      expect(link.querySelector('.h-12.w-12')).not.toBeNull();
+    }
+  });
+});

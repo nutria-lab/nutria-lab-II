@@ -9,6 +9,7 @@ const QUICK_ACCESS_ITEMS = [
     description: 'Revisá las comidas de la semana',
     icon: 'calendar_month',
     tone: 'bg-primary-fixed text-on-primary-fixed',
+    iconTone: 'bg-brand-green text-on-primary',
   },
   {
     to: '/recipes',
@@ -16,6 +17,7 @@ const QUICK_ACCESS_ITEMS = [
     description: 'Buscá ideas y preparaciones',
     icon: 'menu_book',
     tone: 'bg-secondary-fixed text-on-surface',
+    iconTone: 'bg-secondary text-white',
   },
   {
     to: '/shopping-list',
@@ -23,6 +25,7 @@ const QUICK_ACCESS_ITEMS = [
     description: 'Ingredientes de tu plan',
     icon: 'shopping_cart',
     tone: 'bg-surface-container-high text-on-surface',
+    iconTone: 'bg-surface-dim text-on-surface',
   },
 ] as const;
 
@@ -39,8 +42,11 @@ export function QuickAccessLinks({ className = '' }: { className?: string }) {
               to={item.to}
               className={`flex min-h-[44px] items-center gap-4 rounded-xl p-4 transition-opacity hover:opacity-90 ${item.tone} ${FOCUS_VISIBLE_CLASSES}`}
             >
-              <span aria-hidden="true" className="material-symbols-outlined text-2xl">
-                {item.icon}
+              <span
+                aria-hidden="true"
+                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-lg ${item.iconTone}`}
+              >
+                <span className="material-symbols-outlined text-2xl">{item.icon}</span>
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{item.title}</span>

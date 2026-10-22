@@ -1,4 +1,5 @@
 import type { MealType } from '../../services/mealPlanService';
+import type { RecipeImage } from '../../services/recipeService';
 
 export type MealCompletionStatus = 'NOT_LOGGED' | 'COMPLETED' | 'SKIPPED';
 
@@ -49,6 +50,8 @@ export type TodayMeal = {
   title: string;
   recipeId: string | null;
   status: MealCompletionStatus | null;
+  // Opcional porque el contrato A no la incluye; se completa cuando la fuente de datos la provee.
+  image?: RecipeImage | null;
 };
 
 export type TodayMealsData =
