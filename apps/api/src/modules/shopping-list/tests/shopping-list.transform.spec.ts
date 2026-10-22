@@ -21,6 +21,43 @@ function plan(meals: MealInput[], id = 'plan-current') {
   };
 }
 
+function expectUnsafeAggregateContributionsToBeIsolated(
+  response: ReturnType<typeof transformShoppingList>,
+  expectedSources: Array<{ plannedMealId: string; recipeId: string; ingredientIndex: number; quantity: number; unit: string }>,
+) {
+  expect(response.items).toHaveLength(expectedSources.length);
+  expect(response.items.every((item) => item.quantity === null && item.unit === 'g')).toBe(true);
+  expect(response.items.every((item) => item.sources.length === 1)).toBe(true);
+  expect(response.items.flatMap((item) => item.sources).sort((left, right) => left.plannedMealId.localeCompare(right.plannedMealId))).toEqual(
+    expectedSources.slice().sort((left, right) => left.plannedMealId.localeCompare(right.plannedMealId)),
+  );
+  expect(response.warnings).toEqual(expectedSources
+    .map(({ plannedMealId, ingredientIndex }) => ({ code: 'INVALID_INGREDIENT', plannedMealId, ingredientIndex }))
+    .sort((left, right) => left.plannedMealId.localeCompare(right.plannedMealId)));
+
+  for (const item of response.items) {
+    expect(item.quantity).not.toBe(0);
+    if (item.quantity === null) {
+      expect(item.sources).toHaveLength(1);
+      expect(response.warnings).toContainEqual({
+        code: 'INVALID_INGREDIENT',
+        plannedMealId: item.sources[0].plannedMealId,
+        ingredientIndex: item.sources[0].ingredientIndex,
+      });
+    }
+  }
+
+  const serialized = JSON.parse(JSON.stringify(response));
+  expect(serialized.items.every((item: { quantity: number | null }) => item.quantity === null || Number.isFinite(item.quantity))).toBe(true);
+  for (const item of serialized.items.filter((candidate: { quantity: number | null }) => candidate.quantity === null)) {
+    expect(response.warnings).toContainEqual({
+      code: 'INVALID_INGREDIENT',
+      plannedMealId: item.sources[0].plannedMealId,
+      ingredientIndex: item.sources[0].ingredientIndex,
+    });
+  }
+}
+
 describe('transformShoppingList', () => {
   it('normalizes names with NFKC while preserving accents and consolidates canonical unit aliases', () => {
     const response = transformShoppingList('2026-10-19', plan([
@@ -129,6 +166,38 @@ describe('transformShoppingList', () => {
     expect(response.items.find((item) => item.name === 'sal')?.sources.map((source) => source.quantity))
       .toEqual([0.0004, 0.0004, 0.0004]);
     expect(response.items.find((item) => item.name === 'azúcar')?.quantity).toBe(1.235);
+  });
+
+  it('isolates every contribution when positive totals round to zero and remains deterministic', () => {
+    const meals = [
+      meal('meal-b', 'recipe-b', [{ name: 'Sal', quantity: 0.0001, unit: 'g' }]),
+      meal('meal-a', 'recipe-a', [{ name: ' sal ', quantity: 0.0001, unit: 'gramos' }]),
+    ];
+    const response = transformShoppingList('2026-10-19', plan(meals));
+    const reordered = transformShoppingList('2026-10-19', plan(meals.slice().reverse()));
+
+    expectUnsafeAggregateContributionsToBeIsolated(response, [
+      { plannedMealId: 'meal-a', recipeId: 'recipe-a', ingredientIndex: 0, quantity: 0.0001, unit: 'g' },
+      { plannedMealId: 'meal-b', recipeId: 'recipe-b', ingredientIndex: 0, quantity: 0.0001, unit: 'g' },
+    ]);
+    expect(response).toEqual(reordered);
+    expect(response.items.map((item) => item.key)).toEqual(reordered.items.map((item) => item.key));
+  });
+
+  it('isolates every contribution when a finite total exceeds the number range and remains deterministic', () => {
+    const meals = [
+      meal('meal-b', 'recipe-b', [{ name: 'Sal', quantity: Number.MAX_VALUE, unit: 'g' }]),
+      meal('meal-a', 'recipe-a', [{ name: ' sal ', quantity: Number.MAX_VALUE, unit: 'gramos' }]),
+    ];
+    const response = transformShoppingList('2026-10-19', plan(meals));
+    const reordered = transformShoppingList('2026-10-19', plan(meals.slice().reverse()));
+
+    expectUnsafeAggregateContributionsToBeIsolated(response, [
+      { plannedMealId: 'meal-a', recipeId: 'recipe-a', ingredientIndex: 0, quantity: Number.MAX_VALUE, unit: 'g' },
+      { plannedMealId: 'meal-b', recipeId: 'recipe-b', ingredientIndex: 0, quantity: Number.MAX_VALUE, unit: 'g' },
+    ]);
+    expect(response).toEqual(reordered);
+    expect(response.items.map((item) => item.key)).toEqual(reordered.items.map((item) => item.key));
   });
 
   it('keeps invalid quantities and units isolated by source while preserving valid fields', () => {
