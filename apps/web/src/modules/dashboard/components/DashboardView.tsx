@@ -26,7 +26,7 @@ export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) 
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <AdherenceWidgetSlot
-            state={viewModel.adherence}
+            {...viewModel.adherence}
             className={withNextMeal ? 'lg:col-span-5 lg:col-start-8 lg:row-start-1' : 'lg:col-span-12'}
           />
           <NextMealHighlight state={viewModel.todayMeals} className="lg:col-span-7 lg:col-start-1 lg:row-start-1" />

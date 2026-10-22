@@ -13,11 +13,17 @@ import type {
 // así que no se puede derivar de ahí.
 export const MEAL_TYPE_ORDER: readonly MealType[] = ['BREAKFAST', 'LUNCH', 'SNACK', 'DINNER'];
 
+// Glosario aprobado en NUT-93; debe moverse a un módulo compartido con NUT-93/NUT-94.
 export const MEAL_STATUS_LABELS: Record<MealCompletionStatus, string> = {
-  NOT_LOGGED: 'Pendiente',
-  COMPLETED: 'Registrada',
-  SKIPPED: 'Salteada',
+  NOT_LOGGED: 'Sin registrar',
+  COMPLETED: 'Completada',
+  SKIPPED: 'Omitida',
 };
+
+// El backend puede enviar null o un estado nuevo: solo se aceptan las claves propias del mapa.
+export function isKnownStatus(status: MealCompletionStatus | null): status is MealCompletionStatus {
+  return status !== null && Object.hasOwn(MEAL_STATUS_LABELS, status);
+}
 
 export function sortMealsByType(meals: readonly TodayMeal[]): TodayMeal[] {
   return [...meals].sort(
@@ -46,7 +52,7 @@ export function selectTodayMeals(adherence: AdherenceResponse): TodayMealsData {
 }
 
 export function hasUnknownStatus(meals: readonly TodayMeal[]): boolean {
-  return meals.some((meal) => meal.status === null);
+  return meals.some((meal) => !isKnownStatus(meal.status));
 }
 
 // La siguiente comida es la primera pendiente en orden fijo, no según la hora del día.
@@ -71,15 +77,13 @@ export function buildGreeting(name: string | null | undefined): string {
 }
 
 export function getMealStatusLabel(status: MealCompletionStatus | null): string | null {
-  // El backend puede enviar un estado nuevo: solo se aceptan las claves propias del mapa.
-  if (status === null || !Object.hasOwn(MEAL_STATUS_LABELS, status)) return null;
-  return MEAL_STATUS_LABELS[status];
+  return isKnownStatus(status) ? MEAL_STATUS_LABELS[status] : null;
 }
 
 export function buildUnavailableViewModel(userName: string | null): DashboardViewModel {
   return {
     userName,
     todayMeals: { kind: 'unavailable' },
-    adherence: { kind: 'unavailable' },
+    adherence: { data: null, loading: false, error: null, onRetry: () => {} },
   };
 }

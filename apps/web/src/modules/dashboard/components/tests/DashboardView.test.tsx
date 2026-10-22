@@ -3,8 +3,14 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { AdherenceWidgetProps } from '@/modules/dashboard/adherence-widget/types';
 import { DashboardView } from '@/modules/dashboard/components/DashboardView';
-import { DASHBOARD_FIXTURES, selectDashboardFixture, type DashboardFixtureKey } from '@/modules/dashboard/fixtures';
+import {
+  DASHBOARD_FIXTURES,
+  adherenceResponseFixture,
+  selectDashboardFixture,
+  type DashboardFixtureKey,
+} from '@/modules/dashboard/fixtures';
 import type {
   CardState,
   DashboardViewModel,
@@ -25,7 +31,7 @@ const MEALS_ERROR = 'No pudimos cargar tus comidas de hoy.';
 const PROGRESS_ERROR = 'No pudimos cargar tu progreso.';
 const PARTIAL_NOTE = 'El estado de registro no está disponible por ahora.';
 const UNAVAILABLE = 'No disponible todavía';
-const STATUS_CHIPS = ['Pendiente', 'Registrada', 'Salteada'];
+const STATUS_CHIPS = ['Sin registrar', 'Completada', 'Omitida'];
 const EXCLUDED_COPY = /premium|racha|logro|notificaci|hidrat|consejo/i;
 
 function meal(overrides: Partial<TodayMeal> & Pick<TodayMeal, 'plannedMealId' | 'mealType'>): TodayMeal {
@@ -41,11 +47,15 @@ function readyMeals(meals: TodayMeal[]): CardState<TodayMealsData> {
   return { kind: 'ready', data: { kind: 'meals', meals } };
 }
 
+function readyAdherence(overrides: Partial<AdherenceWidgetProps> = {}): AdherenceWidgetProps {
+  return { data: adherenceResponseFixture, loading: false, error: null, onRetry: vi.fn(), ...overrides };
+}
+
 function viewModel(overrides: Partial<DashboardViewModel> = {}): DashboardViewModel {
   return {
     userName: 'María José',
     todayMeals: readyMeals([]),
-    adherence: { kind: 'ready', data: null },
+    adherence: readyAdherence(),
     ...overrides,
   };
 }
@@ -59,14 +69,15 @@ function renderView(model: DashboardViewModel) {
   return { container, view: within(container) };
 }
 
-function renderFixture(key: DashboardFixtureKey, userName: string | null = 'María José') {
-  const model = selectDashboardFixture(key, userName);
+function renderFixture(key: DashboardFixtureKey, userName: string | null = 'María José', onRetry = vi.fn()) {
+  const model = selectDashboardFixture(key, userName, onRetry);
   if (!model) throw new Error(`Fixture ${key} not found`);
   return renderView(model);
 }
 
 function fixtureMeals(key: DashboardFixtureKey): TodayMeal[] {
-  const state = DASHBOARD_FIXTURES[key].todayMeals;
+  const state = selectDashboardFixture(key, null, vi.fn())?.todayMeals;
+  if (!state) throw new Error(`Fixture ${key} not found`);
   if (state.kind !== 'ready' || state.data.kind !== 'meals') {
     throw new Error(`El fixture ${key} no tiene comidas`);
   }
@@ -129,10 +140,10 @@ describe('DashboardView today meals list', () => {
     expect(items).toHaveLength(4);
 
     const expected = [
-      ['Desayuno', 'Registrada', 'Receta de prueba breakfast'],
-      ['Almuerzo', 'Pendiente', 'Receta de prueba lunch'],
-      ['Merienda', 'Salteada', 'Receta de prueba snack'],
-      ['Cena', 'Pendiente', 'Receta de prueba dinner'],
+      ['Desayuno', 'Completada', 'Receta de prueba breakfast'],
+      ['Almuerzo', 'Sin registrar', 'Receta de prueba lunch'],
+      ['Merienda', 'Omitida', 'Receta de prueba snack'],
+      ['Cena', 'Sin registrar', 'Receta de prueba dinner'],
     ];
     items.forEach((item, index) => {
       const [label, chip, title] = expected[index]!;
@@ -308,21 +319,51 @@ describe('DashboardView card states', () => {
     expect(view.getByRole('navigation', { name: 'Accesos rápidos' })).toBeInTheDocument();
   });
 
-  it('error: shows both error messages as alerts and no retry button without retry', () => {
+  it('unknown status string counts as unknown: no all-logged claim and the unavailable-status note (§16)', () => {
+    const meals = [
+      meal({ plannedMealId: 'breakfast', mealType: 'BREAKFAST', status: 'PARTIAL' as MealCompletionStatus }),
+      meal({ plannedMealId: 'lunch', mealType: 'LUNCH', status: 'COMPLETED' }),
+    ];
+
+    const { view } = renderView(viewModel({ todayMeals: readyMeals(meals) }));
+
+    expect(view.queryByText(ALL_LOGGED)).not.toBeInTheDocument();
+    expect(view.getByText(PARTIAL_NOTE)).toBeInTheDocument();
+    expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+  });
+
+  it('error: shows both error messages as alerts, each with an always-present "Reintentar" (§16)', () => {
     const { view } = renderFixture('error');
 
     expect(view.getByText(MEALS_ERROR).closest('[role="alert"]')).not.toBeNull();
     expect(view.getByText(PROGRESS_ERROR).closest('[role="alert"]')).not.toBeNull();
-    expect(view.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+    const meals = view.getByRole('region', { name: 'Comidas de hoy' });
+    const progress = view.getByRole('region', { name: 'Progreso semanal' });
+    expect(within(meals).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
+    expect(within(progress).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+  });
+
+  it('error fixture: both "Reintentar" buttons call the onRetry passed to selectDashboardFixture', async () => {
+    const onRetry = vi.fn();
+    const { view } = renderFixture('error', 'María José', onRetry);
+
+    await userEvent.click(
+      within(view.getByRole('region', { name: 'Comidas de hoy' })).getByRole('button', { name: 'Reintentar' }),
+    );
+    await userEvent.click(
+      within(view.getByRole('region', { name: 'Progreso semanal' })).getByRole('button', { name: 'Reintentar' }),
+    );
+
+    expect(onRetry).toHaveBeenCalledTimes(2);
   });
 
   it('error: "Reintentar" calls the today meals retry', async () => {
     const retry = vi.fn();
     const { view } = renderView(
       viewModel({
-        todayMeals: { kind: 'error', message: 'fallo de red', retry },
-        adherence: { kind: 'ready', data: null },
+        todayMeals: { kind: 'error', retry },
+        adherence: readyAdherence(),
       }),
     );
 
@@ -336,7 +377,7 @@ describe('DashboardView card states', () => {
     const { view } = renderView(
       viewModel({
         todayMeals: readyMeals(UNORDERED_MEALS),
-        adherence: { kind: 'error', message: 'fallo de red', retry },
+        adherence: { data: null, loading: false, error: 'fallo de red', onRetry: retry },
       }),
     );
 
@@ -346,8 +387,9 @@ describe('DashboardView card states', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('partial error: lists meals without chips, shows the note and the progress slot error', () => {
-    const { view } = renderFixture('error-parcial');
+  it('partial error: lists meals without chips, shows the note and the progress slot error with retry', async () => {
+    const onRetry = vi.fn();
+    const { view } = renderFixture('error-parcial', 'María José', onRetry);
 
     expect(within(todayMealsList(view)).getAllByRole('listitem')).toHaveLength(
       fixtureMeals('error-parcial').length,
@@ -360,6 +402,8 @@ describe('DashboardView card states', () => {
 
     const slot = view.getByRole('region', { name: 'Progreso semanal' });
     expect(within(slot).getByRole('alert')).toHaveTextContent(PROGRESS_ERROR);
+    await userEvent.click(within(slot).getByRole('button', { name: 'Reintentar' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
   it('unavailable: both cards say "No disponible todavía" with no loading indicator', () => {
@@ -375,8 +419,10 @@ describe('DashboardView card states', () => {
 });
 
 describe('DashboardView progress slot', () => {
-  const extraStates: Array<[string, CardState<null>]> = [
-    ['error with retry', { kind: 'error', message: 'Error 500: 85%', retry: () => undefined }],
+  const extraStates: Array<[string, AdherenceWidgetProps]> = [
+    ['error without data', { data: null, loading: false, error: 'Error 500: 85%', onRetry: () => undefined }],
+    ['data with error', readyAdherence({ error: 'Error 500: 85%' })],
+    ['data without error', readyAdherence()],
   ];
 
   it.each(FIXTURE_KEYS)('never shows digits or "%" in the %s fixture', (key) => {
@@ -434,10 +480,10 @@ describe('DashboardView Stitch visual fixes (§15)', () => {
 
     const items = within(todayMealsList(view)).getAllByRole('listitem');
     const expected = [
-      ['Receta de prueba breakfast', 'Registrada'],
-      ['Receta de prueba lunch', 'Pendiente'],
-      ['Receta de prueba snack', 'Salteada'],
-      ['Receta de prueba dinner', 'Pendiente'],
+      ['Receta de prueba breakfast', 'Completada'],
+      ['Receta de prueba lunch', 'Sin registrar'],
+      ['Receta de prueba snack', 'Omitida'],
+      ['Receta de prueba dinner', 'Sin registrar'],
     ];
     items.forEach((item, index) => {
       const [titleText, chipText] = expected[index]!;

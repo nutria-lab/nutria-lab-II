@@ -1,3 +1,4 @@
+import type { AdherenceWidgetProps } from './adherence-widget/types';
 import type { AdherenceResponse, DashboardViewModel, TodayMeal } from './types';
 
 // Solo desarrollo. La cadena centinela va dentro de los datos para poder
@@ -36,31 +37,62 @@ const ALL_LOGGED_MEALS: TodayMeal[] = MIXED_MEALS.map((meal) => ({
 
 const UNKNOWN_STATUS_MEALS: TodayMeal[] = MIXED_MEALS.map((meal) => ({ ...meal, status: null }));
 
-const READY_SLOT = { kind: 'ready', data: null } as const;
+// El retry se inyecta al seleccionar el fixture para que la página controle el flujo de recuperación.
+type FixtureBuilder = (onRetry: () => void) => DashboardFixture;
 
-export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, DashboardFixture> = {
-  loading: { todayMeals: { kind: 'loading' }, adherence: { kind: 'loading' } },
-  'sin-plan': { todayMeals: { kind: 'ready', data: { kind: 'noPlan' } }, adherence: READY_SLOT },
-  'sin-comidas': { todayMeals: { kind: 'ready', data: { kind: 'noMealsToday' } }, adherence: READY_SLOT },
-  comidas: { todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } }, adherence: READY_SLOT },
-  'todo-registrado': {
+const readyAdherence = (onRetry: () => void): AdherenceWidgetProps => ({
+  data: adherenceResponseFixture,
+  loading: false,
+  error: null,
+  onRetry,
+});
+
+// Texto interno de ejemplo: el slot nunca lo muestra (copy fijo) y no lleva dígitos ni "%".
+const failedAdherence = (onRetry: () => void): AdherenceWidgetProps => ({
+  data: null,
+  loading: false,
+  error: 'No se pudo obtener el progreso.',
+  onRetry,
+});
+
+export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, FixtureBuilder> = {
+  loading: (onRetry) => ({
+    todayMeals: { kind: 'loading' },
+    adherence: { data: null, loading: true, error: null, onRetry },
+  }),
+  'sin-plan': (onRetry) => ({
+    todayMeals: { kind: 'ready', data: { kind: 'noPlan' } },
+    adherence: readyAdherence(onRetry),
+  }),
+  'sin-comidas': (onRetry) => ({
+    todayMeals: { kind: 'ready', data: { kind: 'noMealsToday' } },
+    adherence: readyAdherence(onRetry),
+  }),
+  comidas: (onRetry) => ({
+    todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
+    adherence: readyAdherence(onRetry),
+  }),
+  'todo-registrado': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: ALL_LOGGED_MEALS } },
-    adherence: READY_SLOT,
-  },
-  error: {
-    todayMeals: { kind: 'error', message: 'No se pudieron obtener las comidas.' },
-    adherence: { kind: 'error', message: 'No se pudo obtener el progreso.' },
-  },
-  'error-parcial': {
+    adherence: readyAdherence(onRetry),
+  }),
+  error: (onRetry) => ({
+    todayMeals: { kind: 'error', retry: onRetry },
+    adherence: failedAdherence(onRetry),
+  }),
+  'error-parcial': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: UNKNOWN_STATUS_MEALS } },
-    adherence: { kind: 'error', message: 'No se pudo obtener el progreso.' },
-  },
-  'no-disponible': { todayMeals: { kind: 'unavailable' }, adherence: { kind: 'unavailable' } },
-  'sin-nombre': {
+    adherence: failedAdherence(onRetry),
+  }),
+  'no-disponible': (onRetry) => ({
+    todayMeals: { kind: 'unavailable' },
+    adherence: { data: null, loading: false, error: null, onRetry },
+  }),
+  'sin-nombre': (onRetry) => ({
     userName: null,
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
-    adherence: READY_SLOT,
-  },
+    adherence: readyAdherence(onRetry),
+  }),
 };
 
 // Valida el contrato de adherencia; nunca se renderiza.
@@ -96,9 +128,13 @@ function isFixtureKey(key: string | null): key is DashboardFixtureKey {
 }
 
 // Devuelve null ante una clave desconocida: la página muestra el estado no disponible.
-export function selectDashboardFixture(key: string | null, userName: string | null): DashboardViewModel | null {
+export function selectDashboardFixture(
+  key: string | null,
+  userName: string | null,
+  onRetry: () => void,
+): DashboardViewModel | null {
   if (!isFixtureKey(key)) return null;
-  const fixture = DASHBOARD_FIXTURES[key];
+  const fixture = DASHBOARD_FIXTURES[key](onRetry);
   return {
     userName: fixture.userName === null ? null : userName,
     todayMeals: fixture.todayMeals,

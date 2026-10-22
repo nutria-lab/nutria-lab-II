@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   DASHBOARD_FIXTURES,
@@ -7,7 +7,7 @@ import {
   selectDashboardFixture,
   type DashboardFixtureKey,
 } from '@/modules/dashboard/fixtures';
-import type { TodayMeal } from '@/modules/dashboard/types';
+import type { DashboardViewModel, TodayMeal } from '@/modules/dashboard/types';
 import { sortMealsByType, selectTodayMeals } from '@/modules/dashboard/utils';
 
 const FIXTURE_KEYS: DashboardFixtureKey[] = [
@@ -22,11 +22,20 @@ const FIXTURE_KEYS: DashboardFixtureKey[] = [
   'sin-nombre',
 ];
 
+const READY_ADHERENCE_KEYS: DashboardFixtureKey[] = ['sin-plan', 'sin-comidas', 'comidas', 'todo-registrado', 'sin-nombre'];
+
 // Datos de muestra de los frames de Stitch que nunca deben llegar a los fixtures.
 const STITCH_SAMPLE_DATA = /Elena|Russo|Martina|Quinoa|Mediterranean|Hamburguesa|kcal/i;
 
+// Los retry se inyectan al seleccionar el fixture (§16), así que los estados se leen desde ahí.
+function selectValid(key: DashboardFixtureKey, userName: string | null, onRetry: () => void = vi.fn()): DashboardViewModel {
+  const viewModel = selectDashboardFixture(key, userName, onRetry);
+  if (viewModel === null) throw new Error(`selectDashboardFixture returned null for ${key}`);
+  return viewModel;
+}
+
 function mealsOf(key: DashboardFixtureKey): TodayMeal[] {
-  const state = DASHBOARD_FIXTURES[key].todayMeals;
+  const state = selectValid(key, 'María José').todayMeals;
   if (state.kind !== 'ready' || state.data.kind !== 'meals') {
     throw new Error(`El fixture ${key} no tiene comidas`);
   }
@@ -40,7 +49,7 @@ describe('DASHBOARD_FIXTURE_SENTINEL', () => {
 
   it('is embedded in every plannedMealId of the view model fixtures', () => {
     const ids = FIXTURE_KEYS.flatMap((key) => {
-      const state = DASHBOARD_FIXTURES[key].todayMeals;
+      const state = selectValid(key, 'María José').todayMeals;
       return state.kind === 'ready' && state.data.kind === 'meals'
         ? state.data.meals.map((meal) => meal.plannedMealId)
         : [];
@@ -67,28 +76,37 @@ describe('DASHBOARD_FIXTURES', () => {
     expect(Object.keys(DASHBOARD_FIXTURES).sort()).toEqual([...FIXTURE_KEYS].sort());
   });
 
-  it('loading: both cards are loading', () => {
-    expect(DASHBOARD_FIXTURES.loading.todayMeals.kind).toBe('loading');
-    expect(DASHBOARD_FIXTURES.loading.adherence.kind).toBe('loading');
+  it('loading: today meals loading and adherence loading without data nor error', () => {
+    const { todayMeals, adherence } = selectValid('loading', 'María José');
+
+    expect(todayMeals.kind).toBe('loading');
+    expect(adherence).toMatchObject({ data: null, loading: true, error: null });
   });
 
-  it('sin-plan: today meals ready with noPlan, progress slot ready', () => {
-    const { todayMeals, adherence } = DASHBOARD_FIXTURES['sin-plan'];
-    expect(todayMeals).toEqual({ kind: 'ready', data: { kind: 'noPlan' } });
-    expect(adherence.kind).toBe('ready');
+  it('sin-plan: today meals ready with noPlan', () => {
+    expect(selectValid('sin-plan', 'María José').todayMeals).toEqual({ kind: 'ready', data: { kind: 'noPlan' } });
   });
 
-  it('sin-comidas: today meals ready with noMealsToday, progress slot ready', () => {
-    const { todayMeals, adherence } = DASHBOARD_FIXTURES['sin-comidas'];
-    expect(todayMeals).toEqual({ kind: 'ready', data: { kind: 'noMealsToday' } });
-    expect(adherence.kind).toBe('ready');
+  it('sin-comidas: today meals ready with noMealsToday', () => {
+    expect(selectValid('sin-comidas', 'María José').todayMeals).toEqual({
+      kind: 'ready',
+      data: { kind: 'noMealsToday' },
+    });
+  });
+
+  it.each(READY_ADHERENCE_KEYS)('%s: adherence has data, is not loading and has no error', (key) => {
+    const { adherence } = selectValid(key, 'María José');
+
+    expect(adherence.data).not.toBeNull();
+    expect(adherence.loading).toBe(false);
+    expect(adherence.error).toBeNull();
+    expect(adherence.onRetry).toEqual(expect.any(Function));
   });
 
   it('comidas: unordered mixed meals with every status and a meal without recipe', () => {
     const meals = mealsOf('comidas');
     const statuses = meals.map((meal) => meal.status);
 
-    expect(DASHBOARD_FIXTURES.comidas.adherence.kind).toBe('ready');
     expect(statuses).toEqual(expect.arrayContaining(['NOT_LOGGED', 'COMPLETED', 'SKIPPED']));
     expect(meals.some((meal) => meal.status === 'NOT_LOGGED' && meal.recipeId !== null)).toBe(true);
     expect(meals.some((meal) => meal.recipeId === null)).toBe(true);
@@ -110,45 +128,54 @@ describe('DASHBOARD_FIXTURES', () => {
     for (const meal of meals) {
       expect(['COMPLETED', 'SKIPPED']).toContain(meal.status);
     }
-    expect(DASHBOARD_FIXTURES['todo-registrado'].adherence.kind).toBe('ready');
   });
 
-  it('error: both cards in error without retry', () => {
-    const { todayMeals, adherence } = DASHBOARD_FIXTURES.error;
+  it('error: both cards in error and both retries are the injected onRetry (§16)', () => {
+    const onRetry = vi.fn();
+    const { todayMeals, adherence } = selectValid('error', 'María José', onRetry);
 
-    expect(todayMeals.kind).toBe('error');
-    expect(adherence.kind).toBe('error');
-    expect(todayMeals.kind === 'error' && todayMeals.retry).toBeFalsy();
-    expect(adherence.kind === 'error' && adherence.retry).toBeFalsy();
+    expect(todayMeals).toEqual({ kind: 'error', retry: onRetry });
+    expect(todayMeals.kind === 'error' && todayMeals.retry).toBe(onRetry);
+    expect(adherence.data).toBeNull();
+    expect(adherence.loading).toBe(false);
+    expect(adherence.error?.length).toBeGreaterThan(0);
+    expect(adherence.onRetry).toBe(onRetry);
   });
 
-  it('error-parcial: meals listed with null status while the progress slot errors', () => {
+  it('error-parcial: meals listed with null status while adherence errors with the injected onRetry', () => {
+    const onRetry = vi.fn();
+    const { adherence } = selectValid('error-parcial', 'María José', onRetry);
+
     const meals = mealsOf('error-parcial');
-
     expect(meals.length).toBeGreaterThan(0);
     for (const meal of meals) {
       expect(meal.status).toBeNull();
     }
-    const { adherence } = DASHBOARD_FIXTURES['error-parcial'];
-    expect(adherence.kind).toBe('error');
-    expect(adherence.kind === 'error' && adherence.message.length).toBeGreaterThan(0);
+    expect(adherence.data).toBeNull();
+    expect(adherence.loading).toBe(false);
+    expect(adherence.error?.length).toBeGreaterThan(0);
+    expect(adherence.onRetry).toBe(onRetry);
   });
 
-  it('no-disponible: both cards unavailable', () => {
-    expect(DASHBOARD_FIXTURES['no-disponible'].todayMeals.kind).toBe('unavailable');
-    expect(DASHBOARD_FIXTURES['no-disponible'].adherence.kind).toBe('unavailable');
+  it('no-disponible: today meals unavailable and adherence empty', () => {
+    const { todayMeals, adherence } = selectValid('no-disponible', 'María José');
+
+    expect(todayMeals.kind).toBe('unavailable');
+    expect(adherence).toMatchObject({ data: null, loading: false, error: null });
   });
 
   it('sin-nombre: same meals state as comidas', () => {
-    expect(DASHBOARD_FIXTURES['sin-nombre'].todayMeals).toEqual(DASHBOARD_FIXTURES.comidas.todayMeals);
-    expect(DASHBOARD_FIXTURES['sin-nombre'].adherence.kind).toBe('ready');
+    expect(selectValid('sin-nombre', 'María José').todayMeals).toEqual(selectValid('comidas', 'María José').todayMeals);
   });
 
   it('contain no percentages nor Stitch sample names or dishes', () => {
-    const serialized = JSON.stringify(DASHBOARD_FIXTURES);
+    const models = FIXTURE_KEYS.map((key) => selectValid(key, 'María José'));
+    // adherence.data reutiliza adherenceResponseFixture, cuyas claves `adherencePercent` se validan aparte.
+    const serializedMeals = JSON.stringify(models.map((model) => model.todayMeals));
+    const serialized = JSON.stringify(models);
 
     expect(serialized).not.toContain('%');
-    expect(serialized).not.toMatch(/percent/i);
+    expect(serializedMeals).not.toMatch(/percent/i);
     expect(serialized).not.toMatch(STITCH_SAMPLE_DATA);
   });
 });
@@ -172,21 +199,17 @@ describe('adherenceResponseFixture', () => {
   });
 });
 
-function selectValid(key: DashboardFixtureKey, userName: string | null) {
-  const viewModel = selectDashboardFixture(key, userName);
-  if (viewModel === null) throw new Error(`selectDashboardFixture returned null for ${key}`);
-  return viewModel;
-}
-
 describe('selectDashboardFixture', () => {
   it.each(FIXTURE_KEYS.filter((key) => key !== 'sin-nombre'))(
     'returns the %s fixture with the session userName',
     (key) => {
-      const viewModel = selectValid(key, 'María José');
+      const onRetry = vi.fn();
+      const viewModel = selectValid(key, 'María José', onRetry);
+      const other = selectValid(key, 'Otra Persona', onRetry);
 
       expect(viewModel.userName).toBe('María José');
-      expect(viewModel.todayMeals).toEqual(DASHBOARD_FIXTURES[key].todayMeals);
-      expect(viewModel.adherence).toEqual(DASHBOARD_FIXTURES[key].adherence);
+      expect(viewModel.todayMeals).toEqual(other.todayMeals);
+      expect(viewModel.adherence).toEqual(other.adherence);
     },
   );
 
@@ -194,7 +217,7 @@ describe('selectDashboardFixture', () => {
     const viewModel = selectValid('sin-nombre', 'María José');
 
     expect(viewModel.userName).toBeNull();
-    expect(viewModel.todayMeals).toEqual(DASHBOARD_FIXTURES.comidas.todayMeals);
+    expect(viewModel.todayMeals).toEqual(selectValid('comidas', 'María José').todayMeals);
   });
 
   it.each([
@@ -203,7 +226,7 @@ describe('selectDashboardFixture', () => {
     ['missing', null],
     ['inherited object property', 'toString'],
   ])('returns null (no fallback to comidas) for a %s key', (_label, key) => {
-    expect(selectDashboardFixture(key, 'María José')).toBeNull();
+    expect(selectDashboardFixture(key, 'María José', vi.fn())).toBeNull();
   });
 
   it('keeps a null session userName', () => {

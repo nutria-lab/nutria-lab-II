@@ -316,16 +316,16 @@ describe('nextMealToLog', () => {
 describe('meal status labels', () => {
   it('maps every status to its label', () => {
     expect(MEAL_STATUS_LABELS).toEqual({
-      NOT_LOGGED: 'Pendiente',
-      COMPLETED: 'Registrada',
-      SKIPPED: 'Salteada',
+      NOT_LOGGED: 'Sin registrar',
+      COMPLETED: 'Completada',
+      SKIPPED: 'Omitida',
     });
   });
 
   it.each<[MealCompletionStatus, string]>([
-    ['NOT_LOGGED', 'Pendiente'],
-    ['COMPLETED', 'Registrada'],
-    ['SKIPPED', 'Salteada'],
+    ['NOT_LOGGED', 'Sin registrar'],
+    ['COMPLETED', 'Completada'],
+    ['SKIPPED', 'Omitida'],
   ])('getMealStatusLabel(%s) is %s', (status, label) => {
     expect(getMealStatusLabel(status)).toBe(label);
   });
@@ -345,6 +345,15 @@ describe('hasUnknownStatus', () => {
       hasUnknownStatus([
         meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: 'COMPLETED' }),
         meal({ plannedMealId: 'l', mealType: 'LUNCH', status: null }),
+      ]),
+    ).toBe(true);
+  });
+
+  it('is true when any meal has a status outside NOT_LOGGED, COMPLETED, SKIPPED (§16)', () => {
+    expect(
+      hasUnknownStatus([
+        meal({ plannedMealId: 'b', mealType: 'BREAKFAST', status: 'PARTIAL' as MealCompletionStatus }),
+        meal({ plannedMealId: 'l', mealType: 'LUNCH', status: 'COMPLETED' }),
       ]),
     ).toBe(true);
   });
@@ -401,7 +410,7 @@ describe('hasNextMealColumn', () => {
   });
 
   it.each<[string, CardState<TodayMealsData>]>([
-    ['error', { kind: 'error', message: 'fallo' }],
+    ['error', { kind: 'error', retry: vi.fn() }],
     ['unavailable', { kind: 'unavailable' }],
     ['noPlan', { kind: 'ready', data: { kind: 'noPlan' } }],
     ['noMealsToday', { kind: 'ready', data: { kind: 'noMealsToday' } }],
@@ -411,13 +420,11 @@ describe('hasNextMealColumn', () => {
 });
 
 describe('buildUnavailableViewModel', () => {
-  it('marks both cards as unavailable and keeps the user name', () => {
-    const unavailable: CardState<null> = { kind: 'unavailable' };
-
+  it('marks today meals unavailable, leaves adherence empty (no data, loading nor error) and keeps the user name', () => {
     expect(buildUnavailableViewModel('María José')).toEqual({
       userName: 'María José',
-      todayMeals: unavailable,
-      adherence: unavailable,
+      todayMeals: { kind: 'unavailable' },
+      adherence: { data: null, loading: false, error: null, onRetry: expect.any(Function) },
     });
   });
 
@@ -426,6 +433,7 @@ describe('buildUnavailableViewModel', () => {
 
     expect(viewModel.userName).toBeNull();
     expect(viewModel.todayMeals.kind).toBe('unavailable');
-    expect(viewModel.adherence.kind).toBe('unavailable');
+    expect(viewModel.adherence).toEqual({ data: null, loading: false, error: null, onRetry: expect.any(Function) });
+    expect(() => viewModel.adherence.onRetry()).not.toThrow();
   });
 });

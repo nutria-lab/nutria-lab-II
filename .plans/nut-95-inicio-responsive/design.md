@@ -47,7 +47,7 @@ type TodayMealsData =
 type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
-  adherence: CardState<AdherenceResponse>; // en NUT-95 solo se usa el kind, nunca los valores
+  adherence: AdherenceWidgetProps; // contrato único con NUT-103/NUT-94 (ver §16); el slot no muestra valores
 };
 ```
 
@@ -274,3 +274,23 @@ Ninguna. Sin cambios de schema, SQL, Neon ni endpoints. Los datos reales y su co
 - **Comidas de hoy:** el chip de estado va debajo del título para que el título use todo el ancho (antes se truncaba en móvil y desktop).
 - **Siguiente comida:** tarjeta blanca con sombra suave; el título "Siguiente comida por registrar" fuera de la tarjeta con el chip del tipo de comida a la derecha, en verde (como el frame).
 - **Accesos rápidos:** ícono dentro de un cuadrado de color de 48px. **Saludo:** `text-2xl` en móvil y `text-3xl` desde `md`.
+
+## 16. Correcciones de la review de la PR #67 (2026-10-22)
+
+**Contrato único del widget de adherencia (opción A).** El slot de progreso recibe `AdherenceWidgetProps` (`{ data, loading, error, onRetry }`), el mismo tipo que define NUT-103 en `adherence-widget/types.ts` (copiado idéntico). `DashboardViewModel.adherence` deja de ser `CardState<null>`. Así NUT-96 hace una sola traducción y NUT-94 reemplaza el contenido del slot sin cambiar el contrato. Precedencia en el slot (ningún caso muestra números):
+
+| Props | Se muestra |
+|---|---|
+| `loading` sin `data` | skeleton (gana sobre `error`) |
+| `error` sin `data` | "No pudimos cargar tu progreso." + Reintentar |
+| `data` sin `error` | "Tu progreso aparecerá aquí." |
+| `data` con `error` | lo anterior + aviso no bloqueante con Reintentar |
+| `data: null`, `loading: false`, `error: null` | **"No disponible todavía"** (producción mientras no hay backend) |
+
+**Error siempre recuperable.** `CardState` pasa a `{ kind: 'error'; retry: () => void }`: `retry` obligatorio (el compilador exige una salida) y sin `message` (ninguna tarjeta lo mostraba; el texto es fijo y no se exponen mensajes del backend). "Reintentar" aparece siempre en error. En desarrollo, el retry de los fixtures navega a `?estado=loading` y luego a `?estado=comidas` para que el PO valide el camino completo de recuperación.
+
+**Estados desconocidos.** Todo estado que no sea `NOT_LOGGED`, `COMPLETED` o `SKIPPED` (incluido `null` o uno nuevo del backend) cuenta como desconocido y cae en "error parcial": no se afirma "Ya registraste todas las comidas de hoy." y se muestra la nota de estado no disponible.
+
+**Vocabulario de estados.** Se adopta el glosario aprobado de NUT-93: `NOT_LOGGED` → "Sin registrar", `COMPLETED` → "Completada", `SKIPPED` → "Omitida". Al 2026-10-22 ese mapa no existe en `main`, así que vive en `MEAL_STATUS_LABELS` de este módulo. **Pendiente:** unificarlo en un módulo compartido que importen NUT-93, NUT-94 y NUT-95 (coordinar con Fer).
+
+**Merge.** `dashboard/types.ts` deja de ser idéntico a la copia de NUT-103. Orden: mergear primero esta PR (#67) y después rebasear #68 sobre `main` quedándose con la versión de `main` de `types.ts`. `adherence-widget/types.ts` es idéntico en ambas ramas.

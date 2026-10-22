@@ -1,5 +1,5 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DashboardPage } from '@/modules/dashboard/pages/DashboardPage';
@@ -36,6 +36,20 @@ function renderPage(entry: string) {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <DashboardPage />
+    </MemoryRouter>,
+  );
+}
+
+function LocationProbe() {
+  const { search } = useLocation();
+  return <output data-testid="location-search">{search}</output>;
+}
+
+function renderPageWithProbe(entry: string) {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <DashboardPage />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -112,6 +126,75 @@ describe('DashboardPage outside development', () => {
 
     expectUnavailable(container);
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
+  });
+
+  it('without ?estado, both "Progreso semanal" and "Comidas de hoy" say "No disponible todavía" and nothing is busy (§16)', () => {
+    renderPage('/dashboard');
+
+    const progress = screen.getByRole('region', { name: 'Progreso semanal' });
+    expect(within(progress).getByText(UNAVAILABLE)).toBeVisible();
+    expect(progress.querySelector('[aria-busy="true"]')).toBeNull();
+    const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+    expect(within(meals).getByText(UNAVAILABLE)).toBeVisible();
+    expect(meals.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+});
+
+describe('DashboardPage dev retry flow (§16)', () => {
+  const RETRY_DELAY_MS = 800;
+
+  beforeEach(() => {
+    vi.stubEnv('DEV', true);
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function clickMealsRetry() {
+    const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+    fireEvent.click(within(meals).getByRole('button', { name: 'Reintentar' }));
+  }
+
+  it('?estado=error → Reintentar goes to estado=loading, then to estado=comidas after the delay', () => {
+    const { container } = renderPageWithProbe('/dashboard?estado=error');
+
+    clickMealsRetry();
+
+    expect(new URLSearchParams(screen.getByTestId('location-search').textContent ?? '').get('estado')).toBe('loading');
+    expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(RETRY_DELAY_MS);
+    });
+
+    expect(new URLSearchParams(screen.getByTestId('location-search').textContent ?? '').get('estado')).toBe('comidas');
+    expect(screen.getByText(NEXT_MEAL_TITLE)).toBeInTheDocument();
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('unmounting before the delay clears the timer without throwing or warning', () => {
+    const errorSpy = vi.spyOn(console, 'error');
+    const warnSpy = vi.spyOn(console, 'warn');
+    const { unmount } = renderPageWithProbe('/dashboard?estado=error');
+    const timersBeforeRetry = vi.getTimerCount();
+
+    clickMealsRetry();
+    expect(vi.getTimerCount()).toBeGreaterThan(timersBeforeRetry);
+
+    unmount();
+    expect(vi.getTimerCount()).toBeLessThanOrEqual(timersBeforeRetry);
+    expect(() => {
+      act(() => {
+        vi.advanceTimersByTime(RETRY_DELAY_MS * 2);
+      });
+    }).not.toThrow();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
 

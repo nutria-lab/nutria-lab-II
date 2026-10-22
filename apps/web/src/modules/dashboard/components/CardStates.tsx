@@ -13,17 +13,16 @@ export function CardSkeleton({ rows }: { rows: number }) {
   );
 }
 
-export function CardError({ message, retry }: { message: string; retry?: () => void }) {
+// `message` es copy fijo de cada tarjeta; "Reintentar" siempre está porque todo error es recuperable.
+export function CardError({ message, retry }: { message: string; retry: () => void }) {
   return (
     <div className="flex flex-col items-start gap-4">
       <p role="alert" className="text-sm font-medium text-error">
         {message}
       </p>
-      {retry && (
-        <button type="button" onClick={retry} className={PRIMARY_CTA_CLASSES}>
-          Reintentar
-        </button>
-      )}
+      <button type="button" onClick={retry} className={PRIMARY_CTA_CLASSES}>
+        Reintentar
+      </button>
     </div>
   );
 }

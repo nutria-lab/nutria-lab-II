@@ -1,5 +1,6 @@
 import type { MealType } from '../../services/mealPlanService';
 import type { RecipeImage } from '../../services/recipeService';
+import type { AdherenceWidgetProps } from './adherence-widget/types';
 
 export type MealCompletionStatus = 'NOT_LOGGED' | 'COMPLETED' | 'SKIPPED';
 
@@ -40,7 +41,8 @@ export type AdherenceResponse = {
 
 export type CardState<T> =
   | { kind: 'loading' }
-  | { kind: 'error'; message: string; retry?: () => void }
+  // Todo error es recuperable y el copy lo fija cada tarjeta: no se exponen mensajes externos.
+  | { kind: 'error'; retry: () => void }
   | { kind: 'unavailable' }
   | { kind: 'ready'; data: T };
 
@@ -62,6 +64,6 @@ export type TodayMealsData =
 export type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
-  // El slot de adherencia solo usa `kind`: ningún valor de progreso llega a la UI todavía.
-  adherence: CardState<null>;
+  // Mismo contrato que el widget de adherencia (NUT-103); el slot nunca muestra valores de progreso.
+  adherence: AdherenceWidgetProps;
 };
