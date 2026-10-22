@@ -3,9 +3,20 @@
 import type { AdherenceResponse } from '../types';
 import type { AdherenceWidgetProps } from './types';
 
-export const ADHERENCE_WIDGET_ERROR_MESSAGE = 'No pudimos cargar tu progreso.';
+// Valor interno de ejemplo para la prop `error` en estos fixtures. La UI nunca lo muestra:
+// el widget usa un texto fijo propio.
+export const ADHERENCE_WIDGET_ERROR_MESSAGE = 'fixture: adherence request failed';
 
-export type AdherenceWidgetFixtureState ='noPlan' | 'planWithoutMeals' | 'partial' | 'loading' | 'error';
+export type AdherenceWidgetFixtureState =
+  | 'noPlan'
+  | 'planWithoutMeals'
+  | 'partial'
+  | 'loading'
+  | 'error'
+  | 'refreshing'
+  | 'staleWithError'
+  | 'unavailable'
+  | 'retrying';
 
 export const adherenceNoPlanFixture: AdherenceResponse = {
   weekStart: '2026-10-19',
@@ -455,5 +466,19 @@ export function createAdherenceWidgetProps(
       return { data: structuredClone(adherencePlanWithoutMealsFixture), loading: false, error: null, onRetry };
     case 'partial':
       return { data: structuredClone(adherencePartialProgressFixture), loading: false, error: null, onRetry };
+    // Estados combinados: la precedencia entre data, loading y error está documentada en types.ts.
+    case 'refreshing':
+      return { data: structuredClone(adherencePartialProgressFixture), loading: true, error: null, onRetry };
+    case 'staleWithError':
+      return {
+        data: structuredClone(adherencePartialProgressFixture),
+        loading: false,
+        error: ADHERENCE_WIDGET_ERROR_MESSAGE,
+        onRetry,
+      };
+    case 'unavailable':
+      return { data: null, loading: false, error: null, onRetry };
+    case 'retrying':
+      return { data: null, loading: true, error: ADHERENCE_WIDGET_ERROR_MESSAGE, onRetry };
   }
 }

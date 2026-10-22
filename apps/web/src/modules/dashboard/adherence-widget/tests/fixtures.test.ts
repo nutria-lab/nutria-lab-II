@@ -7,6 +7,7 @@ import {
   adherencePlanWithoutMealsFixture,
   createAdherenceWidgetProps,
 } from '@/modules/dashboard/adherence-widget/fixtures';
+import type { AdherenceWidgetFixtureState } from '@/modules/dashboard/adherence-widget/fixtures';
 import type {
   AdherenceDay,
   AdherenceMeal,
@@ -22,6 +23,18 @@ const allFixtures: ReadonlyArray<[string, AdherenceResponse]> = [
   ['noPlan', adherenceNoPlanFixture],
   ['planWithoutMeals', adherencePlanWithoutMealsFixture],
   ['partial', adherencePartialProgressFixture],
+];
+
+const ALL_STATES: ReadonlyArray<AdherenceWidgetFixtureState> = [
+  'noPlan',
+  'planWithoutMeals',
+  'partial',
+  'loading',
+  'error',
+  'refreshing',
+  'staleWithError',
+  'unavailable',
+  'retrying',
 ];
 
 const fixturesWithPlan: ReadonlyArray<[string, AdherenceResponse]> = [
@@ -78,6 +91,24 @@ describe('AdherenceWidget types', () => {
 
   it('createAdherenceWidgetProps returns AdherenceWidgetProps', () => {
     expectTypeOf(createAdherenceWidgetProps).returns.toEqualTypeOf<AdherenceWidgetProps>();
+  });
+
+  it('AdherenceWidgetFixtureState includes refreshing, staleWithError, unavailable and retrying', () => {
+    expectTypeOf<'refreshing'>().toMatchTypeOf<AdherenceWidgetFixtureState>();
+    expectTypeOf<'staleWithError'>().toMatchTypeOf<AdherenceWidgetFixtureState>();
+    expectTypeOf<'unavailable'>().toMatchTypeOf<AdherenceWidgetFixtureState>();
+    expectTypeOf<'retrying'>().toMatchTypeOf<AdherenceWidgetFixtureState>();
+    expectTypeOf<AdherenceWidgetFixtureState>().toEqualTypeOf<
+      | 'noPlan'
+      | 'planWithoutMeals'
+      | 'partial'
+      | 'loading'
+      | 'error'
+      | 'refreshing'
+      | 'staleWithError'
+      | 'unavailable'
+      | 'retrying'
+    >();
   });
 });
 
@@ -223,7 +254,7 @@ describe('createAdherenceWidgetProps', () => {
     expect(props).toMatchObject({ data: null, loading: true, error: null });
   });
 
-  it('error state has null data (never zero progress) and a friendly message', () => {
+  it('error state has null data (never zero progress) and an error message', () => {
     const props = createAdherenceWidgetProps('error');
     expect(props).toMatchObject({
       data: null,
@@ -233,8 +264,8 @@ describe('createAdherenceWidgetProps', () => {
     expect(props.data).toBeNull();
   });
 
-  it('exports the shared friendly error message', () => {
-    expect(ADHERENCE_WIDGET_ERROR_MESSAGE).toBe('No pudimos cargar tu progreso.');
+  it('exports the shared error message', () => {
+    expect(ADHERENCE_WIDGET_ERROR_MESSAGE).toBe('fixture: adherence request failed');
   });
 
   it('error state uses the shared error message constant', () => {
@@ -294,10 +325,139 @@ describe('createAdherenceWidgetProps', () => {
 
   it('is deterministic for the same arguments', () => {
     const onRetry = vi.fn();
-    for (const state of ['noPlan', 'planWithoutMeals', 'partial', 'loading', 'error'] as const) {
+    for (const state of ALL_STATES) {
       expect(createAdherenceWidgetProps(state, onRetry)).toEqual(
         createAdherenceWidgetProps(state, onRetry),
       );
     }
+  });
+
+  it.each(ALL_STATES)('%s state passes onRetry by reference and has a callable default', (state) => {
+    const onRetry = vi.fn();
+    const props = createAdherenceWidgetProps(state, onRetry);
+    expect(props.onRetry).toBe(onRetry);
+    props.onRetry();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+
+    const defaults = createAdherenceWidgetProps(state);
+    expect(typeof defaults.onRetry).toBe('function');
+    expect(() => defaults.onRetry()).not.toThrow();
+  });
+
+  describe('refreshing state (data + loading)', () => {
+    it('keeps the partial data as a clone while loading, without error', () => {
+      const props = createAdherenceWidgetProps('refreshing');
+      expect(props.data).toEqual(adherencePartialProgressFixture);
+      expect(props.data).not.toBe(adherencePartialProgressFixture);
+      expect(props.loading).toBe(true);
+      expect(props.error).toBeNull();
+    });
+  });
+
+  describe('staleWithError state (data + error)', () => {
+    it('keeps the partial data as a clone with the shared error message, not loading', () => {
+      const props = createAdherenceWidgetProps('staleWithError');
+      expect(props.data).toEqual(adherencePartialProgressFixture);
+      expect(props.data).not.toBe(adherencePartialProgressFixture);
+      expect(props.loading).toBe(false);
+      expect(props.error).toBe(ADHERENCE_WIDGET_ERROR_MESSAGE);
+    });
+  });
+
+  describe.each(['refreshing', 'staleWithError'] as const)('%s state data isolation', (state) => {
+    it('returns a different data reference on each call', () => {
+      expect(createAdherenceWidgetProps(state).data).not.toBe(createAdherenceWidgetProps(state).data);
+    });
+
+    it('mutating the returned data leaves the exported fixture unchanged', () => {
+      const snapshot = structuredClone(adherencePartialProgressFixture);
+      const props = createAdherenceWidgetProps(state);
+      expect(props.data).not.toBeNull();
+      props.data!.days[0].meals[0].status = 'SKIPPED';
+      props.data!.days[0].completedMeals = 0;
+      props.data!.summary.adherencePercent = 0;
+      expect(adherencePartialProgressFixture.days[0].meals[0].status).toBe('COMPLETED');
+      expect(adherencePartialProgressFixture).toEqual(snapshot);
+    });
+  });
+
+  describe('retrying state (loading + error)', () => {
+    it('has no data, is loading and keeps the shared error message', () => {
+      const onRetry = vi.fn();
+      const props = createAdherenceWidgetProps('retrying', onRetry);
+      expect(props).toEqual({
+        data: null,
+        loading: true,
+        error: ADHERENCE_WIDGET_ERROR_MESSAGE,
+        onRetry,
+      });
+      expect(props.onRetry).toBe(onRetry);
+    });
+
+    it('loading + error → loading wins: loading and error are set at the same time, without data', () => {
+      const retrying = createAdherenceWidgetProps('retrying');
+      expect(retrying.data).toBeNull();
+      expect(retrying.loading).toBe(true);
+      expect(retrying.error).not.toBeNull();
+      expect(retrying.error).toBe(ADHERENCE_WIDGET_ERROR_MESSAGE);
+    });
+
+    it('is distinct from loading (error: null) and from error (loading: false)', () => {
+      const onRetry = vi.fn();
+      const retrying = createAdherenceWidgetProps('retrying', onRetry);
+      const loading = createAdherenceWidgetProps('loading', onRetry);
+      const error = createAdherenceWidgetProps('error', onRetry);
+      expect(loading.error).toBeNull();
+      expect(error.loading).toBe(false);
+      expect(retrying.error).not.toBe(loading.error);
+      expect(retrying.loading).not.toBe(error.loading);
+      expect(retrying).not.toEqual(loading);
+      expect(retrying).not.toEqual(error);
+    });
+
+    it('provides a callable default onRetry', () => {
+      const props = createAdherenceWidgetProps('retrying');
+      expect(typeof props.onRetry).toBe('function');
+      expect(() => props.onRetry()).not.toThrow();
+    });
+
+    it('is deterministic for the same arguments', () => {
+      const onRetry = vi.fn();
+      expect(createAdherenceWidgetProps('retrying', onRetry)).toEqual(
+        createAdherenceWidgetProps('retrying', onRetry),
+      );
+    });
+  });
+
+  describe('unavailable state', () => {
+    it('has no data, is not loading and has no error', () => {
+      const props = createAdherenceWidgetProps('unavailable');
+      expect(props).toMatchObject({ data: null, loading: false, error: null });
+    });
+
+    it('is NOT a loading state', () => {
+      expect(createAdherenceWidgetProps('unavailable').loading).toBe(false);
+    });
+
+    it('is distinguishable from loading and error', () => {
+      const unavailable = createAdherenceWidgetProps('unavailable');
+      const loading = createAdherenceWidgetProps('loading');
+      const error = createAdherenceWidgetProps('error');
+      expect(unavailable.data).toBeNull();
+      expect(unavailable.loading).not.toBe(loading.loading);
+      expect(unavailable.error).not.toBe(error.error);
+      expect(unavailable).not.toEqual(loading);
+      expect(unavailable).not.toEqual(error);
+    });
+
+    it('mutating returned props never changes any exported fixture', () => {
+      const snapshots = allFixtures.map(([, fixture]) => structuredClone(fixture));
+      const props = createAdherenceWidgetProps('unavailable');
+      props.data = structuredClone(adherencePartialProgressFixture);
+      props.data.summary.adherencePercent = 0;
+      allFixtures.forEach(([, fixture], index) => {
+        expect(fixture).toEqual(snapshots[index]);
+      });
+    });
   });
 });
