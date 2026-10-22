@@ -75,11 +75,30 @@ describe('AdherenceWidgetSlot precedence (§16)', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('no data, not loading, no error: "No disponible todavía" without loading indicator', () => {
+  it('data while loading (refresh): ready placeholder, no skeleton, no alert nor retry', () => {
+    const slot = renderSlot(props({ data: adherenceResponseFixture, loading: true }));
+
+    expect(within(slot).getByText(PROGRESS_READY)).toBeInTheDocument();
+    expect(slot.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(within(slot).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(slot).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+  });
+
+  it('data + loading + error: loading wins (retry in flight), ready placeholder without alert, retry nor skeleton', () => {
+    const slot = renderSlot(props({ data: adherenceResponseFixture, loading: true, error: BACKEND_ERROR }));
+
+    expect(within(slot).getByText(PROGRESS_READY)).toBeInTheDocument();
+    expect(within(slot).queryByRole('alert')).not.toBeInTheDocument();
+    expect(within(slot).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+    expect(slot.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it('no data, not loading, no error: "No disponible todavía", not a loading state', () => {
     const slot = renderSlot(props());
 
     expect(within(slot).getByText(UNAVAILABLE)).toBeInTheDocument();
     expect(slot.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(within(slot).queryByText(/Cargando/)).not.toBeInTheDocument();
     expect(within(slot).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
   });
 

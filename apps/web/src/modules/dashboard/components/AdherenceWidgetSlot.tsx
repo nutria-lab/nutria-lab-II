@@ -7,9 +7,8 @@ type Props = AdherenceWidgetProps & { className?: string };
 const PROGRESS_ERROR = 'No pudimos cargar tu progreso.';
 
 // Placeholder con el contrato del widget de adherencia (NUT-103); NUT-94 reemplaza el contenido.
-// Precedencia (design §16): loading sin data → skeleton; error sin data → error con reintento;
-// data → placeholder (+ aviso no bloqueante si hay error); nada → "No disponible todavía".
-// El copy es fijo: nunca se muestra el texto de `error` ni ningún número de `data`.
+// Precedencia según la doc de `AdherenceWidgetProps` (design §16): `loading` gana sobre `error`;
+// el aviso no bloqueante solo aparece con data + error sin loading. Copy fijo: nunca se muestra `error` ni números.
 function SlotBody({ data, loading, error, onRetry }: AdherenceWidgetProps) {
   if (!data) {
     if (loading) return <CardSkeleton rows={2} />;
@@ -19,7 +18,7 @@ function SlotBody({ data, loading, error, onRetry }: AdherenceWidgetProps) {
   return (
     <>
       <CardNotice icon="insights" title="Tu progreso aparecerá aquí." />
-      {error && (
+      {error && !loading && (
         <div role="alert" className="mt-2 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-on-surface-variant">No pudimos actualizar tu progreso.</p>
           <button type="button" onClick={onRetry} className={PRIMARY_CTA_CLASSES}>

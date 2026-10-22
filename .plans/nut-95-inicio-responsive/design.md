@@ -1,20 +1,20 @@
 # NUT-95 — Inicio responsive con comidas de hoy y accesos (diseño frontend)
 
-Etapa: `frontend_designer`. Generado: 2026-10-19. Fuente visual: Stitch proyecto `5785725448623770239`, frames Dashboard desktop `e631a85a17994a13befc190dda8c41a0` ("Dashboard - Terra Kitchen", 2560 px @2x ≈ 1280 px) y Dashboard móvil `ae8d7cb550ae4d9d84e5aea111eb93a7` ("Dashboard - Móvil", 780 px @2x ≈ 390 px). Solo lectura; no se generaron ni editaron pantallas.
+Etapa: `frontend_designer`. Generado: 2026-10-19; actualizado: 2026-10-22. Fuente visual: Stitch proyecto `5785725448623770239`, frames Dashboard desktop `e631a85a17994a13befc190dda8c41a0` ("Dashboard - Terra Kitchen", 2560 px @2x ≈ 1280 px) y Dashboard móvil `ae8d7cb550ae4d9d84e5aea111eb93a7` ("Dashboard - Móvil", 780 px @2x ≈ 390 px). Solo lectura; no se generaron ni editaron pantallas.
 
 ## 1. Registro de decisión
 
 | # | Decisión | Motivo |
 |---|---|---|
-| D1 | La ruta `/dashboard` deja de ser placeholder y pasa a ser la pantalla de Inicio dentro del shell autenticado existente (AppLayout: Sidebar + TopBar en md+, PageHeader + BottomNavigation en mobile). No se recrea shell, navegación ni tipografía. | Reutilizar Terra; alcance aprobado. |
-| D2 | La página consume un `DashboardViewModel` tipado; cada tarjeta tiene su propio `CardState<T>` (`loading` / `error` / `unavailable` / `ready(data)`), independiente de la otra. | Permite error parcial y estados explícitos por tarjeta. |
-| D3 | No hay datos reales (pertenecen a NUT-96). La fuente de datos es un proveedor intercambiable: en desarrollo, fixtures seleccionables con `?estado=<clave>`; en producción, ambas tarjetas en `unavailable` ("No disponible todavía"). | Nunca loading infinito ni datos de ejemplo en producción. |
-| D4 | Los fixtures se cargan solo bajo la condición de modo desarrollo de Vite (import condicionado por `import.meta.env.DEV`), de modo que el bundle de producción no los contenga (verificable buscando una cadena centinela del fixture en el build). | Requisito "fixtures no llegan a producción". |
-| D5 | El slot "Progreso semanal" es solo contenedor + estados (loading/error/unavailable/placeholder neutro). Nunca muestra números, porcentajes, barras ni días marcados. El contenido real es NUT-94. | Evitar adelantar la métrica de adherencia. |
-| D6 | "Siguiente comida por registrar" = primer `TodayMeal` con `status === NOT_LOGGED` en el orden fijo BREAKFAST → LUNCH → SNACK → DINNER. Nunca usa la hora del reloj y nunca afirma que algo se consumió. Si `status` es `null` (error parcial) no se resalta ninguna. | Determinismo y lenguaje no clínico. |
-| D7 | Orden de comidas y mapeo de estado (`NOT_LOGGED`→"Pendiente", `COMPLETED`→"Registrada", `SKIPPED`→"Salteada", `null`→sin chip) viven en utilidades puras testeables. | Lógica determinista en capa unit. |
+| D1 | La ruta `/dashboard` es la pantalla de Inicio dentro del shell autenticado existente (AppLayout: Sidebar + TopBar en md+, PageHeader + BottomNavigation en mobile). No se recrea shell, navegación ni tipografía. | Reutilizar Terra; alcance aprobado. |
+| D2 | La página consume un `DashboardViewModel` tipado. La tarjeta de comidas usa `CardState<T>` (`loading` / `error` / `unavailable` / `ready(data)`); el slot de progreso usa `AdherenceWidgetProps` (§16). Cada tarjeta es independiente de la otra. | Permite error parcial y estados explícitos por tarjeta. |
+| D3 | No hay datos reales (pertenecen a NUT-96). La fuente de datos es un proveedor intercambiable: en desarrollo, fixtures seleccionables con `?estado=<clave>`; en producción, ambas tarjetas en "No disponible todavía". | Nunca loading infinito ni datos de ejemplo en producción. |
+| D4 | Los fixtures se cargan solo en modo desarrollo de Vite (`import()` dinámico condicionado por `import.meta.env.DEV`), de modo que el bundle de producción no los contiene (verificable buscando la cadena centinela de los fixtures en el build). | Requisito "fixtures no llegan a producción". |
+| D5 | El slot "Progreso semanal" es solo contenedor + estados (skeleton / error / no disponible / placeholder neutro). Nunca muestra números, porcentajes, barras ni días marcados. El contenido real es NUT-94. | Evitar adelantar la métrica de adherencia. |
+| D6 | "Siguiente comida por registrar" = primer `TodayMeal` con `status === NOT_LOGGED` en el orden fijo BREAKFAST → LUNCH → SNACK → DINNER. Nunca usa la hora del reloj y nunca afirma que algo se consumió. Si alguna comida tiene estado desconocido (§16) no se resalta ninguna. | Determinismo y lenguaje no clínico. |
+| D7 | Orden de comidas y mapeo de estado (`NOT_LOGGED`→"Sin registrar", `COMPLETED`→"Completada", `SKIPPED`→"Omitida", estado desconocido→sin chip) viven en utilidades puras testeables. | Lógica determinista en capa unit. |
 | D8 | Accesos rápidos: tres CTAs de navegación a rutas existentes `/meal-plan`, `/recipes`, `/shopping-list`. No se duplica el generador de plan ni el perfil. | Ticket: no duplicar. |
-| D9 | Saludo: "Hola, {primer nombre}" tomando el primer token del nombre de la sesión; si nombre es null/vacío/solo espacios → "Hola". Sin franja horaria ("Good morning"). | Copy neutral, determinista. |
+| D9 | Saludo: "Hola, {primer nombre}" tomando el primer token del nombre de la sesión; si el nombre es null/vacío/solo espacios → "Hola". Sin franja horaria ("Good morning"). | Copy neutral, determinista. |
 | D10 | Base de datos / Prisma / migraciones: ninguna. | Cambio puramente frontend con fixtures. |
 
 ADR: no requerido (no cambia contrato de API, datos, seguridad ni costo). El contrato A (`AdherenceResponse`, `MealCompletionStatus`) solo se consume como tipo.
@@ -27,7 +27,7 @@ type MealType = 'BREAKFAST' | 'LUNCH' | 'SNACK' | 'DINNER';
 
 type CardState<T> =
   | { kind: 'loading' }
-  | { kind: 'error'; message: string; retry?: () => void }
+  | { kind: 'error'; retry: () => void } // retry obligatorio; el texto de error es fijo
   | { kind: 'unavailable' }
   | { kind: 'ready'; data: T };
 
@@ -36,7 +36,8 @@ type TodayMeal = {
   mealType: MealType;
   title: string;
   recipeId: string | null;
-  status: MealCompletionStatus | null; // null = estado no disponible (error parcial)
+  status: MealCompletionStatus | null; // null o valor no reconocido = estado desconocido
+  image?: RecipeImage | null; // opcional: el contrato A no la incluye
 };
 
 type TodayMealsData =
@@ -47,13 +48,13 @@ type TodayMealsData =
 type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
-  adherence: AdherenceWidgetProps; // contrato único con NUT-103/NUT-94 (ver §16); el slot no muestra valores
+  adherence: AdherenceWidgetProps; // contrato único con NUT-94/NUT-96 (§16); el slot no muestra valores
 };
 ```
 
-Utilidades puras: `getFirstName(name)`, `sortMealsByType(meals)`, `getMealStatusLabel(status)`, `getNextMealToLog(meals)`, `getMealTypeLabel(type)` (Desayuno, Almuerzo, Merienda, Cena).
+Utilidades puras: `buildGreeting(name)`, `sortMealsByType(meals)`, `selectTodayMeals(adherence)`, `isKnownStatus(status)`, `hasUnknownStatus(meals)`, `nextMealToLog(meals)`, `hasNextMealColumn(state)`, `getMealStatusLabel(status)`, `buildUnavailableViewModel(name)`. Las etiquetas de tipo de comida (Desayuno, Almuerzo, Merienda, Cena) se reutilizan del módulo de plan de comidas.
 
-Claves de fixture dev (`?estado=`): `loading`, `sin-plan`, `sin-comidas`, `comidas` (mixto, por defecto en dev), `todo-registrado`, `error`, `error-parcial`, `no-disponible`, `sin-nombre`. Clave desconocida → por defecto `comidas`. Los fixtures usan títulos genéricos ("Receta de ejemplo 1…") y nunca porcentajes.
+Claves de fixture dev (`?estado=`): `loading`, `sin-plan`, `sin-comidas`, `comidas` (mixto), `todo-registrado`, `error`, `error-parcial`, `no-disponible`, `sin-nombre`. Una clave desconocida, vacía o ausente muestra el estado "No disponible todavía", igual que producción. Los fixtures usan títulos genéricos ("Receta de ejemplo 1…") y nunca porcentajes.
 
 ## 3. Estructura de los frames (lectura de Stitch)
 
@@ -75,7 +76,7 @@ Claves de fixture dev (`?estado=`): `loading`, `sin-plan`, `sin-comidas`, `comid
 6. "Inspiración para hoy" (grid 2): "Hidratación — Bebe 2 vasos de agua ahora", "Nutrición — Agrega semillas a tu hamburguesa".
 7. BottomNavBar: Dashboard, Meal Plan, Recipes, Shopping, Goals. FAB "+" contextual.
 
-Observación clave: **ningún frame contiene la lista "Comidas de hoy"**; ambos muestran una sola tarjeta "Próxima comida". La lista se agrega como elemento fuera del mockup (sección 10).
+Observación clave: **ningún frame contiene la lista "Comidas de hoy"**; ambos muestran una sola tarjeta "Próxima comida". La lista es un elemento fuera del mockup (sección 11).
 
 ## 4. Estructura por breakpoint (implementación)
 
@@ -84,28 +85,28 @@ Breakpoints Tailwind existentes: mobile `<768px`, `md ≥768px`, `lg ≥1024px`.
 ### Mobile (<md) — sigue el orden del frame mobile
 | Orden | Sección | Reutiliza |
 |---|---|---|
-| 0 | Header sticky | PageHeader existente (sin acciones nuevas a la derecha) |
-| 1 | Saludo H1 "Hola, {nombre}" + subtítulo "Hoy es un buen día para nutrirte." | Literata (font-headline) / Nunito Sans, on-surface / on-surface-variant |
+| 0 | Header sticky | PageHeader existente (marca como texto, sin acciones a la derecha; §13.2) |
+| 1 | Saludo H1 "Hola, {nombre}" (`text-2xl`, `text-3xl` desde md) + subtítulo "Hoy es un buen día para nutrirte." | Literata (font-headline) / Nunito Sans, on-surface / on-surface-variant |
 | 2 | Slot "Progreso semanal" (tarjeta surface-container, rounded-xl) | Patrones skeleton (animate-pulse) / error / empty existentes |
-| 3 | "Siguiente comida por registrar" con chip de tipo de comida | RecipeImage (fallback cuando no hay imagen), chip estilo tertiary-fixed del frame |
-| 4 | "Comidas de hoy": lista vertical de 4 filas (miniatura, tipo, título, chip de estado) | RecipeImage modo compacto, tokens surface-container-low / outline-variant |
-| 5 | Accesos rápidos: 3 botones-link apilados (icono + título + descripción + chevron) | material-symbols, primary-fixed / secondary-fixed / surface-container del frame |
+| 3 | "Siguiente comida por registrar": título fuera de la tarjeta con chip verde del tipo de comida a la derecha; tarjeta blanca con sombra suave; imagen solo si existe (§15) | RecipeImage (solo con imagen), sombra existente del repo |
+| 4 | "Comidas de hoy": lista vertical (miniatura solo si existe, tipo, título en hasta 2 líneas y chip de estado debajo del título) | RecipeImage modo compacto, tokens surface-container-low / outline-variant |
+| 5 | Accesos rápidos: 3 botones-link apilados (ícono en cuadrado de color de 48 px + título + descripción + chevron) | material-symbols, primary-fixed / secondary-fixed / surface-container-high |
 | — | Navegación inferior | BottomNavigation existente; padding inferior para no tapar contenido |
 
 ### md (768–1023px)
 Sidebar + TopBar existentes. Grid 12 columnas:
 - Saludo col-12.
-- Fila 1: "Siguiente comida" col-12 con layout horizontal imagen 50% / contenido 50% (como el frame en md); "Progreso semanal" col-12 debajo.
+- Fila 1: "Siguiente comida" col-12 (imagen 50% / contenido 50% cuando hay imagen); "Progreso semanal" col-12 debajo.
 - Fila 2: "Comidas de hoy" col-12, lista en grid de 2 columnas.
 - Fila 3: Accesos rápidos col-12, grid de 3 columnas.
 
 ### lg (≥1024px) — sigue el bento del frame desktop
 - Saludo col-12.
-- Fila 1: "Siguiente comida" lg:col-7 | "Progreso semanal" lg:col-5 (misma proporción del frame).
-- Fila 2: "Comidas de hoy" col-12 ocupa el lugar visual de la fila "Healthy Habit + accesos" del frame; lista en 4 columnas (una por tipo de comida).
-- Fila 3: Accesos rápidos col-12, grid de 3 (ocupa el lugar de "Recent Achievements", que se excluye).
+- Fila 1: "Siguiente comida" lg:col-7 | "Progreso semanal" lg:col-5 (misma proporción del frame). Sin columna de siguiente comida, el progreso ocupa las 12 columnas.
+- Fila 2: "Comidas de hoy" col-12 en el lugar visual de la fila "Healthy Habit + accesos" del frame; lista en 2 columnas para que los títulos se lean.
+- Fila 3: Accesos rápidos col-12, grid de 3 (en el lugar de "Recent Achievements", que se excluye).
 
-Resize: al cruzar md el shell cambia (ya resuelto por AppLayout); las tarjetas solo reacomodan columnas, sin cambiar estado ni re-pedir datos.
+Resize: al cruzar md el shell cambia (resuelto por AppLayout); las tarjetas solo reacomodan columnas, sin cambiar estado ni re-pedir datos.
 
 ## 5. Copy
 
@@ -116,32 +117,32 @@ Resize: al cruzar md el shell cambia (ya resuelto por AppLayout); las tarjetas s
 | Slot progreso | Título "Progreso semanal" |
 | Siguiente comida | Título "Siguiente comida por registrar"; chip con tipo ("Almuerzo"); CTA "Ver receta" (solo si `recipeId`) |
 | Lista | Título "Comidas de hoy"; tipos "Desayuno", "Almuerzo", "Merienda", "Cena" |
-| Chips | "Pendiente" (neutral surface-container-high), "Registrada" (brand-green suave + icono check), "Salteada" (outline-variant + icono remove); el chip incluye texto, nunca solo color |
+| Chips | "Sin registrar" (neutral surface-container-high), "Completada" (primary-fixed + ícono check), "Omitida" (outline-variant + ícono remove); el chip incluye texto, nunca solo color |
 | Accesos | "Ver mi plan semanal" → `/meal-plan` ("Revisá las comidas de la semana"); "Explorar recetas" → `/recipes` ("Buscá ideas y preparaciones"); "Lista de compras" → `/shopping-list` ("Ingredientes de tu plan") |
 
 ## 6. Tabla de estados
 
 | Estado | Tarjeta comidas (lista + siguiente) | Slot progreso |
 |---|---|---|
-| loading | Skeleton de 4 filas + skeleton de destacado; `aria-busy="true"` | Skeleton de tarjeta |
+| loading | Skeleton de lista + skeleton de destacado; `aria-busy="true"` con texto "Cargando…" para lectores de pantalla | Skeleton de tarjeta |
 | sin plan (`noPlan`) | "Todavía no tenés un plan para esta semana." + CTA "Ir a mi plan" → `/meal-plan`; sin destacado | Placeholder neutro "Tu progreso aparecerá aquí." |
-| sin comidas hoy (`noMealsToday`) | "No hay comidas planificadas para hoy." + CTA "Ver plan semanal"; sin destacado | Placeholder neutro |
-| comidas (mixto) | Lista ordenada con chips; destacado = primer Pendiente | Placeholder neutro |
-| todo registrado | Lista con chips (Registrada/Salteada); destacado reemplazado por "Ya registraste todas las comidas de hoy." (sin afirmar consumo: "registraste", no "comiste") | Placeholder neutro |
-| error | "No pudimos cargar tus comidas de hoy." + botón "Reintentar" si hay `retry` | "No pudimos cargar tu progreso." + "Reintentar" |
-| error parcial | Lista visible ordenada **sin chips** (status `null`) + nota "El estado de registro no está disponible por ahora."; sin destacado | Estado error del slot |
+| sin comidas hoy (`noMealsToday` o lista vacía) | "No hay comidas planificadas para hoy." + CTA "Ver plan semanal"; sin destacado | Placeholder neutro |
+| comidas (mixto) | Lista ordenada con chips; destacado = primera "Sin registrar" | Placeholder neutro |
+| todo registrado | Lista con chips (Completada/Omitida); en lugar del destacado, "Ya registraste todas las comidas de hoy." (sin afirmar consumo: "registraste", no "comiste") | Placeholder neutro |
+| error | "No pudimos cargar tus comidas de hoy." + botón "Reintentar" (siempre) | "No pudimos cargar tu progreso." + "Reintentar" (siempre) |
+| error parcial (estado desconocido) | Lista visible ordenada **sin chips** + nota "El estado de registro no está disponible por ahora."; sin destacado | Error del slot con "Reintentar" |
 | no disponible (producción) | "No disponible todavía" + "Pronto vas a ver aquí tus comidas del día." | "No disponible todavía" |
 | sin nombre | Saludo "Hola" (combinable con cualquier estado) | — |
 
-Reglas: ningún estado queda en loading indefinido en producción (se resuelve sincrónicamente a `unavailable`); los mensajes de error usan `role="alert"` solo en el contenido de error; textos sin juicio ni lenguaje clínico.
+Reglas: ningún estado queda en loading indefinido en producción (se resuelve sincrónicamente a "No disponible todavía"); los mensajes de error usan `role="alert"` solo en el contenido de error; textos sin juicio ni lenguaje clínico. La precedencia completa del slot está en §16.
 
 ## 7. Flujos
 
-1. **Entrada producción**: usuario autenticado → `/dashboard` → AppLayout → página lee nombre de sesión → proveedor de producción devuelve `unavailable` para ambas tarjetas → saludo + dos tarjetas "No disponible todavía" + accesos rápidos activos.
-2. **Entrada desarrollo**: `/dashboard?estado=<clave>` → proveedor dev carga fixture → página renderiza el estado correspondiente. Sin `?estado` → `comidas`.
+1. **Entrada producción**: usuario autenticado → `/dashboard` → AppLayout → la página lee el nombre de sesión → el proveedor de producción devuelve "no disponible" para ambas tarjetas → saludo + dos tarjetas "No disponible todavía" + accesos rápidos activos.
+2. **Entrada desarrollo**: `/dashboard?estado=<clave>` → el proveedor dev carga el fixture → la página renderiza el estado correspondiente. Clave desconocida, vacía o ausente → "No disponible todavía".
 3. **Navegación**: clic en un acceso rápido → ruta existente; navegación por teclado (Tab/Enter) con foco visible brand-green.
-4. **Siguiente comida**: con comidas, se calcula el primer Pendiente en orden fijo; "Ver receta" navega a detalle de receta existente solo si hay `recipeId`.
-5. **Reintento** (cuando hay `retry`): botón dispara `retry`, la tarjeta vuelve a `loading` y luego a su estado final; la otra tarjeta no cambia.
+4. **Siguiente comida**: con comidas de estado conocido, se calcula la primera "Sin registrar" en orden fijo; "Ver receta" navega al detalle de receta existente solo si hay `recipeId`.
+5. **Reintento**: en error, "Reintentar" siempre está presente y dispara `retry` (tarjeta de comidas) u `onRetry` (slot); la tarjeta vuelve a cargar y luego a su estado final; la otra tarjeta no cambia. En desarrollo, el reintento de los fixtures navega a `?estado=loading` y, 800 ms después, a `?estado=comidas`.
 
 ## 8. Historias y criterios de aceptación
 
@@ -149,148 +150,153 @@ Reglas: ningún estado queda en loading indefinido en producción (se resuelve s
 - CA1: Dado nombre "María José Rosales", veo "Hola, María"; dado nombre null, vacío o solo espacios, veo "Hola" sin coma ni placeholder.
 
 **H2 — Comidas de hoy ordenadas con estado**: Como usuaria quiero ver las comidas de hoy en orden con su estado de registro.
-- CA2: Dado un fixture con comidas desordenadas, la lista se muestra Desayuno, Almuerzo, Merienda, Cena, y cada fila muestra el chip "Pendiente", "Registrada" o "Salteada" según su estado; con error parcial la lista se muestra sin chips y con la nota explicativa.
+- CA2: Dado un fixture con comidas desordenadas, la lista se muestra Desayuno, Almuerzo, Merienda, Cena, y cada fila muestra el chip "Sin registrar", "Completada" u "Omitida" según su estado; si alguna comida tiene estado desconocido, la lista se muestra sin chips y con la nota explicativa.
 
 **H3 — Siguiente comida por registrar**: Como usuaria quiero saber cuál es la próxima comida pendiente de registrar.
-- CA3: El destacado muestra la primera comida "Pendiente" en el orden fijo, independientemente de la hora; si no hay pendientes muestra "Ya registraste todas las comidas de hoy."; nunca dice que una comida fue consumida; no aparece en sin plan, sin comidas, error, error parcial ni no disponible.
+- CA3: El destacado muestra la primera comida "Sin registrar" en el orden fijo, independientemente de la hora; si todas tienen estado conocido y ninguna está sin registrar, muestra "Ya registraste todas las comidas de hoy."; nunca dice que una comida fue consumida; no aparece en sin plan, sin comidas, error, error parcial ni no disponible.
 
 **H4 — Accesos rápidos**: Como usuaria quiero ir rápido a mi plan, recetas y lista de compras.
 - CA4: Hay exactamente tres accesos con nombre accesible que navegan a `/meal-plan`, `/recipes` y `/shopping-list`; no hay acceso a generar plan ni a perfil; funcionan en mobile, md y lg.
 
 **H5 — Estados explícitos sin datos falsos**: Como usuaria quiero que la pantalla sea honesta cuando no hay datos.
-- CA5: Cada estado de la tabla 6 tiene UI y copy explícitos; en producción ambas tarjetas muestran "No disponible todavía" (sin loading infinito, sin datos de ejemplo, sin números ni porcentajes en el slot de progreso); el bundle de producción no contiene los fixtures; no aparecen logros, membresía premium, rachas, notificaciones nuevas, hidratación ni consejos.
+- CA5: Cada estado de la tabla 6 tiene UI y copy explícitos; todo error ofrece "Reintentar"; en producción ambas tarjetas muestran "No disponible todavía" (sin loading infinito, sin datos de ejemplo, sin números ni porcentajes en el slot de progreso); el bundle de producción no contiene los fixtures; no aparecen logros, membresía premium, rachas, notificaciones nuevas, hidratación ni consejos.
 
 ## 9. Tests requeridos
 
 **Unit (utilidades puras)**
-- `getFirstName`: nombre compuesto, un solo nombre, null, "", "   ", espacios iniciales.
+- `buildGreeting`: nombre compuesto, un solo nombre, null, "", "   ", espacios iniciales.
 - `sortMealsByType`: orden fijo con entrada desordenada; no muta la entrada; tipos repetidos estables.
-- `getMealStatusLabel`: los tres estados + `null` → sin etiqueta.
-- `getNextMealToLog`: primer NOT_LOGGED en orden fijo aunque esté desordenado; todos completados/salteados → null; statuses null → null; no depende de `Date` (test con reloj falso a distintas horas da el mismo resultado).
-- Selección de fixture: clave conocida, desconocida (fallback), ausente.
+- `getMealStatusLabel`: los tres estados → "Sin registrar" / "Completada" / "Omitida"; `null` o valor no reconocido → sin etiqueta.
+- `hasUnknownStatus`: true con `null` o con un valor no reconocido (p. ej. `PARTIAL`) junto a estados conocidos.
+- `nextMealToLog`: primer NOT_LOGGED en orden fijo aunque esté desordenado; todos completados/omitidos → null; algún estado desconocido → null; no depende de `Date` (reloj falso a distintas horas da el mismo resultado).
+- Selección de fixture: clave conocida; clave desconocida, vacía o ausente → sin fixture; el `onRetry` recibido llega a los estados de error.
 
 **Componentes / vistas (Testing Library, consultas por rol/texto)**
 - Una prueba por estado de la tabla 6 para cada tarjeta, verificando copy, presencia/ausencia de destacado y chips.
-- Slot progreso: en ningún estado aparece texto con `%` ni dígitos de porcentaje.
-- Error parcial: lista visible sin chips + slot en error, simultáneamente.
-- Reintentar llama `retry` cuando existe; no se renderiza si no existe.
+- Slot progreso: una prueba por cada combinación de la tabla de §16; en ningún caso aparece texto con `%` ni dígitos.
+- Error parcial: lista visible sin chips + slot en error, simultáneamente; con `[PARTIAL, COMPLETED]` no aparece "Ya registraste…" y sí la nota.
+- "Reintentar" aparece siempre en error y llama `retry` / `onRetry`.
+- Imagen: la siguiente comida y las miniaturas de la lista muestran imagen solo si la comida la trae, sin placeholder.
 - Accesos: tres links con `href` correctos; ausencia de "Generar" y "Perfil".
 - Exclusiones: ausencia de textos "Premium", "racha", "logro", "hidratación", "consejo" en el contenido de la página.
 
 **Página dev/prod**
-- Con modo dev simulado y `?estado=<clave>` renderiza el fixture correspondiente.
-- Con modo producción simulado: ambas tarjetas "No disponible todavía", sin skeleton persistente, sin títulos de fixture.
-- Verificación de build: el bundle de producción no contiene la cadena centinela de los fixtures (chequeo en CI o script de verificación, evidencia en QA).
+- Con modo dev simulado y `?estado=<clave>` renderiza el fixture correspondiente; el reintento en `?estado=error` pasa por cargando y termina en comidas; desmontar antes del temporizador no deja timers ni avisos.
+- Con modo producción simulado y sin `?estado`: ambas tarjetas "No disponible todavía", sin skeleton, sin títulos de fixture.
+- Verificación de build: el bundle de producción no contiene la cadena centinela de los fixtures ni el código del reintento de desarrollo (evidencia en la PR).
 
 **Ruta**
-- `/dashboard` autenticado renderiza el Inicio (heading de saludo) dentro del AppLayout y ya no el placeholder; no autenticado sigue redirigiendo a login (los tests de ruta existentes se ajustan, no se eliminan).
+- `/dashboard` autenticado renderiza el Inicio (heading de saludo) dentro del AppLayout; no autenticado redirige a login (los tests de ruta existentes se mantienen).
 
 **Responsive / E2E (evidencia QA, Playwright opcional)**
 - Capturas en 390 px, 768 px y 1280 px de los estados `comidas`, `error-parcial` y producción; sin scroll horizontal.
 
 ## 10. Conflictos (elementos de los frames excluidos o sin componente) — validar con PO
 
-| # | Frame | Elemento | Resolución propuesta |
+| # | Frame | Elemento | Resolución |
 |---|---|---|---|
 | C1 | Desktop | Saludo por franja horaria "Good morning, Elena" | Excluido (depende del reloj, inglés). Se usa "Hola, {nombre}". |
-| C2 | Desktop | Subtítulo "You've completed 85% of your weekly nutrition goals. Keep it up!" | Excluido (85% y métrica de NUT-94). Se usa subtítulo del frame mobile. |
+| C2 | Desktop | Subtítulo "You've completed 85% of your weekly nutrition goals. Keep it up!" | Excluido (85% y métrica de NUT-94). Se usa el subtítulo del frame mobile. |
 | C3 | Mobile | "85%", barra de progreso y círculos L–D con checks en "Progreso Semanal" | Excluido; solo slot con estados (NUT-94). |
-| C4 | Desktop | "Weekly Adherence" con gráfico de barras Lun–Dom y menú "more_horiz" | Excluido; reemplazado por el slot sin datos. Menú sin función, se omite. |
+| C4 | Desktop | "Weekly Adherence" con gráfico de barras Lun–Dom y menú "more_horiz" | Excluido; en su lugar, el slot sin datos. Menú sin función, se omite. |
 | C5 | Desktop | "Calories 1,850/2k" y "Protein 112g/140g" | Excluido (métrica nutricional/clínica, no hay dato). |
 | C6 | Ambos | Datos de ejemplo: "Elena Russo", "Martina", "Mediterranean Quinoa Bowl", "Hamburguesa de Quinoa", fotos de stock y de perfil | Excluido como dato real; nombre de sesión y fixtures genéricos solo en dev. |
 | C7 | Ambos | Tiempo "15 mins"/"25 min" y "420 kcal" en próxima comida | Sin dato en `TodayMeal`; se omite. |
 | C8 | Desktop | Descripción de la receta en próxima comida | Sin dato en `TodayMeal`; se omite. |
-| C9 | Ambos | Imagen grande de la próxima comida | `TodayMeal` no trae imagen; se usa RecipeImage con su fallback (placeholder). Imagen real queda para NUT-96 si el contrato la incluye. |
-| C10 | Desktop | CTA "Start Cooking" | No existe modo cocina. Se reemplaza por "Ver receta" al detalle existente (solo con `recipeId`). |
+| C9 | Ambos | Imagen grande de la próxima comida | El contrato A no trae imagen; la tarjeta la muestra solo si `TodayMeal.image` existe, sin placeholder (§15). |
+| C10 | Desktop | CTA "Start Cooking" | No existe modo cocina. En su lugar, "Ver receta" al detalle existente (solo con `recipeId`). |
 | C11 | Desktop | "Healthy Habit of the Day" (consejo caminata/glucosa) + "Learn more about digestion" | Excluido (consejos clínicos). |
 | C12 | Mobile | "Inspiración para hoy": Hidratación y Nutrición | Excluido (hidratación, consejos). |
 | C13 | Desktop | "Recent Achievements": "7 Day Streak", "Veggie Master", "Calorie Crusher", "View All" | Excluido (logros, rachas). |
-| C14 | Ambos | Accesos "Edit Today's Plan"/"Editar mi Plan" y "Generate New Plan"/"Generar nuevo Plan" | "Generar" excluido (no duplicar generador). "Editar" no existe como flujo propio: se convierte en "Ver mi plan semanal" → `/meal-plan`. Se agregan "Explorar recetas" y "Lista de compras". |
-| C15 | Desktop | Botón "Create Plan" en la sidebar | No existe en el Sidebar actual; no se agrega (duplica generador). |
-| C16 | Desktop | "Premium Member" bajo el usuario en la sidebar | Excluido. Nota: el TopBar actual ya muestra "Miembro Premium" hardcodeado en pantallas no-recetas; queda fuera del alcance de NUT-95 (shell), se recomienda ticket aparte. |
-| C17 | Ambos | Campana de notificaciones (TopBar desktop y header mobile) | Excluida en lo nuevo. El TopBar existente ya la tiene (sin función); no se modifica el shell. No se agrega al PageHeader mobile. |
+| C14 | Ambos | Accesos "Edit Today's Plan"/"Editar mi Plan" y "Generate New Plan"/"Generar nuevo Plan" | "Generar" excluido (no duplicar generador). "Editar" no existe como flujo propio: es "Ver mi plan semanal" → `/meal-plan`. Se suman "Explorar recetas" y "Lista de compras". |
+| C15 | Desktop | Botón "Create Plan" en la sidebar | No existe en el Sidebar; no se agrega (duplica generador). |
+| C16 | Desktop | "Premium Member" bajo el usuario en la sidebar | Excluido. El TopBar del shell muestra "Miembro Premium" hardcodeado en pantallas no-recetas; queda fuera del alcance de NUT-95 y se escala a PO/TL. |
+| C17 | Ambos | Campana de notificaciones (TopBar desktop y header mobile) | Excluida en lo nuevo. El TopBar del shell la tiene (sin función) y no se modifica; el PageHeader mobile no la incluye. |
 | C18 | Desktop | Botón settings en TopBar | Existente en el shell; no se toca. |
-| C19 | Ambos | Avatar con foto | No hay foto de usuario; el shell usa iniciales. En mobile no se agrega avatar al PageHeader. |
-| C20 | Desktop | Buscador "Search recipes, ingredients..." | Ya existe en TopBar ("Buscar recetas o ingredientes..."); se reutiliza sin cambios. |
-| C21 | Ambos | Marca "Terra Kitchen" / "Terra" + "Nourish your body" | Se mantiene la marca actual del shell (BrandMark / PageHeader "NutrIA"). |
-| C22 | Ambos | Etiquetas de navegación en inglés ("Dashboard", "Meal Plan", "Shopping", "Goals") e íconos del frame | Se mantiene la navegación existente tal cual; no se renombra en este ticket. |
+| C19 | Ambos | Avatar con foto | No hay foto de usuario; el shell usa iniciales. En mobile el PageHeader no incluye avatar. |
+| C20 | Desktop | Buscador "Search recipes, ingredients..." | Existe en TopBar ("Buscar recetas o ingredientes..."); se reutiliza sin cambios. |
+| C21 | Ambos | Marca "Terra Kitchen" / "Terra" + "Nourish your body" | Se mantiene la marca del shell (BrandMark / PageHeader "NutrIA"). |
+| C22 | Ambos | Etiquetas de navegación en inglés ("Dashboard", "Meal Plan", "Shopping", "Goals") e íconos del frame | Se mantiene la navegación existente; no se renombra en este ticket. |
 | C23 | Mobile | FAB "+" contextual | Excluido (acción ambigua, no hay componente). |
-| C24 | Mobile | Animación de la barra de progreso / header con sombra al scroll | Excluido (barra no existe); el header sticky existente se reutiliza. |
-| C25 | — | Ruta raíz `/` redirige hoy a `/goals`, no al Inicio | Fuera del ticket; decisión de PO si el Inicio debe ser destino por defecto. |
+| C24 | Mobile | Animación de la barra de progreso / header con sombra al scroll | Excluido (no hay barra); se reutiliza el header sticky existente. |
+| C25 | — | La ruta raíz `/` redirige a `/goals`, no al Inicio | Fuera del ticket; decisión de PO si el Inicio debe ser destino por defecto. |
 
 ## 11. Fuera del mockup (agregados que los frames no muestran) — validar con PO
 
 | # | Elemento agregado | Motivo |
 |---|---|---|
-| F1 | Sección "Comidas de hoy" (lista de 4 comidas con miniatura, tipo y título) en mobile, md y lg | Requisito central del ticket; no existe en ningún frame. |
-| F2 | Chips de estado "Pendiente" / "Registrada" / "Salteada" por comida | Contrato `MealCompletionStatus`. |
+| F1 | Sección "Comidas de hoy" (lista de comidas con tipo, título y chip; miniatura solo si hay imagen) en mobile, md y lg | Requisito central del ticket; no existe en ningún frame. |
+| F2 | Chips de estado "Sin registrar" / "Completada" / "Omitida" por comida | Contrato `MealCompletionStatus`; glosario de NUT-93 (§16). |
 | F3 | Título "Siguiente comida por registrar" (en lugar de "Próxima comida"/"Next Meal") y regla de primer pendiente en orden fijo | Evitar inferencias por hora y afirmaciones de consumo. |
 | F4 | Mensaje "Ya registraste todas las comidas de hoy." | Estado todo registrado. |
 | F5 | Estados loading (skeleton), sin plan, sin comidas hoy, error con "Reintentar", error parcial (lista sin chips + nota + slot en error) | Estados obligatorios. |
 | F6 | Estado "No disponible todavía" en ambas tarjetas (producción) | NUT-96 pendiente; no mostrar datos falsos. |
-| F7 | Placeholder neutro del slot "Tu progreso aparecerá aquí." | Slot sin datos hasta NUT-94. |
+| F7 | Placeholder neutro del slot "Tu progreso aparecerá aquí." y aviso "No pudimos actualizar tu progreso." | Slot sin datos hasta NUT-94. |
 | F8 | Acceso "Lista de compras" → `/shopping-list` y "Explorar recetas" → `/recipes` | Requisito del ticket. |
-| F9 | CTA "Ver receta" en el destacado (reemplaza "Start Cooking") | Navegación a detalle existente. |
+| F9 | CTA "Ver receta" en el destacado (en lugar de "Start Cooking") | Navegación a detalle existente. |
 | F10 | Layout md intermedio (todo a col-12, lista en 2 columnas, accesos en 3) | Los frames solo definen ~390 px y ~1280 px. |
 | F11 | Selector dev `?estado=<clave>` | Solo desarrollo; invisible para el usuario final. |
 
 ## 12. Base de datos / Prisma / migraciones
 
-Ninguna. Sin cambios de schema, SQL, Neon ni endpoints. Los datos reales y su contrato llegan en NUT-96; la adherencia en NUT-94. Rollback: revertir el cambio de frontend restaura el placeholder.
+Ninguna. Sin cambios de schema, SQL, Neon ni endpoints. Los datos reales y su contrato llegan en NUT-96; la adherencia en NUT-94. Rollback: revertir el cambio de frontend restaura el placeholder de `/dashboard`.
 
-## 13. Pendientes de aprobación humana
+## 13. Decisiones aprobadas y pendientes del PO
 
-- PO valida Conflictos (sección 10) y Fuera del mockup (sección 11), en especial C14 (reemplazo de accesos), C10/F9 ("Ver receta"), C16 ("Miembro Premium" ya presente en el shell) y C25 (ruta raíz).
-- Los frames de Stitch no se modificaron; si el PO quiere el mockup actualizado con la lista y los estados, es un paso separado con aprobación.
-
-## 12. Decisiones aprobadas por la responsable (2026-10-19)
-
-- Lista "Comidas de hoy": se implementa como propuesta (tarjeta destacada "Siguiente comida por registrar" + lista debajo). Pendiente de validación PO; si la rechaza, se quita.
-- C10/F9: "Ver receta" hacia el detalle de receta existente, solo si la comida tiene recipeId.
+### 13.1 Aprobadas por la responsable (2026-10-19)
+- Lista "Comidas de hoy": tarjeta destacada "Siguiente comida por registrar" + lista debajo. Pendiente de validación PO; si la rechaza, se quita.
+- C10/F9: "Ver receta" hacia el detalle de receta existente, solo si la comida tiene `recipeId`.
 - C14/F8: tres accesos — "Ver mi plan semanal", "Explorar recetas", "Lista de compras".
-- C16/C17: no se modifica el shell (TopBar). "Miembro Premium" y la campana se escalan a PO/TL fuera de este ticket.
+- C16/C17: el shell (TopBar) no se modifica. "Miembro Premium" y la campana se escalan a PO/TL fuera de este ticket.
 - C1 (saludo "Hola, {nombre}") y C25 (raíz `/` fuera de alcance): aprobados.
 
-## 13. Cambio en el header móvil compartido (decisión 2026-10-19, para el PR)
-
-- Los frames móviles de todas las pantallas comparten el mismo header (marca + acciones), así que el inicio usa el header móvil compartido existente en lugar de crear uno propio.
-- Ese header renderizaba la marca como `h1`, lo que dejaba dos `h1` en la pantalla. Se cambia para que la marca sea texto no-heading y el saludo quede como **único `h1`** del inicio.
-- Verificado antes del cambio: ninguna otra pantalla ni test usa ese header, así que el cambio no afecta a otras rutas.
-- El header no incluye campana de notificaciones ni nada premium; el slot de acciones queda vacío en el inicio (exclusión del ticket; avatar fuera de alcance, ver C17/C19).
-- El único cambio en el componente es la etiqueta de la marca (heading → texto). Su comentario y su contrato quedan intactos: este ticket no quita ni agrega nada relacionado a notificaciones.
+### 13.2 Header móvil compartido
+- Los frames móviles de todas las pantallas comparten el mismo header (marca + acciones), así que el Inicio usa el PageHeader compartido existente.
+- La marca del header es texto no-heading, de modo que el saludo es el **único `h1`** del Inicio. Ninguna otra pantalla ni test usa ese header.
+- El header del Inicio no incluye campana de notificaciones, avatar ni nada premium; el slot de acciones queda vacío (C17/C19).
+- En el componente, lo único específico de este ticket es la etiqueta de la marca; su comentario y su contrato (`title`, `right`) se mantienen. Este ticket no quita ni agrega nada relacionado a notificaciones.
 - Test requerido: el header no expone ningún rol `heading` y muestra la marca como texto.
 
-## 14. Notas para el PR (decisiones 2026-10-19)
+### 13.3 Pendientes de aprobación humana
+- PO valida Conflictos (sección 10) y Fuera del mockup (sección 11), en especial C14 (accesos), C10/F9 ("Ver receta"), C16 ("Miembro Premium" en el shell), C25 (ruta raíz) y el flujo de reintento en desarrollo (§16).
+- Los frames de Stitch no se modificaron; si el PO quiere el mockup con la lista y los estados, es un paso separado con aprobación.
 
-- **Orden DOM vs. orden visual (lg):** el DOM sigue el orden móvil del frame (saludo → progreso semanal → siguiente comida → comidas de hoy → accesos). En `lg` la grilla de 12 columnas ubica la siguiente comida a la izquierda (7) y el progreso a la derecha (5), como el frame desktop. Consecuencia aceptada: el único foco afectado es el botón "Reintentar" del progreso en estado de error; el orden de tabulación en desktop no coincide con el visual en ese caso. Cuando no hay columna de siguiente comida, el progreso ocupa las 12 columnas.
-- **`?estado` desconocido o ausente:** en dev, sólo una clave válida muestra su fixture; cualquier otra (desconocida, vacía o ausente) muestra el estado "No disponible todavía", igual que producción. Se reemplaza el fallback anterior a `comidas`.
+## 14. Notas para el PR (2026-10-19)
+
+- **Orden DOM vs. orden visual (lg):** el DOM sigue el orden móvil del frame (saludo → progreso semanal → siguiente comida → comidas de hoy → accesos). En `lg` la grilla de 12 columnas ubica la siguiente comida a la izquierda (7) y el progreso a la derecha (5), como el frame desktop. Consecuencia aceptada: el único foco afectado es el botón "Reintentar" del progreso en estado de error; en ese caso el orden de tabulación en desktop no coincide con el visual. Sin columna de siguiente comida, el progreso ocupa las 12 columnas.
+- **`?estado` desconocido o ausente:** en dev, solo una clave válida muestra su fixture; cualquier otra (desconocida, vacía o ausente) muestra el estado "No disponible todavía", igual que producción.
 - **"Todo registrado":** el mensaje "Ya registraste todas las comidas de hoy." se muestra en el lugar de la siguiente comida, en todos los breakpoints (criterio 2).
 
 ## 15. Ajustes tras la comparación visual con Stitch (2026-10-21, para el PR, el PO y NUT-96)
 
-- **Imagen de la siguiente comida (se aparta del frame):** el contrato A (`AdherenceResponse` / `AdherenceMeal`) **no trae imagen de receta**, por lo que el view model tampoco. La tarjeta "Siguiente comida por registrar" renderiza la imagen **sólo si existe** (render condicional, sin placeholder); hoy no se muestra y el contenido ocupa todo el ancho. El frame muestra una foto con el nombre superpuesto: esa parte queda pendiente hasta que haya imágenes. Motivo: el placeholder gris ocupaba media pantalla en móvil y parecía un error de carga.
-- **Para NUT-96:** `TodayMeal` tiene un campo opcional `image` (hoy siempre vacío porque el contrato A no lo trae). Para mostrar la imagen basta con completarlo al armar las comidas de hoy (desde la receta vía `recipeId` o extendiendo el contrato); la tarjeta la muestra sin cambios de layout.
-- **Coordinación con NUT-103:** este cambio modifica `dashboard/types.ts`, que está copiado en la rama de NUT-103; la responsable replica el cambio allí para evitar conflicto al mergear.
-- **Comidas de hoy:** el chip de estado va debajo del título para que el título use todo el ancho (antes se truncaba en móvil y desktop).
+- **Imagen de la siguiente comida (se aparta del frame):** el contrato A (`AdherenceResponse` / `AdherenceMeal`) **no trae imagen de receta**. La tarjeta "Siguiente comida por registrar" y las miniaturas de "Comidas de hoy" muestran la imagen **solo si existe** (render condicional, sin placeholder); hoy no se muestra y el contenido ocupa todo el ancho. El frame muestra una foto con el nombre superpuesto: esa parte queda pendiente hasta que haya imágenes. Motivo: un placeholder gris ocuparía media pantalla en móvil y parecería un error de carga.
+- **Para NUT-96:** `TodayMeal` tiene un campo opcional `image`, vacío mientras el contrato A no lo traiga. Para mostrar la imagen basta con completarlo al armar las comidas de hoy (desde la receta vía `recipeId` o extendiendo el contrato); las tarjetas la muestran sin cambios de layout.
+- **Comidas de hoy:** el chip de estado va debajo del título; el título usa todo el ancho y se muestra en hasta 2 líneas (`line-clamp-2`, `break-words`); en `lg` la lista usa 2 columnas.
 - **Siguiente comida:** tarjeta blanca con sombra suave; el título "Siguiente comida por registrar" fuera de la tarjeta con el chip del tipo de comida a la derecha, en verde (como el frame).
-- **Accesos rápidos:** ícono dentro de un cuadrado de color de 48px. **Saludo:** `text-2xl` en móvil y `text-3xl` desde `md`.
+- **Accesos rápidos:** ícono dentro de un cuadrado de color de 48 px. **Saludo:** `text-2xl` en móvil y `text-3xl` desde `md`.
 
-## 16. Correcciones de la review de la PR #67 (2026-10-22)
+## 16. Contrato del widget de adherencia, errores, estados desconocidos y vocabulario (review de la PR #67, 2026-10-22)
 
-**Contrato único del widget de adherencia (opción A).** El slot de progreso recibe `AdherenceWidgetProps` (`{ data, loading, error, onRetry }`), el mismo tipo que define NUT-103 en `adherence-widget/types.ts` (copiado idéntico). `DashboardViewModel.adherence` deja de ser `CardState<null>`. Así NUT-96 hace una sola traducción y NUT-94 reemplaza el contenido del slot sin cambiar el contrato. Precedencia en el slot (ningún caso muestra números):
+**Contrato único del widget de adherencia (opción A).** El slot de progreso recibe `AdherenceWidgetProps` (`{ data, loading, error, onRetry }`), definido en `adherence-widget/types.ts`. `DashboardViewModel.adherence` es de ese tipo. Así NUT-96 hace una sola traducción y NUT-94 reemplaza el contenido del slot sin cambiar el contrato. Precedencia en el slot (ningún caso muestra números):
 
 | Props | Se muestra |
 |---|---|
 | `loading` sin `data` | skeleton (gana sobre `error`) |
 | `error` sin `data` | "No pudimos cargar tu progreso." + Reintentar |
-| `data` sin `error` | "Tu progreso aparecerá aquí." |
-| `data` con `error` | lo anterior + aviso no bloqueante con Reintentar |
-| `data: null`, `loading: false`, `error: null` | **"No disponible todavía"** (producción mientras no hay backend) |
+| `data` sin `loading` ni `error` | "Tu progreso aparecerá aquí." |
+| `data` + `loading` | refresco: se mantienen los datos, sin skeleton ni aviso |
+| `data` + `error` (sin `loading`) | datos + aviso no bloqueante "No pudimos actualizar tu progreso." con Reintentar |
+| `data` + `loading` + `error` | gana `loading` (hay un reintento en curso): datos, sin aviso de error |
+| `data: null`, `loading: false`, `error: null` | **"No disponible todavía"**. **No es un estado de carga**: es el estado de producción hasta NUT-96 (sin skeleton) |
 
-**Error siempre recuperable.** `CardState` pasa a `{ kind: 'error'; retry: () => void }`: `retry` obligatorio (el compilador exige una salida) y sin `message` (ninguna tarjeta lo mostraba; el texto es fijo y no se exponen mensajes del backend). "Reintentar" aparece siempre en error. En desarrollo, el retry de los fixtures navega a `?estado=loading` y luego a `?estado=comidas` para que el PO valide el camino completo de recuperación.
+**401.** El 401 lo resuelve el manejador global de sesión; el widget nunca lo recibe y NUT-96 no debe pasarlo como `error`.
+
+**Documentación del contrato.** `adherence-widget/types.ts` (dueño: PR #67 / NUT-95) documenta cada prop (`data`, `loading`, `error`, `onRetry`), esta tabla y la regla del 401.
+
+**Error siempre recuperable.** El error de `CardState` es `{ kind: 'error'; retry: () => void }`: `retry` es obligatorio (el compilador exige una salida) y no hay `message` (el texto es fijo y no se exponen mensajes del backend). "Reintentar" aparece siempre en error. En desarrollo, el reintento de los fixtures navega a `?estado=loading` y luego a `?estado=comidas` para que el PO valide el camino completo de recuperación.
 
 **Estados desconocidos.** Todo estado que no sea `NOT_LOGGED`, `COMPLETED` o `SKIPPED` (incluido `null` o uno nuevo del backend) cuenta como desconocido y cae en "error parcial": no se afirma "Ya registraste todas las comidas de hoy." y se muestra la nota de estado no disponible.
 
-**Vocabulario de estados.** Se adopta el glosario aprobado de NUT-93: `NOT_LOGGED` → "Sin registrar", `COMPLETED` → "Completada", `SKIPPED` → "Omitida". Al 2026-10-22 ese mapa no existe en `main`, así que vive en `MEAL_STATUS_LABELS` de este módulo. **Pendiente:** unificarlo en un módulo compartido que importen NUT-93, NUT-94 y NUT-95 (coordinar con Fer).
+**Vocabulario de estados.** Glosario aprobado de NUT-93: `NOT_LOGGED` → "Sin registrar", `COMPLETED` → "Completada", `SKIPPED` → "Omitida". Al 2026-10-22 ese mapa no existe en `main`, así que vive en `MEAL_STATUS_LABELS` de este módulo. **Pendiente:** unificarlo en un módulo compartido que importen NUT-93, NUT-94 y NUT-95 (coordinar con Fer).
 
-**Merge.** `dashboard/types.ts` deja de ser idéntico a la copia de NUT-103. Orden: mergear primero esta PR (#67) y después rebasear #68 sobre `main` quedándose con la versión de `main` de `types.ts`. `adherence-widget/types.ts` es idéntico en ambas ramas.
+**Merge.** Orden: mergear primero esta PR (#67) y después rebasear #68 sobre `main`. Al rebasear, se sacan del diff de #68 `dashboard/types.ts` y `adherence-widget/types.ts` (quedan las versiones de `main`, que vienen de #67), y #68 queda solo con sus fixtures y tests.
