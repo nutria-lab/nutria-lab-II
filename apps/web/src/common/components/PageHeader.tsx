@@ -16,7 +16,7 @@ type PageHeaderProps = {
 export function PageHeader({ title = 'NutrIA', right }: PageHeaderProps) {
   return (
     <header className="sticky top-0 z-50 flex h-16 items-center justify-between bg-brand-cream/80 px-6 backdrop-blur-md">
-      <h1 className="font-headline text-xl font-semibold text-brand-green">{title}</h1>
+      <p className="font-headline text-xl font-semibold text-brand-green">{title}</p>
       {right && <div className="flex items-center gap-3">{right}</div>}
     </header>
   );
