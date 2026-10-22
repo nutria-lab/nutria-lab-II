@@ -20,6 +20,7 @@ describe('ShoppingListRepository', () => {
   beforeEach(() => {
     prisma = {
       $queryRaw: jest.fn(),
+      $executeRaw: jest.fn(),
       mealPlan: {
         findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), delete: jest.fn(),
@@ -102,8 +103,48 @@ describe('ShoppingListRepository', () => {
     }
   });
 
-  it.each(['P2034', 'P2028'])('returns a reloadable 409 for Prisma %s transaction failure', async (code) => {
-    prisma.$transaction = jest.fn().mockRejectedValue({ code });
+  it('sets a transaction-local lock timeout before locking the plan row', async () => {
+    const lockedPlan = {
+      id: plan.id,
+      isCurrent: true,
+      updatedAt: plan.updatedAt,
+      startDate: new Date(`${weekStart}T00:00:00.000Z`),
+    };
+    const statements: Array<{ method: string; sql: string }> = [];
+    prisma.$executeRaw.mockImplementation((strings: TemplateStringsArray) => {
+      statements.push({ method: '$executeRaw', sql: strings.join(' ').replace(/\s+/g, ' ').trim() });
+      return Promise.resolve(0);
+    });
+    prisma.$queryRaw.mockImplementation((strings: TemplateStringsArray) => {
+      const statement = strings.join(' ');
+      statements.push({ method: '$queryRaw', sql: statement.replace(/\s+/g, ' ').trim() });
+      return Promise.resolve(statement.includes('FOR UPDATE') ? [lockedPlan] : []);
+    });
+    prisma.mealPlan.findFirst.mockResolvedValue(plan);
+    prisma.plannedMeal.findMany.mockResolvedValue([]);
+
+    await repository.setChecked('user-session-1', currentKey, {
+      planId: plan.id,
+      planUpdatedAt: new Date(plan.updatedAt).toISOString(),
+      checked: true,
+    });
+
+    expect(statements).toEqual([
+      expect.objectContaining({
+        method: '$executeRaw',
+        sql: expect.stringMatching(/^SET LOCAL lock_timeout = '5s'$/i),
+      }),
+      expect.objectContaining({
+        method: '$queryRaw',
+        sql: expect.stringContaining('FOR UPDATE'),
+      }),
+    ]);
+  });
+
+  it.each(['P2034', '40001', '40P01', '55P03'])('returns a reloadable 409 for concurrency conflict %s', async (code) => {
+    prisma.$transaction = jest.fn().mockRejectedValue(
+      code === 'P2034' ? { code } : { code: 'P2010', meta: { code } },
+    );
 
     await expect(repository.setChecked('session-user', 'opaque-key', {
       planId: '21e21580-6c87-4114-932d-669b39fb8384',
@@ -113,6 +154,20 @@ describe('ShoppingListRepository', () => {
       status: 409,
       response: expect.objectContaining({ code: 'SHOPPING_LIST_STALE' }),
     });
+  });
+
+  it('propagates a transaction-start P2028 instead of disguising it as stale', async () => {
+    const infrastructureFailure = Object.assign(
+      new Error('Unable to start a transaction in the given time'),
+      { code: 'P2028' },
+    );
+    prisma.$transaction = jest.fn().mockRejectedValue(infrastructureFailure);
+
+    await expect(repository.setChecked('session-user', 'opaque-key', {
+      planId: '21e21580-6c87-4114-932d-669b39fb8384',
+      planUpdatedAt: '2026-10-19T12:00:00.000Z',
+      checked: true,
+    })).rejects.toBe(infrastructureFailure);
   });
 
   it('does not disguise an unknown database failure as an expected stale-list conflict', async () => {

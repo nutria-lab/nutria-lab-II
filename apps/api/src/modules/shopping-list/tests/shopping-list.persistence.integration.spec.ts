@@ -279,6 +279,67 @@ describeWithDb('Shopping list persistence on isolated local PostgreSQL', () => {
     }
   }, 30000);
 
+  it('bounds a blocked plan lock, writes no check, and keeps the timeout transaction-local', async () => {
+    const { user, plan } = await fixture('lock-timeout');
+    const initial = await service.getForWeek(user.id, weekStart);
+    const blocker = new Client({
+      connectionString: dbUrl,
+      options: `-c search_path=${schema}`,
+    });
+    await blocker.connect();
+    let transactionOpen = false;
+    let releaseLock: (() => void) | undefined;
+    const lockRelease = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const releaseTimer = setTimeout(async () => {
+      try {
+        await blocker.query('COMMIT');
+        transactionOpen = false;
+        releaseLock?.();
+      } catch (error) {
+        releaseLock?.();
+        throw error;
+      }
+    }, 6500);
+
+    try {
+      await blocker.query('BEGIN');
+      transactionOpen = true;
+      await blocker.query('SELECT "id" FROM "meal_plans" WHERE "id" = $1 FOR UPDATE', [plan.id]);
+
+      const startedAt = Date.now();
+      const pending = service.setChecked(user.id, initial.items[0].key, {
+        planId: plan.id,
+        planUpdatedAt: initial.plan!.updatedAt,
+        checked: true,
+      }).then(() => ({ ok: true }), error => ({ ok: false, error }));
+
+      await waitForBlockedQuery('meal_plans');
+      const outcome = await pending;
+      const elapsedMs = Date.now() - startedAt;
+      await lockRelease;
+
+      expect(elapsedMs).toBeLessThan(6000);
+      expect(outcome).toMatchObject({
+        ok: false,
+        error: {
+          status: 409,
+          response: expect.objectContaining({ code: 'SHOPPING_LIST_STALE' }),
+        },
+      });
+      expect(await prisma.shoppingItemCheck.count({ where: { userId: user.id, planId: plan.id } })).toBe(0);
+
+      const timeoutSetting = await prisma.$transaction(async (tx: any) =>
+        tx.$queryRaw<Array<{ lock_timeout: string }>>`SHOW lock_timeout`);
+      expect(timeoutSetting[0].lock_timeout).toBe('0');
+    } finally {
+      clearTimeout(releaseTimer);
+      if (transactionOpen) await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  }, 15000);
+
   it('waits for a direct recipe edit, then rejects a key made stale without a plan token change', async () => {
     const { user, recipe, plan } = await fixture('recipe-first');
     const initial = await service.getForWeek(user.id, weekStart);

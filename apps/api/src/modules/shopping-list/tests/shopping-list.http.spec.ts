@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { ConflictException } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -6,12 +7,14 @@ import { JwtService } from '@nestjs/jwt';
 import cookieParser from 'cookie-parser';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ShoppingListController } from '../shopping-list.controller';
+import { ShoppingListItemKeyPipe } from '../shopping-list-item-key.pipe';
 import { ShoppingListService } from '../shopping-list.service';
 
 describe('Shopping list HTTP contract', () => {
   let app: INestApplication;
   let baseUrl: string;
   let service: { getForWeek: jest.Mock; setChecked: jest.Mock };
+  const validItemKey = 'a'.repeat(64);
 
   const emptyResponse = (weekStart: string) => ({
     weekStart,
@@ -64,6 +67,7 @@ describe('Shopping list HTTP contract', () => {
         { provide: ShoppingListService, useValue: service },
         { provide: JwtService, useValue: jwtService },
         JwtAuthGuard,
+        ShoppingListItemKeyPipe,
       ],
     }).compile();
 
@@ -158,15 +162,57 @@ describe('Shopping list HTTP contract', () => {
   });
 
   it('sets checked through authenticated PATCH using only the cookie-derived user identity', async () => {
-    const response = await patch('item-key', validPatch, 'user-one-token');
+    const response = await patch(validItemKey, validPatch, 'user-one-token');
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ itemKey: 'item-key', checked: true });
-    expect(service.setChecked).toHaveBeenCalledWith('user-one', 'item-key', validPatch);
+    expect(await response.json()).toEqual({ itemKey: validItemKey, checked: true });
+    expect(service.setChecked).toHaveBeenCalledWith('user-one', validItemKey, validPatch);
+  });
+
+  it.each([
+    ['a'.repeat(63), 'too short'],
+    ['g'.repeat(64), 'non-hex characters'],
+    ['a'.repeat(65), 'too long'],
+  ])('rejects an invalid item key (%s: %s) before invoking the service', async (itemKey) => {
+    const response = await patch(itemKey, validPatch, 'user-one-token');
+
+    expect(response.status).toBe(400);
+    expect(service.setChecked).not.toHaveBeenCalled();
+  });
+
+  it('keeps the provisional stale response for a valid-format key absent from the current aggregate', async () => {
+    service.setChecked.mockRejectedValueOnce(new ConflictException({
+      statusCode: 409,
+      error: 'Conflict',
+      message: 'Shopping list changed; reload it before trying again',
+      code: 'SHOPPING_LIST_STALE',
+    }));
+
+    const response = await patch(validItemKey, validPatch, 'user-one-token');
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'SHOPPING_LIST_STALE' });
+    expect(service.setChecked).toHaveBeenCalledWith('user-one', validItemKey, validPatch);
+  });
+
+  it('returns an internal error for a transaction-start P2028 instead of stale', async () => {
+    const error = Object.assign(
+      new Error('Unable to start a transaction in the given time'),
+      { code: 'P2028' },
+    );
+    service.setChecked.mockRejectedValueOnce(error);
+
+    const response = await patch(validItemKey, validPatch, 'user-one-token');
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      statusCode: 500,
+      message: 'Internal server error',
+    });
   });
 
   it.each([undefined, 'invalid-token', 'expired-token'])('rejects PATCH without a valid session (%s)', async (token) => {
-    const response = await patch('item-key', validPatch, token);
+    const response = await patch(validItemKey, validPatch, token);
 
     expect(response.status).toBe(401);
     expect(service.setChecked).not.toHaveBeenCalled();
@@ -183,18 +229,18 @@ describe('Shopping list HTTP contract', () => {
     [{ planId: validPatch.planId, checked: true }, 'missing token'],
     [{ planId: validPatch.planId, planUpdatedAt: validPatch.planUpdatedAt }, 'missing checked'],
   ])('rejects PATCH %s (%s)', async (body, _description) => {
-    const response = await patch('item-key', body, 'user-one-token');
+    const response = await patch(validItemKey, body, 'user-one-token');
 
     expect(response.status).toBe(400);
     expect(service.setChecked).not.toHaveBeenCalled();
   });
 
   it('passes false through as a set value instead of converting it to a toggle', async () => {
-    const response = await patch('item-key', { ...validPatch, checked: false }, 'user-two-token');
+    const response = await patch(validItemKey, { ...validPatch, checked: false }, 'user-two-token');
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ itemKey: 'item-key', checked: false });
-    expect(service.setChecked).toHaveBeenCalledWith('user-two', 'item-key', {
+    expect(await response.json()).toEqual({ itemKey: validItemKey, checked: false });
+    expect(service.setChecked).toHaveBeenCalledWith('user-two', validItemKey, {
       ...validPatch,
       checked: false,
     });

@@ -3,6 +3,7 @@ import { AuthenticatedRequest, JwtAuthGuard } from '@/modules/auth/guards/jwt-au
 import { ShoppingListItemCheckDto } from './dto/shopping-list-item-check.dto';
 import { ShoppingListQueryDto } from './dto/shopping-list-query.dto';
 import { ShoppingListService } from './shopping-list.service';
+import { ShoppingListItemKeyPipe } from './shopping-list-item-key.pipe';
 
 @Controller('shopping-list')
 @UseGuards(JwtAuthGuard)
@@ -19,7 +20,7 @@ export class ShoppingListController {
   @Patch('items/:itemKey')
   setChecked(
     @Req() request: AuthenticatedRequest,
-    @Param('itemKey') itemKey: string,
+    @Param('itemKey', ShoppingListItemKeyPipe) itemKey: string,
     @Body() input: ShoppingListItemCheckDto,
   ) {
     const userId = request.user?.sub;

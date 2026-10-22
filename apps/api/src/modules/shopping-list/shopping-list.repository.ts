@@ -32,13 +32,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function isTransactionConflict(error: unknown): boolean {
   const prismaError = asRecord(error);
   if (!prismaError) return false;
-  if (prismaError.code === 'P2028' || prismaError.code === 'P2034') return true;
+  if (prismaError.code === 'P2034') return true;
   if (prismaError.code !== 'P2010') return false;
 
   const meta = asRecord(prismaError.meta);
   const adapter = asRecord(meta?.driverAdapterError);
   const cause = asRecord(adapter?.cause);
-  return [meta?.code, cause?.originalCode].some((code) => code === '40P01' || code === '40001');
+  return [meta?.code, cause?.originalCode].some((code) =>
+    code === '40001' || code === '40P01' || code === '55P03');
 }
 
 @Injectable()
@@ -67,6 +68,8 @@ export class ShoppingListRepository {
   async setChecked(userId: string, itemKey: string, input: ShoppingListItemCheckDto): Promise<void> {
     try {
       await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '5s'`;
+
         // Parent plan mutations use an UPDATE/DELETE of this row. Lock it first,
         // without changing updatedAt, so the token and item membership stay valid.
         const rows = await tx.$queryRaw<LockedPlan[]>`
