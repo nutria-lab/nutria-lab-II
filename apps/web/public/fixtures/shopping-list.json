@@ -2,24 +2,24 @@
   "populated": {
     "weekStart": "2026-10-19",
     "plan": {
-      "id": "plan-fixture-87",
+      "id": "00000000-0000-4000-8000-000000000087",
       "version": 2,
       "updatedAt": "2026-10-19T12:00:00.000Z"
     },
     "items": [
       {
-        "key": "f8c5a58e07fd61b00ae79f6ff0b404836442b8d82813bc90895adcf8f9715c76",
+        "key": "f052cb9860542fcdbea36f627e02ad2ab1afdac2450015e05956dd72ee20400b",
         "name": "arroz",
         "quantity": 300,
         "unit": "g",
         "checked": false,
         "sources": [
           { "plannedMealId": "meal-fixture-1", "recipeId": "recipe-fixture-1", "ingredientIndex": 0, "quantity": 200, "unit": "g" },
-          { "plannedMealId": "meal-fixture-2", "recipeId": "recipe-fixture-2", "ingredientIndex": 1, "quantity": 100, "unit": "g" }
+          { "plannedMealId": "meal-fixture-2", "recipeId": "recipe-fixture-2", "ingredientIndex": 0, "quantity": 100, "unit": "g" }
         ]
       },
       {
-        "key": "eea7fc960a7b3fc0f890a94d6f783a82e83cabda9d32662595a3deab7bb13e29",
+        "key": "427d04457822830aad7d1c6291cd03c74632bef6c5bea2b96c12f87f5bfb912d",
         "name": "sal",
         "quantity": null,
         "unit": "g",

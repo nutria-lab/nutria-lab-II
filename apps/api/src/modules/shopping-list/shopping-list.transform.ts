@@ -169,14 +169,26 @@ export function transformShoppingList(weekStart: string, plan: ShoppingListPlan)
     });
   }
 
+  const aggregated: ShoppingListItem[] = [];
+  for (const group of groups.values()) {
+    const total = sumAndRound(group.contributions);
+    if (Number.isFinite(total) && total > 0) {
+      aggregated.push(createItem(planId, group.name, group.unit, group.contributions, total));
+      continue;
+    }
+
+    for (const contribution of group.contributions) {
+      isolated.push(createItem(planId, group.name, group.unit, [contribution], null));
+      warnings.push({
+        code: 'INVALID_INGREDIENT',
+        plannedMealId: contribution.source.plannedMealId,
+        ingredientIndex: contribution.source.ingredientIndex,
+      });
+    }
+  }
+
   const items = [
-    ...[...groups.values()].map((group) => createItem(
-      planId,
-      group.name,
-      group.unit,
-      group.contributions,
-      sumAndRound(group.contributions),
-    )),
+    ...aggregated,
     ...isolated,
   ].sort((left, right) => compareText(left.name, right.name)
     || compareText(left.unit ?? '', right.unit ?? '')
