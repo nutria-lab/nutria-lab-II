@@ -23,6 +23,7 @@ model MealPlan {
   supersededBy    MealPlan[]     @relation("MealPlanVersions")
 
   days MealPlanDay[]
+  shoppingItemChecks ShoppingItemCheck[]
 
   @@index([userId, startDate])
   @@index([generationRunId])

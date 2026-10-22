@@ -1,0 +1,15 @@
+model ShoppingItemCheck {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      MealPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  itemKey   String
+  checked   Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, planId, itemKey])
+  @@index([planId])
+  @@map("shopping_item_checks")
+}

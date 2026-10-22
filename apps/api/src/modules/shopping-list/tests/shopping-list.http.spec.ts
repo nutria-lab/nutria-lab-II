@@ -8,10 +8,10 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { ShoppingListController } from '../shopping-list.controller';
 import { ShoppingListService } from '../shopping-list.service';
 
-describe('GET /shopping-list HTTP contract', () => {
+describe('Shopping list HTTP contract', () => {
   let app: INestApplication;
   let baseUrl: string;
-  let service: { getForWeek: jest.Mock };
+  let service: { getForWeek: jest.Mock; setChecked: jest.Mock };
 
   const emptyResponse = (weekStart: string) => ({
     weekStart,
@@ -46,6 +46,10 @@ describe('GET /shopping-list HTTP contract', () => {
     service = {
       getForWeek: jest.fn(async (userId: string, weekStart: string) =>
         userId === 'user-empty' ? emptyResponse(weekStart) : populatedResponse(userId, weekStart)),
+      setChecked: jest.fn(async (_userId: string, itemKey: string, input: { checked: boolean }) => ({
+        itemKey,
+        checked: input.checked,
+      })),
     };
     const jwtService = {
       verifyAsync: jest.fn(async (token: string) => {
@@ -80,6 +84,7 @@ describe('GET /shopping-list HTTP contract', () => {
 
   beforeEach(() => {
     service.getForWeek.mockClear();
+    service.setChecked.mockClear();
   });
 
   async function get(path: string, token?: string) {
@@ -87,6 +92,23 @@ describe('GET /shopping-list HTTP contract', () => {
       headers: token ? { cookie: `token=${token}` } : {},
     });
   }
+
+  async function patch(itemKey: string, body: unknown, token?: string) {
+    return fetch(`${baseUrl}/shopping-list/items/${itemKey}`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { cookie: `token=${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  const validPatch = {
+    planId: '21e21580-6c87-4114-932d-669b39fb8384',
+    planUpdatedAt: '2026-10-19T12:00:00.000Z',
+    checked: true,
+  };
 
   it.each([undefined, 'invalid-token', 'expired-token'])('returns 401 when the session cookie is absent, invalid, or expired (%s)', async (token) => {
     const response = await get('/shopping-list?weekStart=2026-10-19', token);
@@ -135,13 +157,46 @@ describe('GET /shopping-list HTTP contract', () => {
     ]);
   });
 
-  it('does not expose PATCH/check persistence as part of NUT-87', async () => {
-    const response = await fetch(`${baseUrl}/shopping-list/items/item-key`, {
-      method: 'PATCH',
-      headers: { cookie: 'token=user-one-token', 'content-type': 'application/json' },
-      body: JSON.stringify({ checked: true }),
-    });
+  it('sets checked through authenticated PATCH using only the cookie-derived user identity', async () => {
+    const response = await patch('item-key', validPatch, 'user-one-token');
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ itemKey: 'item-key', checked: true });
+    expect(service.setChecked).toHaveBeenCalledWith('user-one', 'item-key', validPatch);
+  });
+
+  it.each([undefined, 'invalid-token', 'expired-token'])('rejects PATCH without a valid session (%s)', async (token) => {
+    const response = await patch('item-key', validPatch, token);
+
+    expect(response.status).toBe(401);
+    expect(service.setChecked).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ ...validPatch, planId: 'not-a-uuid' }, 'invalid planId'],
+    [{ ...validPatch, planUpdatedAt: '2026-10-19T09:00:00-03:00' }, 'non-UTC token'],
+    [{ ...validPatch, planUpdatedAt: '2026-02-30T12:00:00.000Z' }, 'invalid calendar token'],
+    [{ ...validPatch, planUpdatedAt: '2026-10-19T12:00:00Zx' }, 'malformed token'],
+    [{ ...validPatch, checked: 'true' }, 'string boolean'],
+    [{ ...validPatch, userId: 'another-user' }, 'client supplied userId'],
+    [{ ...validPatch, unrelated: 1 }, 'unknown field'],
+    [{ planId: validPatch.planId, checked: true }, 'missing token'],
+    [{ planId: validPatch.planId, planUpdatedAt: validPatch.planUpdatedAt }, 'missing checked'],
+  ])('rejects PATCH %s (%s)', async (body, _description) => {
+    const response = await patch('item-key', body, 'user-one-token');
+
+    expect(response.status).toBe(400);
+    expect(service.setChecked).not.toHaveBeenCalled();
+  });
+
+  it('passes false through as a set value instead of converting it to a toggle', async () => {
+    const response = await patch('item-key', { ...validPatch, checked: false }, 'user-two-token');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ itemKey: 'item-key', checked: false });
+    expect(service.setChecked).toHaveBeenCalledWith('user-two', 'item-key', {
+      ...validPatch,
+      checked: false,
+    });
   });
 });

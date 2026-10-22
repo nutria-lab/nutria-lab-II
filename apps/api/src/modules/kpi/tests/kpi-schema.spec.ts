@@ -296,7 +296,7 @@ describe('NUT-85 A1/A3 — modelos de negocio', () => {
   // únicamente la línea `@@index([createdAt])` (CRLF→LF, sin espacios finales).
   // Si otro ticket cambia estos modelos, actualizar la huella en ese ticket.
   const BASELINE_HASHES: Record<string, string> = {
-    'mealPlan.prisma': '65584b4604746d4666cc33aa1dfbf9137695143e37330451dc36ebe15fc34c8b',
+    'mealPlan.prisma': '553812795d44d7fb4523c42a5878c343ba5084b88dfe0af8abada03b852c8b93',
     'recipe.prisma': 'e3b03f69b453712df71d940612bda3e21c2b0cff9533b8f053a3d1f64e2c0eaf',
   };
 
