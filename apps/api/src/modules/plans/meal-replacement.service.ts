@@ -161,6 +161,7 @@ export class MealReplacementService {
         userId,
         planId: plan.id,
         expectedPlanUpdatedAt: plan.updatedAt,
+        expectedMealUpdatedAt: meal.updatedAt,
         plannedMealId: meal.id,
         generationRunId: runId,
         ...write,

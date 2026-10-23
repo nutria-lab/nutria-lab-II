@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+jest.mock('../../../prisma/prisma.service', () => ({ PrismaService: class PrismaService {} }));
 import { MealReplacementConflictError, PlansRepository } from '../plans.repository';
 
 const UPDATED_AT = new Date('2026-10-01T10:00:00.000Z');
@@ -13,6 +14,7 @@ function createTx(lockedCount = 1) {
       deleteMany: jest.fn(),
     },
     plannedMeal: {
+      findUnique: jest.fn().mockResolvedValue({ id: 'meal-1', updatedAt: UPDATED_AT }),
       update: jest.fn(async ({ where, data }: any) => ({ id: where.id, mealType: 'DINNER', ...data })),
       updateMany: jest.fn(),
     },
@@ -69,12 +71,38 @@ describe('PlansRepository.replaceMealTransaction (NUT-77)', () => {
     expect(tx.plannedMeal.update).toHaveBeenCalledTimes(1);
     expect(tx.plannedMeal.update).toHaveBeenCalledWith({
       where: { id: 'meal-1' },
-      data: { recipeId: 'recipe-cat', title: 'Receta del catálogo', nutritionalValues: baseWrite.nutritionalValues },
+      data: {
+        recipeId: 'recipe-cat',
+        title: 'Receta del catálogo',
+        nutritionalValues: baseWrite.nutritionalValues,
+        updatedAt: expect.any(Date),
+      },
     });
     expect(tx.plannedMeal.updateMany).not.toHaveBeenCalled();
     expect(tx.recipe.delete).not.toHaveBeenCalled();
     expect(tx.recipe.deleteMany).not.toHaveBeenCalled();
     expect(tx.recipe.create).not.toHaveBeenCalled();
+  });
+
+  it('avanza estrictamente el token de la comida aunque el reloj repita el mismo milisegundo', async () => {
+    jest.useFakeTimers().setSystemTime(UPDATED_AT);
+    const { repository, tx } = setup();
+
+    try {
+      await repository.replaceMealTransaction({
+        ...baseWrite,
+        existingRecipeId: 'recipe-cat',
+      });
+
+      const update = tx.plannedMeal.update.mock.calls[0][0];
+      expect(tx.plannedMeal.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'meal-1' } }));
+      expect(tx.mealPlan.updateMany.mock.invocationCallOrder[0]).toBeLessThan(tx.plannedMeal.findUnique.mock.invocationCallOrder[0]);
+      expect(update.data.updatedAt).toBeInstanceOf(Date);
+      expect(update.data.updatedAt.getTime()).toBeGreaterThan(UPDATED_AT.getTime());
+      expect(update.data.updatedAt).toEqual(new Date(UPDATED_AT.getTime() + 1));
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('con una receta generada por IA la crea con origin AI y el generationRunId, en la misma transacción', async () => {
