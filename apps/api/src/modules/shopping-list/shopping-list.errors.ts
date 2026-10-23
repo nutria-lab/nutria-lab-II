@@ -1,7 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 
-// The absent-key precedence and 404 literal await the contract clarification.
-// Keep both decisions here so the transaction and persistence remain unchanged.
 export const SHOPPING_ITEM_NOT_FOUND_CODE = 'SHOPPING_ITEM_NOT_FOUND';
 export const SHOPPING_LIST_STALE_CODE = 'SHOPPING_LIST_STALE';
 
@@ -23,8 +21,7 @@ export function shoppingListStale(): ConflictException {
   });
 }
 
-export function shoppingItemAbsentWithCurrentToken(): ConflictException {
-  // Provisional: an opaque key may be fabricated or stale after a recipe edit
-  // that did not update MealPlan.updatedAt. Treat it as stale for now.
-  return shoppingListStale();
+export function shoppingItemAbsentWithCurrentToken(): NotFoundException {
+  // A valid key absent from the current aggregate with a current token is not found.
+  return shoppingItemNotFound();
 }

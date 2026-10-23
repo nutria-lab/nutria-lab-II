@@ -141,6 +141,28 @@ describe('ShoppingListRepository', () => {
     ]);
   });
 
+  it('returns item-not-found when a valid key is absent from the recalculated current aggregate', async () => {
+    prisma.$queryRaw.mockResolvedValue([{
+      id: plan.id,
+      isCurrent: true,
+      updatedAt: plan.updatedAt,
+      startDate: new Date(`${weekStart}T00:00:00.000Z`),
+    }]);
+    prisma.mealPlan.findFirst.mockResolvedValue(plan);
+    prisma.plannedMeal.findMany.mockResolvedValue([]);
+
+    await expect(repository.setChecked('user-session-1', 'a'.repeat(64), {
+      planId: plan.id,
+      planUpdatedAt: new Date(plan.updatedAt).toISOString(),
+      checked: true,
+    })).rejects.toMatchObject({
+      status: 404,
+      response: expect.objectContaining({ code: 'SHOPPING_ITEM_NOT_FOUND' }),
+    });
+
+    expect(prisma.shoppingItemCheck.upsert).not.toHaveBeenCalled();
+  });
+
   it.each(['P2034', '40001', '40P01', '55P03'])('returns a reloadable 409 for concurrency conflict %s', async (code) => {
     prisma.$transaction = jest.fn().mockRejectedValue(
       code === 'P2034' ? { code } : { code: 'P2010', meta: { code } },

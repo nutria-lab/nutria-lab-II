@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { ConflictException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
 import { ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -180,18 +180,18 @@ describe('Shopping list HTTP contract', () => {
     expect(service.setChecked).not.toHaveBeenCalled();
   });
 
-  it('keeps the provisional stale response for a valid-format key absent from the current aggregate', async () => {
-    service.setChecked.mockRejectedValueOnce(new ConflictException({
-      statusCode: 409,
-      error: 'Conflict',
-      message: 'Shopping list changed; reload it before trying again',
-      code: 'SHOPPING_LIST_STALE',
+  it('returns 404 when a valid-format key is absent from the current aggregate', async () => {
+    service.setChecked.mockRejectedValueOnce(new NotFoundException({
+      statusCode: 404,
+      error: 'Not Found',
+      message: 'Shopping item not found',
+      code: 'SHOPPING_ITEM_NOT_FOUND',
     }));
 
     const response = await patch(validItemKey, validPatch, 'user-one-token');
 
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: 'SHOPPING_LIST_STALE' });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ code: 'SHOPPING_ITEM_NOT_FOUND' });
     expect(service.setChecked).toHaveBeenCalledWith('user-one', validItemKey, validPatch);
   });
 

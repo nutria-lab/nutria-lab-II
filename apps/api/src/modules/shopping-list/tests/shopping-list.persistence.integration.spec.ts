@@ -340,7 +340,7 @@ describeWithDb('Shopping list persistence on isolated local PostgreSQL', () => {
     }
   }, 15000);
 
-  it('waits for a direct recipe edit, then rejects a key made stale without a plan token change', async () => {
+  it('waits for a direct recipe edit, then returns not found for the absent key with an unchanged plan token', async () => {
     const { user, recipe, plan } = await fixture('recipe-first');
     const initial = await service.getForWeek(user.id, weekStart);
     const oldKey = initial.items[0].key;
@@ -367,8 +367,8 @@ describeWithDb('Shopping list persistence on isolated local PostgreSQL', () => {
       expect(await pending).toMatchObject({
         ok: false,
         error: {
-          status: 409,
-          response: expect.objectContaining({ code: 'SHOPPING_LIST_STALE' }),
+          status: 404,
+          response: expect.objectContaining({ code: 'SHOPPING_ITEM_NOT_FOUND' }),
         },
       });
       const changed = await service.getForWeek(user.id, weekStart);
