@@ -43,4 +43,3 @@ ALTER TABLE "meal_completions" ADD CONSTRAINT "meal_completions_userId_fkey" FOR
 
 -- AddForeignKey
 ALTER TABLE "meal_completions" ADD CONSTRAINT "meal_completions_plannedMealId_fkey" FOREIGN KEY ("plannedMealId") REFERENCES "planned_meals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
