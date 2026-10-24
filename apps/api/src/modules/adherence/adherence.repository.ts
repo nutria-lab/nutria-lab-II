@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { MealCompletion, Prisma } from '@/generated/prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { adherenceMealNotFound, adherenceStale, mealInFuture } from './adherence.errors';
+import { AdherenceSnapshot } from './adherence.types';
 import { SetMealStatusDto } from './dto/set-meal-status.dto';
 
 type LockedPlan = { id: string; userId: string; isCurrent: boolean };
@@ -25,7 +26,7 @@ function isTransactionConflict(error: unknown): boolean {
     code === '40001' || code === '40P01' || code === '55P03');
 }
 
-function dateInBuenosAires(now: Date): string {
+export function dateInBuenosAires(now: Date): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Argentina/Buenos_Aires',
     year: 'numeric',
@@ -42,6 +43,37 @@ export class AdherenceRepository {
     private readonly prisma: PrismaService,
     @Inject(ADHERENCE_CLOCK) private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  getCurrentSnapshot(userId: string, weekStart: string): Promise<AdherenceSnapshot> {
+    const startDate = new Date(`${weekStart}T00:00:00.000Z`);
+    return this.prisma.$transaction(async (tx) => {
+      const plan = await tx.mealPlan.findFirst({
+        where: { userId, startDate, isCurrent: true },
+        select: { id: true, version: true, updatedAt: true },
+      });
+      if (!plan) return { plan: null, days: [], meals: [], completions: [] };
+
+      const days = await tx.mealPlanDay.findMany({
+        where: { mealPlanId: plan.id },
+        select: { id: true, date: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      });
+      if (days.length === 0) return { plan, days, meals: [], completions: [] };
+
+      const meals = await tx.plannedMeal.findMany({
+        where: { day: { mealPlanId: plan.id } },
+        select: { id: true, dayId: true, mealType: true, title: true, recipeId: true, updatedAt: true },
+      });
+      if (meals.length === 0) return { plan, days, meals, completions: [] };
+
+      const completions = await tx.mealCompletion.findMany({
+        where: { userId, plannedMealId: { in: meals.map(({ id }) => id) } },
+        select: { userId: true, plannedMealId: true, status: true, recipeIdSnapshot: true, mealUpdatedAtSnapshot: true },
+      });
+
+      return { plan, days, meals, completions };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
 
   async setMealStatus(userId: string, plannedMealId: string, input: SetMealStatusDto): Promise<MealCompletion> {
     try {

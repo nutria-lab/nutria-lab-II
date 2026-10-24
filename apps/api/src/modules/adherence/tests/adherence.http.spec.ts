@@ -11,10 +11,12 @@ import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { AdherenceController } from '../adherence.controller';
 import { AdherenceService } from '../adherence.service';
 
-describe('PUT /adherence/meals/:plannedMealId HTTP contract', () => {
+jest.mock('../adherence.service', () => ({ AdherenceService: class AdherenceService {} }));
+
+describe('Adherence HTTP contract (NUT-91 PUT and NUT-92 GET)', () => {
   let app: INestApplication;
   let baseUrl: string;
-  let service: { setMealStatus: jest.Mock };
+  let service: { setMealStatus: jest.Mock; getForWeek: jest.Mock };
 
   const plannedMealId = '11111111-1111-4111-8111-111111111111';
   const body = {
@@ -27,6 +29,36 @@ describe('PUT /adherence/meals/:plannedMealId HTTP contract', () => {
     status: 'COMPLETED',
     updatedAt: '2026-10-20T12:31:00.000Z',
   };
+  const adherenceResult = {
+    weekStart: '2026-10-19',
+    timezone: 'America/Argentina/Buenos_Aires',
+    today: '2026-10-20',
+    plan: { id: '22222222-2222-4222-8222-222222222222', version: 3, updatedAt: '2026-10-19T12:00:00.000Z' },
+    days: [{
+      date: '2026-10-20',
+      plannedMeals: 1,
+      completedMeals: 1,
+      skippedMeals: 0,
+      notLoggedMeals: 0,
+      adherencePercent: 100,
+      meals: [{
+        plannedMealId,
+        mealUpdatedAt: '2026-10-20T12:30:45.123Z',
+        recipeId: null,
+        mealType: 'BREAKFAST',
+        title: 'Avena con fruta',
+        status: 'COMPLETED',
+        canEdit: true,
+      }],
+    }],
+    summary: {
+      plannedMeals: 1,
+      completedMeals: 1,
+      skippedMeals: 0,
+      notLoggedMeals: 0,
+      adherencePercent: 100,
+    },
+  };
 
   beforeAll(async () => {
     service = {
@@ -35,6 +67,7 @@ describe('PUT /adherence/meals/:plannedMealId HTTP contract', () => {
         plannedMealId: id,
         status: input.status,
       })),
+      getForWeek: jest.fn(async () => adherenceResult),
     };
     const jwtService = {
       verifyAsync: jest.fn(async (token: string) => {
@@ -66,7 +99,17 @@ describe('PUT /adherence/meals/:plannedMealId HTTP contract', () => {
     await app?.close();
   });
 
-  beforeEach(() => service.setMealStatus.mockClear());
+  beforeEach(() => {
+    service.setMealStatus.mockClear();
+    service.getForWeek.mockClear();
+  });
+
+  async function get(query: string, token?: string) {
+    return fetch(`${baseUrl}/adherence?${query}`, {
+      method: 'GET',
+      headers: token ? { cookie: `token=${token}` } : {},
+    });
+  }
 
   async function put(id: string, value: unknown, token?: string) {
     return fetch(`${baseUrl}/adherence/meals/${id}`, {
@@ -79,11 +122,77 @@ describe('PUT /adherence/meals/:plannedMealId HTTP contract', () => {
     });
   }
 
-  it('exposes the authenticated PUT route without implementing the NUT-92 GET', () => {
+  it('exposes the authenticated PUT route and the NUT-92 GET route', () => {
     expect(Reflect.getMetadata(PATH_METADATA, AdherenceController)).toBe('adherence');
     expect(Reflect.getMetadata(PATH_METADATA, AdherenceController.prototype.setMealStatus)).toBe('meals/:plannedMealId');
     expect(Reflect.getMetadata(METHOD_METADATA, AdherenceController.prototype.setMealStatus)).toBe(RequestMethod.PUT);
-    expect((AdherenceController.prototype as any).getAdherence).toBeUndefined();
+    const getAdherence = (AdherenceController.prototype as any).getAdherence;
+    expect(getAdherence).toBeDefined();
+    expect(Reflect.getMetadata(PATH_METADATA, getAdherence)).toBe('/');
+    expect(Reflect.getMetadata(METHOD_METADATA, getAdherence)).toBe(RequestMethod.GET);
+  });
+
+  it('returns the exact GET response contract and derives identity only from the session', async () => {
+    const response = await get('weekStart=2026-10-19', 'user-two-token');
+
+    expect(response.status).toBe(200);
+    const payload = await response.json();
+    expect(payload).toEqual(adherenceResult);
+    expect(Object.keys(payload).sort()).toEqual(['days', 'plan', 'summary', 'timezone', 'today', 'weekStart']);
+    expect(Object.keys(payload.days[0]).sort()).toEqual([
+      'adherencePercent', 'completedMeals', 'date', 'meals', 'notLoggedMeals', 'plannedMeals', 'skippedMeals',
+    ]);
+    expect(Object.keys(payload.days[0].meals[0]).sort()).toEqual([
+      'canEdit', 'mealType', 'mealUpdatedAt', 'plannedMealId', 'recipeId', 'status', 'title',
+    ]);
+    expect(payload.days[0]).not.toHaveProperty('canEdit');
+    expect(service.getForWeek).toHaveBeenCalledTimes(1);
+    expect(service.getForWeek).toHaveBeenCalledWith('user-two', '2026-10-19');
+  });
+
+  it.each([undefined, 'invalid-token', 'expired-token'])('requires a valid cookie session for GET (%s)', async (token) => {
+    const response = await get('weekStart=2026-10-19', token);
+
+    expect(response.status).toBe(401);
+    expect(service.getForWeek).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing weekStart', ''],
+    ['malformed date', 'weekStart=2026-1-19'],
+    ['impossible calendar date', 'weekStart=2026-02-30'],
+    ['non-Monday date', 'weekStart=2026-10-20'],
+    ['client supplied userId', 'weekStart=2026-10-19&userId=user-two'],
+    ['unknown query field', 'weekStart=2026-10-19&unexpected=true'],
+  ])('rejects %s with 400 before reading', async (_caseName, query) => {
+    const response = await get(query, 'user-one-token');
+
+    expect(response.status).toBe(400);
+    expect(service.getForWeek).not.toHaveBeenCalled();
+  });
+
+  it('returns the empty response for a user without a current plan', async () => {
+    const empty = {
+      weekStart: '2026-10-19',
+      timezone: 'America/Argentina/Buenos_Aires',
+      today: '2026-10-24',
+      plan: null,
+      days: [],
+      summary: {
+        plannedMeals: 0,
+        completedMeals: 0,
+        skippedMeals: 0,
+        notLoggedMeals: 0,
+        adherencePercent: null,
+      },
+    };
+    service.getForWeek.mockResolvedValueOnce(empty);
+
+    const response = await get('weekStart=2026-10-19', 'user-one-token');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(empty);
+    expect(service.getForWeek).toHaveBeenCalledWith('user-one', '2026-10-19');
   });
 
   it.each([undefined, 'invalid-token', 'expired-token'])('requires a valid cookie session (%s)', async (token) => {
