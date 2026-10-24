@@ -5,6 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@/generated/prisma/client';
 import { Client, Pool } from 'pg';
 import { AdherenceRepository } from '../adherence.repository';
+import { AdherenceService } from '../adherence.service';
 import { RecipeRepository } from '../../recipe/recipe.repository';
 import { PlansRepository } from '../../plans/plans.repository';
 
@@ -16,7 +17,7 @@ const weekStart = '2026-10-19';
 const dayDate = new Date('2026-10-20T00:00:00.000Z');
 const baseClock = '2026-10-20T16:00:00.000Z';
 
-describeWithDb('NUT-91 persistence on isolated local PostgreSQL', () => {
+describeWithDb('adherence persistence on isolated local PostgreSQL', () => {
   let schema: string;
   let admin: Client;
   let pool: Pool;
@@ -106,6 +107,45 @@ describeWithDb('NUT-91 persistence on isolated local PostgreSQL', () => {
     return { user, recipe, plan, meals: plan.days[0].meals };
   }
 
+  async function weekFixture(suffix: string, options: { week?: string; dayOffsets?: number[] } = {}) {
+    const user = await prisma.user.create({ data: {
+      email: `adherence-week-${suffix}-${randomBytes(4).toString('hex')}@example.test`,
+      passwordHash: 'synthetic-test-hash',
+    } });
+    const recipe = await prisma.recipe.create({ data: {
+      title: `Synthetic weekly recipe ${suffix}`,
+      description: 'Synthetic adherence week recipe',
+      prepMinutes: 5,
+      cookMinutes: 10,
+      ingredients: [{ name: 'Avena', quantity: 1, unit: 'g' }],
+      instructions: ['Synthetic step'],
+    } });
+    const start = options.week ?? weekStart;
+    const weekdayNames = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    const mealTypes = ['BREAKFAST', 'LUNCH', 'SNACK', 'DINNER', 'BREAKFAST', 'LUNCH', 'DINNER'];
+    const offsets = options.dayOffsets ?? [0, 1, 2, 3, 4, 5, 6];
+    const startMs = new Date(`${start}T00:00:00.000Z`).getTime();
+    const plan = await prisma.mealPlan.create({
+      data: {
+        userId: user.id,
+        startDate: new Date(startMs),
+        endDate: new Date(startMs + 6 * 86_400_000),
+        days: { create: offsets.map((offset) => ({
+          day: weekdayNames[offset],
+          date: new Date(startMs + offset * 86_400_000),
+          meals: { create: [{
+            mealType: mealTypes[offset],
+            title: `Synthetic meal ${weekdayNames[offset]}`,
+            recipeId: recipe.id,
+            nutritionalValues: {},
+          }] },
+        })) },
+      },
+      include: { days: { include: { meals: true } } },
+    });
+    return { user, recipe, plan, days: plan.days, meals: plan.days.flatMap((day: any) => day.meals) };
+  }
+
   function repository(now = baseClock) {
     return new AdherenceRepository(prisma, () => new Date(now));
   }
@@ -170,6 +210,268 @@ describeWithDb('NUT-91 persistence on isolated local PostgreSQL', () => {
     }
     throw new Error(`Expected ${expectedCount} NUT-91 transactions to wait on a database lock`);
   }
+
+  it('reads only the caller current plan and completions, even when another user has the same week', async () => {
+    const emptyUser = await prisma.user.create({ data: {
+      email: `adherence-empty-${randomBytes(4).toString('hex')}@example.test`,
+      passwordHash: 'synthetic-test-hash',
+    } });
+    const repo = repository();
+    const emptyBeforeOtherPlans = await repo.getCurrentSnapshot(emptyUser.id, weekStart);
+    const owner = await weekFixture('snapshot-owner');
+    const other = await weekFixture('snapshot-other');
+    const emptyPeer = await prisma.user.create({ data: {
+      email: `adherence-empty-peer-${randomBytes(4).toString('hex')}@example.test`,
+      passwordHash: 'synthetic-test-hash',
+    } });
+    const ownerMeal = owner.meals[0];
+    await prisma.mealCompletion.create({ data: {
+      userId: other.user.id,
+      plannedMealId: ownerMeal.id,
+      recipeIdSnapshot: ownerMeal.recipeId,
+      mealUpdatedAtSnapshot: ownerMeal.updatedAt,
+      status: 'COMPLETED',
+    } });
+
+    const ownerSnapshot = await repo.getCurrentSnapshot(owner.user.id, weekStart);
+    const emptyWithOtherPlans = await repo.getCurrentSnapshot(emptyUser.id, weekStart);
+    const emptyWithoutOwnedPlan = await repo.getCurrentSnapshot(emptyPeer.id, weekStart);
+
+    expect(ownerSnapshot.plan).toMatchObject({ id: owner.plan.id, version: owner.plan.version });
+    expect(ownerSnapshot.days).toHaveLength(7);
+    expect(ownerSnapshot.meals.map((meal: any) => meal.id).sort()).toEqual(owner.meals.map((meal: any) => meal.id).sort());
+    expect(ownerSnapshot.completions).toEqual([]);
+    expect(emptyBeforeOtherPlans).toEqual(emptyWithOtherPlans);
+    expect(emptyWithOtherPlans).toEqual({ plan: null, days: [], meals: [], completions: [] });
+    expect(emptyWithOtherPlans).toEqual(emptyWithoutOwnedPlan);
+    expect(JSON.stringify(emptyWithOtherPlans)).not.toContain(other.plan.id);
+  }, 30000);
+
+  it('returns only persisted dates and meals for a partial legacy week', async () => {
+    const partial = await weekFixture('partial', { dayOffsets: [3, 0] });
+    const snapshot = await repository().getCurrentSnapshot(partial.user.id, weekStart);
+
+    expect(snapshot.plan).toMatchObject({ id: partial.plan.id });
+    expect(snapshot.days.map((day: any) => day.date.toISOString().slice(0, 10))).toEqual(['2026-10-19', '2026-10-22']);
+    expect(snapshot.meals).toHaveLength(2);
+    expect(snapshot.meals.every((meal: any) => partial.meals.some((stored: any) => stored.id === meal.id))).toBe(true);
+  }, 30000);
+
+  it('leaves completions and plan/meal timestamps unchanged during the GET snapshot read', async () => {
+    const value = await weekFixture('read-only');
+    const meal = value.meals[0];
+    await prisma.mealCompletion.create({ data: {
+      userId: value.user.id,
+      plannedMealId: meal.id,
+      recipeIdSnapshot: meal.recipeId,
+      mealUpdatedAtSnapshot: meal.updatedAt,
+      status: 'COMPLETED',
+    } });
+    const before = {
+      plan: await prisma.mealPlan.findUnique({ where: { id: value.plan.id } }),
+      meals: await prisma.plannedMeal.findMany({ where: { day: { mealPlanId: value.plan.id } }, orderBy: { id: 'asc' } }),
+      completions: await prisma.mealCompletion.findMany({ where: { userId: value.user.id }, orderBy: { plannedMealId: 'asc' } }),
+    };
+
+    const snapshot = await repository().getCurrentSnapshot(value.user.id, weekStart);
+
+    const after = {
+      plan: await prisma.mealPlan.findUnique({ where: { id: value.plan.id } }),
+      meals: await prisma.plannedMeal.findMany({ where: { day: { mealPlanId: value.plan.id } }, orderBy: { id: 'asc' } }),
+      completions: await prisma.mealCompletion.findMany({ where: { userId: value.user.id }, orderBy: { plannedMealId: 'asc' } }),
+    };
+    expect(snapshot.completions).toHaveLength(1);
+    expect(after).toEqual(before);
+  }, 30000);
+
+  it('keeps plan, meal, and completion reads on one RepeatableRead snapshot across a concurrent commit', async () => {
+    const value = await weekFixture('repeatable-read');
+    const meal = value.meals[0];
+    let announceDaysRead!: () => void;
+    let resumeRead!: () => void;
+    const daysRead = new Promise<void>((resolve) => { announceDaysRead = resolve; });
+    const resume = new Promise<void>((resolve) => { resumeRead = resolve; });
+    const coordinatedPrisma = {
+      $transaction: (callback: (tx: unknown) => Promise<unknown>, options: unknown) => prisma.$transaction(async (tx: any) => {
+        const dayDelegate = new Proxy(tx.mealPlanDay, {
+          get(target, property) {
+            const member = Reflect.get(target, property);
+            if (property === 'findMany') {
+              return async (...args: unknown[]) => {
+                const result = await member.call(target, ...args);
+                announceDaysRead();
+                await resume;
+                return result;
+              };
+            }
+            return typeof member === 'function' ? member.bind(target) : member;
+          },
+        });
+        const transaction = new Proxy(tx, {
+          get(target, property) {
+            if (property === 'mealPlanDay') return dayDelegate;
+            const member = Reflect.get(target, property);
+            return typeof member === 'function' ? member.bind(target) : member;
+          },
+        });
+        return callback(transaction);
+      }, options),
+    };
+    const repo = new AdherenceRepository(coordinatedPrisma as any, () => new Date('2026-10-24T16:00:00.000Z'));
+    const inFlightRead = repo.getCurrentSnapshot(value.user.id, weekStart);
+
+    await daysRead;
+    try {
+      await prisma.mealPlan.update({
+        where: { id: value.plan.id },
+        data: { version: value.plan.version + 1 },
+      });
+      await prisma.plannedMeal.update({
+        where: { id: meal.id },
+        data: { title: 'Concurrent update after snapshot began' },
+      });
+      await prisma.mealCompletion.create({ data: {
+        userId: value.user.id,
+        plannedMealId: meal.id,
+        recipeIdSnapshot: meal.recipeId,
+        mealUpdatedAtSnapshot: meal.updatedAt,
+        status: 'COMPLETED',
+      } });
+    } finally {
+      resumeRead();
+    }
+
+    const consistent = await inFlightRead;
+    const subsequent = await repository().getCurrentSnapshot(value.user.id, weekStart);
+    expect(consistent.plan?.version).toBe(value.plan.version);
+    expect(consistent.meals.find((candidate: any) => candidate.id === meal.id)?.title).toBe(meal.title);
+    expect(consistent.completions).toEqual([]);
+    expect(subsequent.plan?.version).toBe(value.plan.version + 1);
+    expect(subsequent.meals.find((candidate: any) => candidate.id === meal.id)?.title)
+      .toBe('Concurrent update after snapshot began');
+    expect(subsequent.completions).toHaveLength(1);
+  }, 30000);
+
+  it('projects PostgreSQL snapshot states read-only and returns only the regenerated current plan', async () => {
+    const value = await weekFixture('get-projection');
+    const todayClock = '2026-10-22T16:00:00.000Z';
+    const service = new AdherenceService(repository(todayClock), () => new Date(todayClock));
+    const mealForDate = (date: string) => {
+      const day = value.days.find((candidate: any) => candidate.date.toISOString().slice(0, 10) === date);
+      return value.meals.find((meal: any) => meal.dayId === day.id);
+    };
+    const currentMeal = mealForDate('2026-10-19');
+    const staleTimeMeal = mealForDate('2026-10-20');
+    const staleRecipeMeal = mealForDate('2026-10-21');
+    const futureMeal = mealForDate('2026-10-23');
+
+    await prisma.mealCompletion.create({ data: {
+      userId: value.user.id,
+      plannedMealId: currentMeal.id,
+      recipeIdSnapshot: currentMeal.recipeId,
+      mealUpdatedAtSnapshot: currentMeal.updatedAt,
+      status: 'COMPLETED',
+    } });
+    await prisma.mealCompletion.create({ data: {
+      userId: value.user.id,
+      plannedMealId: staleTimeMeal.id,
+      recipeIdSnapshot: staleTimeMeal.recipeId,
+      mealUpdatedAtSnapshot: new Date(staleTimeMeal.updatedAt.getTime() - 1),
+      status: 'COMPLETED',
+    } });
+    await prisma.mealCompletion.create({ data: {
+      userId: value.user.id,
+      plannedMealId: staleRecipeMeal.id,
+      recipeIdSnapshot: null,
+      mealUpdatedAtSnapshot: staleRecipeMeal.updatedAt,
+      status: 'SKIPPED',
+    } });
+    await prisma.mealCompletion.create({ data: {
+      userId: value.user.id,
+      plannedMealId: futureMeal.id,
+      recipeIdSnapshot: futureMeal.recipeId,
+      mealUpdatedAtSnapshot: futureMeal.updatedAt,
+      status: 'COMPLETED',
+    } });
+
+    const readState = async (planIds: string[]) => {
+      const [plans, mealsByPlan, completions] = await Promise.all([
+        prisma.mealPlan.findMany({ where: { id: { in: planIds } }, orderBy: { id: 'asc' } }),
+        Promise.all(planIds.map((planId) => prisma.plannedMeal.findMany({
+          where: { day: { mealPlanId: planId } },
+          orderBy: { id: 'asc' },
+        }))),
+        prisma.mealCompletion.findMany({ where: { userId: value.user.id }, orderBy: { plannedMealId: 'asc' } }),
+      ]);
+      return { plans, mealsByPlan, completions };
+    };
+
+    const beforeGet = await readState([value.plan.id]);
+    const response = await service.getForWeek(value.user.id, weekStart);
+    const afterGet = await readState([value.plan.id]);
+    expect(afterGet).toEqual(beforeGet);
+
+    const responseMeals = response.days.flatMap((day: any) => day.meals);
+    const statusById = new Map(responseMeals.map((meal: any) => [meal.plannedMealId, meal]));
+    expect(response.today).toBe('2026-10-22');
+    expect(statusById.get(currentMeal.id)).toMatchObject({ status: 'COMPLETED', canEdit: true });
+    expect(statusById.get(staleTimeMeal.id)).toMatchObject({ status: 'NOT_LOGGED', canEdit: true });
+    expect(statusById.get(staleRecipeMeal.id)).toMatchObject({ status: 'NOT_LOGGED', canEdit: true });
+    expect(statusById.get(futureMeal.id)).toMatchObject({ status: 'NOT_LOGGED', canEdit: false });
+    expect(response.summary).toMatchObject({
+      plannedMeals: 7,
+      completedMeals: 1,
+      skippedMeals: 0,
+      notLoggedMeals: 6,
+      adherencePercent: 14.3,
+    });
+
+    await prisma.mealPlan.update({ where: { id: value.plan.id }, data: { isCurrent: false } });
+    const startMs = new Date(`${weekStart}T00:00:00.000Z`).getTime();
+    const weekdayNames = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+    const mealTypes = ['BREAKFAST', 'LUNCH', 'SNACK', 'DINNER', 'BREAKFAST', 'LUNCH', 'DINNER'];
+    const regenerated = await prisma.mealPlan.create({
+      data: {
+        userId: value.user.id,
+        startDate: new Date(startMs),
+        endDate: new Date(startMs + 6 * 86_400_000),
+        version: value.plan.version + 1,
+        supersedesId: value.plan.id,
+        days: { create: weekdayNames.map((day, offset) => ({
+          day,
+          date: new Date(startMs + offset * 86_400_000),
+          meals: { create: [{
+            mealType: mealTypes[offset],
+            title: `Regenerated synthetic meal ${day}`,
+            recipeId: value.recipe.id,
+            nutritionalValues: {},
+          }] },
+        })) },
+      },
+      include: { days: { include: { meals: true } } },
+    });
+    const regeneratedMealIds = regenerated.days.flatMap((day: any) => day.meals.map((meal: any) => meal.id));
+    const beforeRegeneratedGet = await readState([value.plan.id, regenerated.id]);
+    const regeneratedResponse = await service.getForWeek(value.user.id, weekStart);
+    const afterRegeneratedGet = await readState([value.plan.id, regenerated.id]);
+
+    expect(afterRegeneratedGet).toEqual(beforeRegeneratedGet);
+    expect(regeneratedResponse.plan).toMatchObject({ id: regenerated.id, version: value.plan.version + 1 });
+    const returnedMealIds = regeneratedResponse.days.flatMap((day: any) => day.meals.map((meal: any) => meal.plannedMealId));
+    expect(returnedMealIds).toHaveLength(7);
+    expect(returnedMealIds.sort()).toEqual([...regeneratedMealIds].sort());
+    expect(returnedMealIds.some((id: string) => value.meals.some((meal: any) => meal.id === id))).toBe(false);
+    expect(regeneratedResponse.days.flatMap((day: any) => day.meals).every((meal: any) => meal.status === 'NOT_LOGGED')).toBe(true);
+    expect(regeneratedResponse.summary).toEqual({
+      plannedMeals: 7,
+      completedMeals: 0,
+      skippedMeals: 0,
+      notLoggedMeals: 7,
+      adherencePercent: 0,
+    });
+    expect(afterRegeneratedGet.completions).toHaveLength(4);
+    expect(await prisma.mealCompletion.findMany({ where: { plannedMealId: { in: regeneratedMealIds } } })).toEqual([]);
+  }, 30000);
 
   it('persists NOT_LOGGED, transitions all states idempotently, and leaves plan/meal timestamps untouched', async () => {
     const value = await fixture('states');
