@@ -17,7 +17,7 @@ export type ShoppingListItem = {
   name: string;
   quantity: number | null;
   unit: string | null;
-  checked: false;
+  checked: boolean;
   sources: ShoppingListSource[];
 };
 
@@ -31,7 +31,7 @@ export type ShoppingListResponse = {
   weekStart: string;
   plan: ShoppingListPlanMetadata | null;
   items: ShoppingListItem[];
-  summary: { totalItems: number; checkedItems: 0 };
+  summary: { totalItems: number; checkedItems: number };
   warnings: ShoppingListWarning[];
 };
 
