@@ -1,0 +1,23 @@
+{
+  "name": "NutrIA",
+  "short_name": "NutrIA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#4a7c59",
+  "background_color": "#faf6f0",
+  "icons": [
+    {
+      "src": "/icons/nutria-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/nutria-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
