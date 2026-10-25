@@ -17,6 +17,8 @@ Use this skill for `/review` or an explicit request to review a completed change
 - For developer workflow review, select backend or frontend reviewer variants from `bundles/development/agents` based on changed scope; for mixed scope, run both applicable variants.
 - Run the four lenses: risk, resilience, readability, and reliability.
 - Treat an unavailable required lens as a **BLOCKER** and report it; do not silently substitute another lens.
+- The parent orchestrator must pass the already-resolved role and selected task in every subagent handoff. Review subagents are non-interactive and must not repeat the primary role/task gate.
+- Resolve the shared bundle root before declaring `management_review` unavailable: check the workspace `bundles/` path and then the configured shared bundle location.
 - Report actionable findings only. Deduplicate overlapping findings and preserve lens attribution. No praise, essays, speculative nitpicks, merge/deploy actions, or approval claims.
 
 ## Execution Steps

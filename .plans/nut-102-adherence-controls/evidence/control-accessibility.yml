@@ -1,0 +1,13 @@
+- region "Probá el control":
+  - heading "Probá el control" [level=2]
+  - paragraph: Registro de comida
+  - heading "Tostadas con palta y huevo" [level=3]
+  - group "Estado de Tostadas con palta y huevo":
+    - text: Estado de
+    - button "Completada"
+    - button "Omitida"
+    - button "Sin registrar" [pressed]
+  - status: "Estado actual: Sin registrar"
+  - paragraph: Elegí un estado y resolvé la simulación para probar guardado o recuperación de error.
+  - button "Simular éxito" [disabled]
+  - button "Simular error" [disabled]
