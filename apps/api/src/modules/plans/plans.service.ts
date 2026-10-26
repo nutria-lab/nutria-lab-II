@@ -185,7 +185,13 @@ export class PlansService {
 
   private async generateForRun(userId: string, weekStartStr: string, weekStart: Date, profile: NutritionProfile, runId: string) {
     const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr });
-    return this.validateAndPersistPlan(userId, proposal.dto, runId, { ...proposal.summary });
+    return this.validateAndPersistPlan(
+      userId,
+      proposal.dto,
+      runId,
+      { ...proposal.summary },
+      proposal.compositionSnapshot,
+    );
   }
 
   /**
@@ -200,6 +206,7 @@ export class PlansService {
     dto: CreateMealPlanDto,
     generationRunId?: string,
     validationSnapshot?: Record<string, unknown>,
+    compositionSnapshot?: Record<string, unknown>,
   ) {
     const weekStart = this.parseDateString(dto.weekStart);
 
@@ -245,7 +252,7 @@ export class PlansService {
     let recipesForTracking: RecipeForTracking[] = [];
     try {
       const persisted = await this.repository.createPlanTransaction(
-        userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot,
+        userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot, compositionSnapshot,
       );
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
