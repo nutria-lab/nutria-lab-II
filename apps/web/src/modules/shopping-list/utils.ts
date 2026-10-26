@@ -1,5 +1,20 @@
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+export function getBuenosAiresWeekStart(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Argentina/Buenos_Aires",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const part = (type: string) =>
+    parts.find((entry) => entry.type === type)?.value ?? "";
+  const today = `${part("year")}-${part("month")}-${part("day")}`;
+  const date = new Date(`${today}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
 export function isMondayDate(value: string): boolean {
   if (!DATE_PATTERN.test(value)) return false;
   const date = new Date(`${value}T00:00:00.000Z`);
