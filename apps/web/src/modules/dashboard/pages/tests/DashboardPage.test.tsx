@@ -78,7 +78,7 @@ describe('DashboardPage in development (fixtures via ?estado)', () => {
   it('?estado=sin-plan shows the no-plan copy', () => {
     renderPage('/dashboard?estado=sin-plan');
 
-    expect(screen.getByText(NO_PLAN)).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Comidas de hoy' })).getByText(NO_PLAN)).toBeVisible();
     expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
   });
 
@@ -128,10 +128,10 @@ describe('DashboardPage outside development', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
   });
 
-  it('without ?estado, both "Progreso semanal" and "Comidas de hoy" say "No disponible todavía" and nothing is busy (§16)', () => {
+  it('without ?estado, both "Progreso de la semana" and "Comidas de hoy" say "No disponible todavía" and nothing is busy (§16)', () => {
     renderPage('/dashboard');
 
-    const progress = screen.getByRole('region', { name: 'Progreso semanal' });
+    const progress = screen.getByRole('region', { name: 'Progreso de la semana' });
     expect(within(progress).getByText(UNAVAILABLE)).toBeVisible();
     expect(progress.querySelector('[aria-busy="true"]')).toBeNull();
     const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
@@ -175,6 +175,25 @@ describe('DashboardPage dev retry flow (§16)', () => {
     expect(screen.getByText(NEXT_MEAL_TITLE)).toBeInTheDocument();
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
   });
+
+  it.each(['error', 'progreso-error-actualizacion', 'progreso-desactualizado', 'progreso-inconsistente'])(
+    '?estado=%s → progress "Reintentar" goes through loading and ends showing the weekly progress',
+    (key) => {
+      renderPageWithProbe(`/dashboard?estado=${key}`);
+      const progress = () => screen.getByRole('region', { name: 'Progreso de la semana' });
+
+      fireEvent.click(within(progress()).getByRole('button', { name: 'Reintentar' }));
+      expect(progress().querySelector('[aria-busy="true"]')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(RETRY_DELAY_MS);
+      });
+
+      expect(new URLSearchParams(screen.getByTestId('location-search').textContent ?? '').get('estado')).toBe('comidas');
+      expect(within(progress()).getByRole('progressbar')).toBeInTheDocument();
+      expect(within(progress()).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+    },
+  );
 
   it('unmounting before the delay clears the timer without throwing or warning', () => {
     const errorSpy = vi.spyOn(console, 'error');

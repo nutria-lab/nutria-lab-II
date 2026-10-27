@@ -7,6 +7,9 @@ import {
   selectDashboardFixture,
   type DashboardFixtureKey,
 } from '@/modules/dashboard/fixtures';
+import { createAdherenceWidgetProps } from '@/modules/dashboard/adherence-widget/fixtures';
+import { createAdherenceWidgetStateProps } from '@/modules/dashboard/adherence-widget/stateFixtures';
+import { isConsistentAdherence } from '@/modules/dashboard/adherence-widget/utils';
 import type { DashboardViewModel, TodayMeal } from '@/modules/dashboard/types';
 import { sortMealsByType, selectTodayMeals } from '@/modules/dashboard/utils';
 
@@ -20,6 +23,12 @@ const FIXTURE_KEYS: DashboardFixtureKey[] = [
   'error-parcial',
   'no-disponible',
   'sin-nombre',
+  'progreso-sin-registros',
+  'progreso-sin-comidas',
+  'progreso-actualizando',
+  'progreso-error-actualizacion',
+  'progreso-desactualizado',
+  'progreso-inconsistente',
 ];
 
 const READY_ADHERENCE_KEYS: DashboardFixtureKey[] = ['sin-plan', 'sin-comidas', 'comidas', 'todo-registrado', 'sin-nombre'];
@@ -170,7 +179,6 @@ describe('DASHBOARD_FIXTURES', () => {
 
   it('contain no percentages nor Stitch sample names or dishes', () => {
     const models = FIXTURE_KEYS.map((key) => selectValid(key, 'María José'));
-    // adherence.data reutiliza adherenceResponseFixture, cuyas claves `adherencePercent` se validan aparte.
     const serializedMeals = JSON.stringify(models.map((model) => model.todayMeals));
     const serialized = JSON.stringify(models);
 
@@ -188,14 +196,44 @@ describe('adherenceResponseFixture', () => {
     expect(result.kind === 'meals' && result.meals.length).toBeGreaterThan(0);
   });
 
-  it('carries no percentage values nor Stitch sample data', () => {
-    expect(adherenceResponseFixture.summary.adherencePercent).toBeNull();
+  it('keeps contract A percents (completed / planned × 100) and carries no Stitch sample data', () => {
     for (const day of adherenceResponseFixture.days) {
-      expect(day.adherencePercent).toBeNull();
+      expect(day.adherencePercent).toBe(Math.round((day.completedMeals / day.plannedMeals) * 1000) / 10);
     }
+    expect(isConsistentAdherence(adherenceResponseFixture)).toBe(true);
     const serialized = JSON.stringify(adherenceResponseFixture);
     expect(serialized).not.toContain('%');
     expect(serialized).not.toMatch(STITCH_SAMPLE_DATA);
+  });
+});
+
+describe('progress dev fixtures (NUT-94)', () => {
+  it.each<[DashboardFixtureKey, ReturnType<typeof createAdherenceWidgetProps>]>([
+    ['sin-plan', createAdherenceWidgetProps('noPlan')],
+    ['comidas', createAdherenceWidgetProps('partial')],
+    ['progreso-sin-registros', createAdherenceWidgetStateProps('noRecords')],
+    ['progreso-sin-comidas', createAdherenceWidgetProps('planWithoutMeals')],
+    ['progreso-actualizando', createAdherenceWidgetProps('refreshing')],
+    ['progreso-error-actualizacion', createAdherenceWidgetProps('staleWithError')],
+    ['progreso-desactualizado', createAdherenceWidgetStateProps('stalePlan')],
+    ['progreso-inconsistente', createAdherenceWidgetStateProps('inconsistent')],
+  ])('%s uses the matching widget fixture with the injected onRetry', (key, expected) => {
+    const onRetry = vi.fn();
+    const { adherence } = selectValid(key, 'María José', onRetry);
+
+    expect({ ...adherence, onRetry: undefined }).toEqual({ ...expected, onRetry: undefined });
+    expect(adherence.onRetry).toBe(onRetry);
+  });
+
+  it.each<DashboardFixtureKey>([
+    'progreso-sin-registros',
+    'progreso-sin-comidas',
+    'progreso-actualizando',
+    'progreso-error-actualizacion',
+    'progreso-desactualizado',
+    'progreso-inconsistente',
+  ])('%s keeps the mixed meals card so only the progress changes', (key) => {
+    expect(selectValid(key, 'María José').todayMeals).toEqual(selectValid('comidas', 'María José').todayMeals);
   });
 });
 
