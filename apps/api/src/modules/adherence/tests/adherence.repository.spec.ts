@@ -126,4 +126,59 @@ describe('AdherenceRepository transaction policy', () => {
 
     await expect(repository.setMealStatus('user-one', plannedMealId, request)).rejects.toBe(infrastructureFailure);
   });
+
+  it('refreshes snapshots for a stale NOT_LOGGED completion instead of treating it as idempotent', async () => {
+    const { prisma, tx } = makePrisma();
+    const staleCompletion = {
+      userId: 'user-one',
+      plannedMealId,
+      status: 'NOT_LOGGED',
+      recipeIdSnapshot: 'recipe-old',
+      mealUpdatedAtSnapshot: new Date('2026-10-19T12:30:45.123Z'),
+    };
+    const currentCompletion = {
+      ...staleCompletion,
+      recipeIdSnapshot: 'recipe-one',
+      mealUpdatedAtSnapshot: mealToken,
+    };
+    tx.mealCompletion.findUnique.mockResolvedValue(staleCompletion);
+    tx.mealCompletion.upsert.mockResolvedValue(currentCompletion);
+    const repository = new AdherenceRepository(prisma, () => new Date('2026-10-20T16:00:00.000Z'));
+
+    const result = await repository.setMealStatus('user-one', plannedMealId, {
+      ...request,
+      status: 'NOT_LOGGED',
+    });
+
+    expect(result).toBe(currentCompletion);
+    expect(tx.mealCompletion.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { plannedMealId },
+      update: expect.objectContaining({
+        status: 'NOT_LOGGED',
+        recipeIdSnapshot: 'recipe-one',
+        mealUpdatedAtSnapshot: mealToken,
+      }),
+    }));
+  });
+
+  it('keeps an exact current NOT_LOGGED completion idempotent', async () => {
+    const { prisma, tx } = makePrisma();
+    const existingCompletion = {
+      userId: 'user-one',
+      plannedMealId,
+      status: 'NOT_LOGGED',
+      recipeIdSnapshot: 'recipe-one',
+      mealUpdatedAtSnapshot: new Date(mealToken.getTime()),
+    };
+    tx.mealCompletion.findUnique.mockResolvedValue(existingCompletion);
+    const repository = new AdherenceRepository(prisma, () => new Date('2026-10-20T16:00:00.000Z'));
+
+    const result = await repository.setMealStatus('user-one', plannedMealId, {
+      ...request,
+      status: 'NOT_LOGGED',
+    });
+
+    expect(result).toBe(existingCompletion);
+    expect(tx.mealCompletion.upsert).not.toHaveBeenCalled();
+  });
 });
