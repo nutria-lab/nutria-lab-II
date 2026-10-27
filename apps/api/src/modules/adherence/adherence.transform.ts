@@ -1,4 +1,5 @@
 import { AdherenceResponse, AdherenceSnapshot, AdherenceMealStatus, AdherenceCounts } from './adherence.types';
+import { effectiveMealStatus } from './effective-meal-status';
 
 const MEAL_TYPE_ORDER: Record<string, number> = {
   BREAKFAST: 0,
@@ -51,11 +52,7 @@ export function transformAdherence(
         .sort((left, right) => (MEAL_TYPE_ORDER[left.mealType] - MEAL_TYPE_ORDER[right.mealType]) || compareIds(left.id, right.id))
         .map((meal) => {
           const completion = completionByMealId.get(meal.id);
-          let status: AdherenceMealStatus = completion
-            && completion.mealUpdatedAtSnapshot.getTime() === meal.updatedAt.getTime()
-            && completion.recipeIdSnapshot === meal.recipeId
-            ? completion.status
-            : 'NOT_LOGGED';
+          let status: AdherenceMealStatus = effectiveMealStatus(completion ?? null, meal);
           if (date > today) status = 'NOT_LOGGED';
 
           return {

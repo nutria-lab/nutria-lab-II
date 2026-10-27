@@ -1,4 +1,5 @@
 import { calculateAdherencePercent, transformAdherence } from '../adherence.transform';
+import * as effectiveMealStatusModule from '../effective-meal-status';
 
 const weekStart = '2026-10-19';
 const today = '2026-10-22';
@@ -48,6 +49,8 @@ function baseSnapshot() {
 }
 
 describe('transformAdherence', () => {
+  afterEach(() => jest.restoreAllMocks());
+
   it.each([
     [3, 10, 30],
     [1, 3, 33.3],
@@ -75,6 +78,18 @@ describe('transformAdherence', () => {
     expect(byId.get(id(9))).toMatchObject({ status: 'COMPLETED', canEdit: true });
     expect(byId.get(id(10))).toMatchObject({ status: 'NOT_LOGGED', canEdit: false });
     expect(byId.get(id(10))).toMatchObject({ mealUpdatedAt: '2026-10-23T10:00:00.000Z' });
+  });
+
+  it('delegates completion validity to the shared effective status rule', () => {
+    const snapshot = baseSnapshot();
+    const effectiveStatus = jest.spyOn(effectiveMealStatusModule, 'effectiveMealStatus');
+
+    transformAdherence(weekStart, snapshot as any, today);
+
+    expect(effectiveStatus).toHaveBeenCalledWith(snapshot.completions[0], snapshot.meals[0]);
+    expect(effectiveStatus).toHaveBeenCalledWith(snapshot.completions[3], snapshot.meals[4]);
+    expect(effectiveStatus).toHaveBeenCalledWith(snapshot.completions[2], snapshot.meals[3]);
+    expect(effectiveStatus).toHaveBeenCalledWith(null, snapshot.meals[2]);
   });
 
   it('preserves seven persisted civil dates and sorts meals by explicit type then ID', () => {
