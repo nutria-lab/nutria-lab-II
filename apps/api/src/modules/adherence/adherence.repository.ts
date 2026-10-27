@@ -4,6 +4,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { adherenceMealNotFound, adherenceStale, mealInFuture } from './adherence.errors';
 import { AdherenceSnapshot } from './adherence.types';
 import { SetMealStatusDto } from './dto/set-meal-status.dto';
+import { effectiveMealStatus, mealCompletionSnapshotsMatch } from './effective-meal-status';
 
 type LockedPlan = { id: string; userId: string; isCurrent: boolean };
 type LockedMeal = { id: string; planId: string; recipeId: string | null; updatedAt: Date; civilDate: string };
@@ -127,13 +128,12 @@ export class AdherenceRepository {
         const existing = await tx.mealCompletion.findUnique({ where: { plannedMealId } });
         if (existing && existing.userId !== userId) throw adherenceMealNotFound();
 
-        if (
-          existing
-          && existing.status === input.status
-          && existing.recipeIdSnapshot === meal.recipeId
-          && existing.mealUpdatedAtSnapshot.getTime() === meal.updatedAt.getTime()
-        ) {
-          return existing;
+        if (existing && existing.status === input.status) {
+          const isIdempotent = input.status === 'NOT_LOGGED'
+            ? mealCompletionSnapshotsMatch(existing, meal)
+            : effectiveMealStatus(existing, meal) === input.status;
+
+          if (isIdempotent) return existing;
         }
 
         const completion = await tx.mealCompletion.upsert({

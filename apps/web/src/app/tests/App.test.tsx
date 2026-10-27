@@ -168,7 +168,7 @@ describe('App authentication routes', () => {
     pendingRestoration.resolve(response({ url: '/auth/me' } as InternalAxiosRequestConfig, authenticatedUser));
 
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
-    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Hola, Persona', level: 1 })).toBeVisible();
   });
 
   it('renders only an accessible session-checking status while initial identity restoration is unresolved', async () => {
@@ -218,7 +218,7 @@ describe('App authentication routes', () => {
 
     renderApp('/dashboard');
 
-    expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Hola, Persona', level: 1 })).toBeVisible();
     expect(screen.getAllByRole('link', { name: 'Goals' })).not.toHaveLength(0);
   });
 
