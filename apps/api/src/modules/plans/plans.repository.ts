@@ -19,6 +19,7 @@ export interface MealReplacementWrite {
   userId: string;
   planId: string;
   expectedPlanUpdatedAt: Date;
+  expectedMealUpdatedAt?: Date;
   plannedMealId: string;
   generationRunId: string;
   existingRecipeId?: string;
@@ -547,14 +548,28 @@ export class PlansRepository {
         throw new MealReplacementConflictError();
       }
 
+      const previousMeal = await tx.plannedMeal.findUnique({
+        where: { id: input.plannedMealId },
+        select: { updatedAt: true },
+      });
+      if (!previousMeal || (input.expectedMealUpdatedAt && previousMeal.updatedAt.getTime() !== input.expectedMealUpdatedAt.getTime())) {
+        throw new MealReplacementConflictError();
+      }
+
       const recipe = input.newRecipe
         ? await tx.recipe.create({ data: { ...input.newRecipe, origin: 'AI', generationRunId: input.generationRunId } })
         : await tx.recipe.findUniqueOrThrow({ where: { id: input.existingRecipeId } });
 
       // Sólo cambia la comida objetivo; la receta anterior queda en el catálogo.
+      const nextMealUpdatedAt = new Date(Math.max(Date.now(), previousMeal.updatedAt.getTime() + 1));
       const plannedMeal = await tx.plannedMeal.update({
         where: { id: input.plannedMealId },
-        data: { recipeId: recipe.id, title: input.title ?? recipe.title, nutritionalValues: input.nutritionalValues },
+        data: {
+          recipeId: recipe.id,
+          title: input.title ?? recipe.title,
+          nutritionalValues: input.nutritionalValues,
+          updatedAt: nextMealUpdatedAt,
+        },
       });
 
       await this.transitionGenerationRunInTx(tx, input.generationRunId, input.userId, ['PENDING'], 'SUCCEEDED', {
