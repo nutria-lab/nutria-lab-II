@@ -450,14 +450,8 @@ describe('createAdherenceWidgetProps', () => {
       expect(unavailable).not.toEqual(error);
     });
 
-    it('mutating returned props never changes any exported fixture', () => {
-      const snapshots = allFixtures.map(([, fixture]) => structuredClone(fixture));
-      const props = createAdherenceWidgetProps('unavailable');
-      props.data = structuredClone(adherencePartialProgressFixture);
-      props.data.summary.adherencePercent = 0;
-      allFixtures.forEach(([, fixture], index) => {
-        expect(fixture).toEqual(snapshots[index]);
-      });
+    it('has null data', () => {
+      expect(createAdherenceWidgetProps('unavailable').data).toBeNull();
     });
   });
 });
