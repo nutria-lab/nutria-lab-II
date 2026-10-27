@@ -12,16 +12,21 @@ import { MealReplacementService } from './meal-replacement.service';
 import { RecipeValidationService } from './recipe-validation.service';
 import { MealPlanRegenerationService } from './meal-plan-regeneration.service';
 import { RecipeImagesService } from './recipe-images.service';
-import { noClassifiedWeeklyRecipe, OpenAIWeeklyProposalComposer, WeeklyProposalComposer, WEEKLY_RECIPE_ELIGIBILITY_POLICY } from './weekly-proposal.composer';
+import { OpenAIWeeklyProposalComposer, WeeklyProposalComposer } from './weekly-proposal.composer';
 import { UnsplashModule } from '@/modules/unsplash/unsplash.module';
+import {
+  OpenAIMealTypeClassificationProvider,
+  RECIPE_MEALTYPE_CLASSIFICATION_PROVIDER,
+} from './recipe-mealtype-classifier.ports';
+import { RecipeMealTypeClassifierService } from './recipe-mealtype-classifier.service';
 
 @Module({
   imports: [PrismaModule, ConfigModule, AuthModule, RecipeModule, RecipeGenerationModule, UnsplashModule, OpenAIModule],
   controllers: [PlansController],
   providers: [PlansService, PlansRepository, MealReplacementService, RecipeValidationService, MealPlanRegenerationService, RecipeImagesService,
-    // NUT-76 puede reemplazar la composición registrando otra implementación acá.
+    RecipeMealTypeClassifierService,
+    { provide: RECIPE_MEALTYPE_CLASSIFICATION_PROVIDER, useClass: OpenAIMealTypeClassificationProvider },
     { provide: WeeklyProposalComposer, useClass: OpenAIWeeklyProposalComposer },
-    { provide: WEEKLY_RECIPE_ELIGIBILITY_POLICY, useValue: noClassifiedWeeklyRecipe },
   ],
   exports: [PlansService, PlansRepository]
 })

@@ -77,8 +77,10 @@ function recipeNutritionForPersistence(recipe: unknown, mealNutrition: unknown):
 export interface SupersedeOptions {
   expectedPlanId?: string;
   expectedPlanUpdatedAt?: Date;
+  selectedRecipeVersions?: ReadonlyMap<string, Date>;
   recipeOrigin?: 'MANUAL' | 'AI';
   validationSnapshot?: Record<string, unknown>;
+  compositionSnapshot?: Record<string, unknown>;
 }
 
 // Mismo 409 para todo "el plan cambió mientras se procesaba el pedido".
@@ -161,6 +163,7 @@ export class PlansRepository {
     generatedDays: MealPlanDayDto[],
     generationRunId?: string | null,
     recipeOrigin?: 'MANUAL' | 'AI',
+    selectedRecipeVersions?: ReadonlyMap<string, Date>,
   ): Promise<RecipeForTracking[]> {
     const recipesForTracking: RecipeForTracking[] = [];
 
@@ -175,11 +178,23 @@ export class PlansRepository {
         if (meal.reuseRecipeId) {
           // Releer la fila elegida dentro de la transacción: no copiar ni modificar una Recipe
           // compartida, y derivar la comida de sus valores persistidos más recientes.
+          const selectedUpdatedAt = selectedRecipeVersions?.get(meal.reuseRecipeId);
           if (typeof tx.recipe.findUnique === 'function') {
             const existing = await tx.recipe.findUnique({ where: { id: meal.reuseRecipeId } });
-            if (!existing) throw new Error(`Selected Recipe ${meal.reuseRecipeId} is no longer available`);
+            if (!existing) {
+              if (selectedUpdatedAt) throw new ConflictException(PLAN_CHANGED);
+              throw new Error(`Selected Recipe ${meal.reuseRecipeId} is no longer available`);
+            }
+            if (
+              selectedUpdatedAt &&
+              (!(existing.updatedAt instanceof Date) || existing.updatedAt.getTime() !== selectedUpdatedAt.getTime())
+            ) {
+              throw new ConflictException(PLAN_CHANGED);
+            }
             meal.title = existing.title;
             meal.nutritionalValues = mapRecipeNutritionToMeal(existing) as any;
+          } else if (selectedUpdatedAt) {
+            throw new ConflictException(PLAN_CHANGED);
           }
           recipeId = meal.reuseRecipeId;
         } else if (meal.recipe) {
@@ -311,6 +326,7 @@ export class PlansRepository {
     // NUT-74: resumen del validador determinístico; sin él se guarda el snapshot legado { restrictionsChecked: true }.
     validationSnapshot?: Record<string, unknown>,
     compositionSnapshot?: Record<string, unknown>,
+    selectedRecipeVersions?: ReadonlyMap<string, Date>,
   ): Promise<{ planId: string; recipesForTracking: RecipeForTracking[] }> {
     return this.prisma.$transaction(async (tx: any) => {
       const planData: any = {
@@ -331,6 +347,7 @@ export class PlansRepository {
         generatedDays,
         generationRunId,
         recipeOrigin,
+        selectedRecipeVersions,
       );
 
       if (generationRunId) {
@@ -342,7 +359,7 @@ export class PlansRepository {
         await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
           outputSnapshot: this.buildOutputSnapshot(generatedDays, compositionSnapshot),
           validationSnapshot: validationSnapshot ?? { restrictionsChecked: true },
-          ...(compositionSnapshot?.aiInvoked === false ? { provider: 'none', model: 'none' } : {}),
+          ...this.generationRunProviderModel(compositionSnapshot),
         });
       }
 
@@ -374,16 +391,66 @@ export class PlansRepository {
     if (typeof compositionSnapshot?.aiInvoked === 'boolean') {
       snapshot.aiInvoked = compositionSnapshot.aiInvoked;
     }
+    const classificationAi = this.sanitizeAiAudit(compositionSnapshot?.classificationAi, [
+      'invoked', 'provider', 'model', 'models', 'promptVersion', 'schemaVersion', 'pagesClassified', 'classifiedCount',
+    ]);
+    if (classificationAi) snapshot.classificationAi = classificationAi;
+    const generationAi = this.sanitizeAiAudit(compositionSnapshot?.generationAi, [
+      'invoked', 'provider', 'model', 'generatedCount',
+    ]);
+    if (generationAi) {
+      const source = compositionSnapshot?.generationAi as Record<string, unknown>;
+      const batches = this.sanitizeCompositionBatches(source.batches);
+      if (batches) generationAi.batches = batches;
+      snapshot.generationAi = generationAi;
+    }
     if (Array.isArray(compositionSnapshot?.batches)) {
-      snapshot.batches = compositionSnapshot.batches.map(batch => {
-        if (!batch || typeof batch !== 'object' || Array.isArray(batch)) return null;
-        const source = batch as Record<string, unknown>;
-        return Object.fromEntries(['mealType', 'count', 'model', 'promptVersion', 'schemaVersion']
-          .filter(key => source[key] !== undefined)
-          .map(key => [key, source[key]]));
-      }).filter(Boolean);
+      snapshot.batches = this.sanitizeCompositionBatches(compositionSnapshot.batches) ?? [];
     }
     return snapshot;
+  }
+
+  private generationRunProviderModel(compositionSnapshot?: Record<string, unknown>): { provider: string; model: string } | Record<string, never> {
+    const generation = this.asRecord(compositionSnapshot?.generationAi);
+    if (generation?.invoked === true && typeof generation.provider === 'string' && typeof generation.model === 'string') {
+      return { provider: generation.provider, model: generation.model };
+    }
+
+    const classification = this.asRecord(compositionSnapshot?.classificationAi);
+    if (classification?.invoked === true && typeof classification.provider === 'string' && typeof classification.model === 'string') {
+      return { provider: classification.provider, model: classification.model };
+    }
+
+    if (compositionSnapshot?.aiInvoked === false ||
+      (generation?.invoked === false && classification?.invoked === false)) {
+      return { provider: 'none', model: 'none' };
+    }
+    return {};
+  }
+
+  private sanitizeAiAudit(value: unknown, allowedKeys: string[]): Record<string, unknown> | undefined {
+    const source = this.asRecord(value);
+    if (!source) return undefined;
+    return Object.fromEntries(allowedKeys
+      .filter(key => source[key] !== undefined)
+      .map(key => [key, source[key]]));
+  }
+
+  private sanitizeCompositionBatches(value: unknown): Array<Record<string, unknown>> | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.map(batch => {
+      const source = this.asRecord(batch);
+      if (!source) return null;
+      return Object.fromEntries(['mealType', 'count', 'model', 'promptVersion', 'schemaVersion']
+        .filter(key => source[key] !== undefined)
+        .map(key => [key, source[key]]));
+    }).filter((batch): batch is Record<string, unknown> => batch !== null);
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | undefined {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : undefined;
   }
 
   /**
@@ -456,13 +523,14 @@ export class PlansRepository {
       // 4. Crear días/comidas/recetas nuevas colgando de la nueva versión.
       // `PUT /meal-plans` es edición manual (MANUAL); la regeneración (NUT-78) pasa 'AI'.
       const recipesForTracking = await this.createDaysMealsAndRecipes(
-        tx, newPlan.id, newDays, generationRunId, options.recipeOrigin ?? 'MANUAL',
+        tx, newPlan.id, newDays, generationRunId, options.recipeOrigin ?? 'MANUAL', options.selectedRecipeVersions,
       );
 
       // 5. Transición del GenerationRun a SUCCEEDED (Gap 6: con outputSnapshot/validationSnapshot).
       await this.transitionGenerationRunInTx(tx, generationRunId, userId, ['PENDING'], 'SUCCEEDED', {
-        outputSnapshot: this.buildOutputSnapshot(newDays),
+        outputSnapshot: this.buildOutputSnapshot(newDays, options.compositionSnapshot),
         validationSnapshot: options.validationSnapshot ?? { restrictionsChecked: true },
+        ...this.generationRunProviderModel(options.compositionSnapshot),
       });
 
       return { planId: newPlan.id, recipesForTracking };

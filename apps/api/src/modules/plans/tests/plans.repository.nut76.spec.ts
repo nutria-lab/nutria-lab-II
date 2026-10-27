@@ -113,6 +113,71 @@ describe('PlansRepository NUT-76 writer behavior', () => {
     expect(findProperty(succeeded.outputSnapshot, 'batches')).toEqual(compositionSnapshot.batches);
   });
 
+  it('records classifier provider/model without claiming recipe generation occurred', async () => {
+    const { repository, runUpdate } = setup();
+    const compositionSnapshot = {
+      compositionVersion: 'weekly-catalog-composition-v2',
+      classificationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'classifier-model',
+        promptVersion: 'recipe-mealtype-classification-v1',
+        schemaVersion: 'recipe-mealtype-classification-v1',
+        classifiedCount: 28,
+      },
+      generationAi: {
+        invoked: false,
+        provider: 'none',
+        model: 'none',
+        generatedCount: 0,
+        batches: [],
+      },
+    };
+
+    await (repository as any).createPlanTransaction(
+      'user-1', weekStart, day([meal()]) as any, 'run-weekly', undefined,
+      { stage: 'passed', codes: [], warnings: [] }, compositionSnapshot,
+    );
+
+    const succeeded = runUpdate.mock.calls[0][0].data;
+    expect(succeeded.status).toBe('SUCCEEDED');
+    expect(succeeded.provider).toBe('openai');
+    expect(succeeded.model).toBe('classifier-model');
+    expect(succeeded.outputSnapshot.classificationAi).toEqual(compositionSnapshot.classificationAi);
+    expect(succeeded.outputSnapshot.generationAi).toEqual(compositionSnapshot.generationAi);
+  });
+
+  it('uses GenerationRun provider/model none only when neither classification nor recipe generation ran', async () => {
+    const { repository, runUpdate } = setup();
+    const compositionSnapshot = {
+      compositionVersion: 'weekly-catalog-composition-v2',
+      aiInvoked: false,
+      classificationAi: {
+        invoked: false,
+        provider: 'none',
+        model: 'none',
+        classifiedCount: 0,
+      },
+      generationAi: {
+        invoked: false,
+        provider: 'none',
+        model: 'none',
+        generatedCount: 0,
+        batches: [],
+      },
+    };
+
+    await (repository as any).createPlanTransaction(
+      'user-1', weekStart, day([meal()]) as any, 'run-weekly', undefined,
+      { stage: 'passed', codes: [], warnings: [] }, compositionSnapshot,
+    );
+
+    const succeeded = runUpdate.mock.calls[0][0].data;
+    expect(succeeded.status).toBe('SUCCEEDED');
+    expect(succeeded.provider).toBe('none');
+    expect(succeeded.model).toBe('none');
+  });
+
   it('leaves the transaction rejected when a new Recipe insert fails before the run can succeed', async () => {
     const insertError = new Error('recipe insert failed');
     const runUpdate = jest.fn().mockResolvedValue({ count: 1 });

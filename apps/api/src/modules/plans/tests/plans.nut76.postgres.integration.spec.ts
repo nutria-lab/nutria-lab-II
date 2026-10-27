@@ -6,6 +6,7 @@ import { PrismaClient, DayOfWeek, MealType } from '@/generated/prisma/client';
 import { Client, Pool } from 'pg';
 import { PlansRepository } from '../plans.repository';
 import { PlansService } from '../plans.service';
+import { RecipeRepository } from '../../recipe/recipe.repository';
 
 // This suite intentionally reads only NUT76_TEST_DATABASE_URL. The caller provisions the
 // disposable local database and a schema containing the complete migration history.
@@ -209,6 +210,150 @@ describeWithDb('NUT-76 real persistence on isolated local PostgreSQL', () => {
     };
   }
 
+  it('reads consecutive catalog pages by the real ID keyset cursor without duplicate or skipped fixture IDs', async () => {
+    const suffix = randomBytes(4).toString('hex');
+    const ids = [1, 2, 3, 4].map(index =>
+      `00000000-0000-4000-8000-${suffix}${String(index).padStart(4, '0')}`,
+    );
+    await prisma.recipe.createMany({
+      data: ids.map((id, index) => ({
+        id,
+        title: `NUT76 pagination fixture ${suffix} ${index}`,
+        description: 'Synthetic pagination fixture',
+        prepMinutes: 5,
+        cookMinutes: 5,
+        ingredients: [{ name: `Pagination ingredient ${index}`, quantity: 1, unit: 'g' }],
+        instructions: ['Prepare'],
+      })),
+    });
+
+    try {
+      const recipeRepository = new RecipeRepository(prisma as any);
+      const firstPage = await recipeRepository.findMealTypeCatalogPage({ limit: 2 });
+      const secondPage = await recipeRepository.findMealTypeCatalogPage({
+        afterId: firstPage[firstPage.length - 1].id,
+        limit: 2,
+      });
+      const returnedIds = [...firstPage, ...secondPage].map(recipe => recipe.id);
+
+      expect(firstPage.map(recipe => recipe.id)).toEqual(ids.slice(0, 2));
+      expect(secondPage.map(recipe => recipe.id)).toEqual(ids.slice(2));
+      expect(new Set(returnedIds).size).toBe(4);
+      expect(firstPage[0].id < firstPage[1].id).toBe(true);
+      expect(secondPage[0].id < secondPage[1].id).toBe(true);
+      expect(firstPage[1].id < secondPage[0].id).toBe(true);
+    } finally {
+      await prisma.recipe.deleteMany({ where: { id: { in: ids } } });
+    }
+  }, 30000);
+
+  it('persists allowlisted classification-only audit separately and records its actual provider/model', async () => {
+    const userId = await createUser('classifier-audit');
+    const run = await createPendingRun(userId);
+    const recipes = await Promise.all(Array.from({ length: 28 }, (_, index) => prisma.recipe.create({
+      data: {
+        title: `Classifier audit Recipe ${index}`,
+        description: `Classifier audit description ${index}`,
+        prepMinutes: 5,
+        cookMinutes: 8,
+        ingredients: [{ name: `Classifier audit ingredient ${index}`, quantity: 1, unit: 'g' }],
+        instructions: ['Prepare'],
+        nutritionalValues: { calories: 280 + index, protein: 18, fiber: 6 },
+      },
+    })));
+    const days = weekDays().map((day, dayIndex) => ({
+      ...day,
+      meals: day.meals.map((meal: any, mealIndex: number) => {
+        const recipe = recipes[dayIndex * mealOrder.length + mealIndex];
+        return {
+          ...meal,
+          title: 'temporary proposal title',
+          nutritionalValues: { Calories: 1, Protein: 1, Fiber: 1, Description: 'temporary proposal nutrition' },
+          recipe: undefined,
+          reuseRecipeId: recipe.id,
+        };
+      }),
+    }));
+    const compositionSnapshot = {
+      compositionVersion: 'weekly-catalog-composition-v2',
+      aiInvoked: true,
+      classificationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'classifier-test-model',
+        models: ['classifier-test-model'],
+        promptVersion: 'recipe-mealtype-classification-v1',
+        schemaVersion: 'recipe-mealtype-classification-v1',
+        pagesClassified: 2,
+        classifiedCount: 28,
+        title: 'PRIVATE_CLASSIFIER_TITLE_7f19',
+        ingredients: [{ name: 'PRIVATE_CLASSIFIER_INGREDIENT_7f19' }],
+        classifications: [['BREAKFAST', 'PRIVATE_CLASSIFICATION_PAYLOAD_7f19']],
+        profile: { marker: 'PRIVATE_CLASSIFIER_PROFILE_7f19' },
+        rawResponse: 'PRIVATE_CLASSIFIER_RAW_RESPONSE_7f19',
+      },
+      generationAi: {
+        invoked: false,
+        provider: 'none',
+        model: 'none',
+        generatedCount: 0,
+        batches: [],
+        title: 'PRIVATE_GENERATION_TITLE_7f19',
+        ingredients: [{ name: 'PRIVATE_GENERATION_INGREDIENT_7f19' }],
+      },
+      batches: [],
+    };
+
+    const result = await repository.createPlanTransaction(
+      userId,
+      weekStart,
+      days as any,
+      run.id,
+      undefined,
+      { stage: 'passed', codes: [], warnings: [] },
+      compositionSnapshot,
+    );
+
+    const persistedRun = await prisma.generationRun.findUniqueOrThrow({ where: { id: run.id } });
+    const outputSnapshot = persistedRun.outputSnapshot as Record<string, any>;
+    expect(persistedRun).toMatchObject({
+      status: 'SUCCEEDED',
+      provider: 'openai',
+      model: 'classifier-test-model',
+    });
+    expect(outputSnapshot.classificationAi).toEqual({
+      invoked: true,
+      provider: 'openai',
+      model: 'classifier-test-model',
+      models: ['classifier-test-model'],
+      promptVersion: 'recipe-mealtype-classification-v1',
+      schemaVersion: 'recipe-mealtype-classification-v1',
+      pagesClassified: 2,
+      classifiedCount: 28,
+    });
+    expect(outputSnapshot.generationAi).toEqual({
+      invoked: false,
+      provider: 'none',
+      model: 'none',
+      generatedCount: 0,
+      batches: [],
+    });
+    const serializedSnapshot = JSON.stringify(outputSnapshot);
+    for (const secret of [
+      'PRIVATE_CLASSIFIER_TITLE_7f19',
+      'PRIVATE_CLASSIFIER_INGREDIENT_7f19',
+      'PRIVATE_CLASSIFICATION_PAYLOAD_7f19',
+      'PRIVATE_CLASSIFIER_PROFILE_7f19',
+      'PRIVATE_CLASSIFIER_RAW_RESPONSE_7f19',
+      'PRIVATE_GENERATION_TITLE_7f19',
+      'PRIVATE_GENERATION_INGREDIENT_7f19',
+    ]) {
+      expect(serializedSnapshot).not.toContain(secret);
+    }
+    expect(await prisma.recipe.count({ where: { generationRunId: run.id } })).toBe(0);
+    expect(await prisma.mealPlan.count({ where: { id: result.planId } })).toBe(1);
+  }, 30000);
+
   it('persists 7 days and 28 meals, reuses one shared Recipe intact, and creates 27 AI Recipes once', async () => {
     const userId = await createUser('writer');
     const run = await createPendingRun(userId);
@@ -289,6 +434,78 @@ describeWithDb('NUT-76 real persistence on isolated local PostgreSQL', () => {
     await repository.deletePlanTransaction(result.planId, userId);
     expect(await prisma.recipe.findUniqueOrThrow({ where: { id: existingRecipe.id } })).toEqual(originalRecipe);
     expect(await prisma.plannedMeal.count({ where: { day: { mealPlanId: otherPlan.id }, recipeId: existingRecipe.id } })).toBe(1);
+  }, 30000);
+
+  it('rejects a catalog Recipe changed after composition and rolls back plan persistence', async () => {
+    const userId = await createUser('changed-catalog-recipe-race');
+    const existingRecipe = await prisma.recipe.create({
+      data: {
+        title: 'Recipe snapshot classified before persistence',
+        description: 'Original selected Recipe description',
+        prepMinutes: 7,
+        cookMinutes: 9,
+        ingredients: [{ name: 'Original classified ingredient', quantity: 2, unit: 'g' }],
+        instructions: ['Original instruction'],
+        nutritionalValues: { calories: 444, protein: 31, fiber: 12 },
+      },
+    });
+    const selectedProposal = {
+      ...proposal(),
+      selectedRecipeVersions: new Map([[existingRecipe.id, existingRecipe.updatedAt]]),
+    };
+    const selectedDays = selectedProposal.dto.days as any[];
+    const selectedMeal = selectedDays[6].meals[3];
+    selectedMeal.title = existingRecipe.title;
+    selectedMeal.nutritionalValues = {
+      Calories: 444,
+      Protein: 31,
+      Fiber: 12,
+      Description: existingRecipe.description,
+    };
+    selectedMeal.recipe = undefined;
+    selectedMeal.reuseRecipeId = existingRecipe.id;
+
+    let enterComposer!: () => void;
+    let releaseComposer!: () => void;
+    const entered = new Promise<void>(resolve => { enterComposer = resolve; });
+    const barrier = new Promise<void>(resolve => { releaseComposer = resolve; });
+    const compose = jest.fn(async () => {
+      enterComposer();
+      await barrier;
+      return selectedProposal;
+    });
+    const { service } = makeService(compose);
+
+    try {
+      const pending = service.generateAndPersistPlan(userId, weekStartStr);
+      await entered;
+      await prisma.recipe.update({
+        where: { id: existingRecipe.id },
+        data: {
+          title: 'Recipe snapshot changed before persistence',
+          ingredients: [{ name: 'Replacement classified ingredient', quantity: 3, unit: 'g' }],
+        },
+      });
+      releaseComposer();
+
+      await expect(pending).rejects.toThrow();
+
+      const run = await prisma.generationRun.findFirstOrThrow({
+        where: { userId, kind: 'MEAL_PLAN_INITIAL' },
+      });
+      expect(run.status).toBe('FAILED');
+      expect(run.outputSnapshot).toBeNull();
+      expect(await prisma.mealPlan.count({ where: { generationRunId: run.id } })).toBe(0);
+      expect(await prisma.mealPlanDay.count({ where: { mealPlan: { generationRunId: run.id } } })).toBe(0);
+      expect(await prisma.plannedMeal.count({ where: { day: { mealPlan: { generationRunId: run.id } } } })).toBe(0);
+      expect(await prisma.recipe.count({ where: { generationRunId: run.id } })).toBe(0);
+      expect(await prisma.recipe.findUniqueOrThrow({ where: { id: existingRecipe.id } })).toMatchObject({
+        title: 'Recipe snapshot changed before persistence',
+        ingredients: [{ name: 'Replacement classified ingredient', quantity: 3, unit: 'g' }],
+      });
+    } finally {
+      releaseComposer();
+    }
   }, 30000);
 
   it('persists provider/model none for a catalog-only run without creating AI Recipes', async () => {

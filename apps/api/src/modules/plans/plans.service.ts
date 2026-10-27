@@ -191,6 +191,7 @@ export class PlansService {
       runId,
       { ...proposal.summary },
       proposal.compositionSnapshot,
+      proposal.selectedRecipeVersions,
     );
   }
 
@@ -207,6 +208,7 @@ export class PlansService {
     generationRunId?: string,
     validationSnapshot?: Record<string, unknown>,
     compositionSnapshot?: Record<string, unknown>,
+    selectedRecipeVersions?: Map<string, Date>,
   ) {
     const weekStart = this.parseDateString(dto.weekStart);
 
@@ -251,9 +253,12 @@ export class PlansService {
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
-      const persisted = await this.repository.createPlanTransaction(
+      const persistArgs = [
         userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot, compositionSnapshot,
-      );
+      ] as const;
+      const persisted = selectedRecipeVersions
+        ? await this.repository.createPlanTransaction(...persistArgs, selectedRecipeVersions)
+        : await this.repository.createPlanTransaction(...persistArgs);
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el

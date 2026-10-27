@@ -9,9 +9,16 @@ import {
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { DayOfWeek, MealType, NutritionProfile } from '../../generated/prisma/client';
+import { DayOfWeek, MealType, NutritionProfile, Recipe } from '../../generated/prisma/client';
 import { RecipeCoverageService } from '../recipe/recipe-coverage.service';
 import type { RecipeCoverageCandidate } from '../recipe/recipe-coverage.types';
+import { RecipeRepository } from '../recipe/recipe.repository';
+import { recipeFingerprint } from '../recipe/recipe-fingerprint.util';
+import {
+  findExcludedIngredientInSource,
+  hasSupportedProfilePolicy,
+  profileForbiddenRestrictions,
+} from '../recipe/validation/ingredient-dictionary';
 import { parseGeneratedOutput } from '../recipe/validation/parse-generated-output';
 import type { RecipeDraft, ValidationResult, ValidationSummary } from '../recipe/validation/recipe-validation.types';
 import {
@@ -26,6 +33,14 @@ import {
   type RecipeGenerationProvider,
 } from '../recipe-generation/recipe-generation.ports';
 import { AiProviderUnavailableError, OPENAI_MODEL_NAME, OPENAI_PROVIDER } from '../openai/openai.service';
+import {
+  MEALTYPE_CLASSIFICATION_PROMPT_VERSION,
+  MEALTYPE_CLASSIFICATION_SCHEMA_VERSION,
+} from './recipe-mealtype-classifier.ports';
+import {
+  RecipeMealTypeClassifierService,
+  RecipeMealTypeClassifierUnavailableException,
+} from './recipe-mealtype-classifier.service';
 import { RecipeValidationService, type ValidatedRun } from './recipe-validation.service';
 import { mapRecipeNutritionToMeal } from './recipe-nutrition.mapper';
 import { CreateMealPlanDto, MealPlanDayDto } from './dto';
@@ -43,12 +58,31 @@ export interface WeeklyProposalInput {
   profile: NutritionProfile;
   weekStart: Date;
   weekStartStr: string;
+  excludeCatalogRecipeFingerprints?: string[];
   onModelSelected?: (model: string) => void;
 }
 
 export interface WeeklyCompositionSnapshot extends Record<string, unknown> {
-  compositionVersion: 'weekly-catalog-composition-v1';
+  compositionVersion: 'weekly-catalog-composition-v2';
   aiInvoked: boolean;
+  classificationAi: {
+    invoked: boolean;
+    provider: string;
+    model: string;
+    models: string[];
+    promptVersion: string;
+    schemaVersion: string;
+    pagesClassified: number;
+    classifiedCount: number;
+  };
+  generationAi: {
+    invoked: boolean;
+    provider: string;
+    model: string;
+    generatedCount: number;
+    batches: WeeklyCompositionSnapshot['batches'];
+  };
+  /** Retained at the top level for compatibility with existing composition audit readers. */
   batches: Array<{
     mealType: MealType;
     count: number;
@@ -63,6 +97,8 @@ export interface WeeklyProposal {
   comparableDays: MealPlanDayDto[];
   summary: ValidationSummary;
   compositionSnapshot?: WeeklyCompositionSnapshot;
+  /** Internal optimistic versions for catalog Recipes selected by this composition. */
+  selectedRecipeVersions?: Map<string, Date>;
 }
 
 export type WeeklyRecipeEligibilityPolicy = (
@@ -71,10 +107,11 @@ export type WeeklyRecipeEligibilityPolicy = (
 ) => boolean;
 
 export const WEEKLY_RECIPE_ELIGIBILITY_POLICY = Symbol('WEEKLY_RECIPE_ELIGIBILITY_POLICY');
-export const WEEKLY_COMPOSITION_VERSION = 'weekly-catalog-composition-v1' as const;
+export const WEEKLY_COMPOSITION_VERSION = 'weekly-catalog-composition-v2' as const;
 const GENERATION_MEAL_ORDER = [MealType.BREAKFAST, MealType.LUNCH, MealType.SNACK, MealType.DINNER];
+const RECIPE_CATALOG_PAGE_SIZE = 10;
 
-// Sin una fuente aprobada para clasificar Recipes por mealType, el catálogo falla cerrado.
+// Compatibility fallback for direct composer tests without the production classifier wiring.
 export const noClassifiedWeeklyRecipe: WeeklyRecipeEligibilityPolicy = () => false;
 
 export abstract class WeeklyProposalComposer {
@@ -92,18 +129,27 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
     private readonly validation: RecipeValidationService,
     @Optional() @Inject(WEEKLY_RECIPE_ELIGIBILITY_POLICY)
     private readonly eligibilityPolicy: WeeklyRecipeEligibilityPolicy = noClassifiedWeeklyRecipe,
+    @Optional() @Inject(RecipeRepository)
+    private readonly recipeRepository?: Pick<RecipeRepository, 'findMealTypeCatalogPage'>,
+    @Optional() @Inject(RecipeMealTypeClassifierService)
+    private readonly classifier?: Pick<RecipeMealTypeClassifierService, 'classify'>,
   ) {
     super();
   }
 
   async composeWeeklyProposal(input: WeeklyProposalInput): Promise<WeeklyProposal> {
     const slots = buildWeeklySlots(input.weekStart);
-    const candidates = await this.loadCatalogCandidates(input.userId, slots, input.runId);
-    const assignedCatalog = matchRecipesToSlots(
-      slots,
-      candidates,
-      (slot, candidate) => this.isEligible(slot as WeeklyMealSlot, candidate),
-    );
+    const hasRecipeRepository = Boolean(this.recipeRepository);
+    const hasClassifier = Boolean(this.classifier);
+    if (hasRecipeRepository !== hasClassifier) {
+      throw new Error('NUT-76 catalog repository and meal-type classifier must be wired together');
+    }
+    const hasProductionClassifier = hasRecipeRepository && hasClassifier;
+    const catalog = hasProductionClassifier
+      ? await this.loadClassifiedCatalog(input, slots)
+      : await this.loadPolicyCatalogCandidates(input.userId, slots, input.runId);
+    const candidates = catalog.candidates;
+    const assignedCatalog = catalog.assignments;
     const usedRecipeIds = new Set([...assignedCatalog.values()].map(recipe => recipe.id));
     const missingSlots = slots.filter(slot => !assignedCatalog.has(slot.key));
     const generated = await this.generateDeficit(input, [...missingSlots].sort((left, right) =>
@@ -125,7 +171,7 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
         }
 
         const reusableRecipe = await this.findReusableCandidate(reusable.recipeId, candidates);
-        if (!reusableRecipe || usedRecipeIds.has(reusableRecipe.id) || !this.isEligible(slot, reusableRecipe)) {
+        if (!reusableRecipe || usedRecipeIds.has(reusableRecipe.id) || !catalog.isEligible(slot, reusableRecipe)) {
           await this.validation.reject(this.run(input), {
             stage: 'duplicates',
             codes: ['DUPLICATE_RECIPE'],
@@ -173,19 +219,33 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
       }),
     })) as MealPlanDayDto[];
 
+    const selectedRecipeVersions = new Map<string, Date>();
+    for (const recipe of assignedCatalog.values()) {
+      if (recipe.updatedAt instanceof Date) selectedRecipeVersions.set(recipe.id, recipe.updatedAt);
+    }
+
     return {
       dto,
       comparableDays,
       summary,
+      selectedRecipeVersions,
       compositionSnapshot: {
         compositionVersion: WEEKLY_COMPOSITION_VERSION,
-        aiInvoked: generated.batches.length > 0,
+        aiInvoked: catalog.classificationAi.invoked || generated.batches.length > 0,
+        classificationAi: catalog.classificationAi,
+        generationAi: {
+          invoked: generated.batches.length > 0,
+          provider: generated.batches.length > 0 ? OPENAI_PROVIDER : 'none',
+          model: generated.batches[generated.batches.length - 1]?.model ?? 'none',
+          generatedCount: generated.batches.reduce((total, batch) => total + batch.count, 0),
+          batches: generated.batches,
+        },
         batches: generated.batches,
       },
     };
   }
 
-  private async loadCatalogCandidates(userId: string, slots: WeeklyMealSlot[], runId: string): Promise<RecipeCoverageCandidate[]> {
+  private async loadPolicyCatalogCandidates(userId: string, slots: WeeklyMealSlot[], runId: string) {
     const candidates = new Map<string, RecipeCoverageCandidate>();
     const seenIds = new Set<string>();
 
@@ -213,7 +273,155 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
       throw new ServiceUnavailableException('Recipe catalog is temporarily unavailable');
     }
 
-    return [...candidates.values()];
+    const recipeCandidates = [...candidates.values()];
+    return {
+      candidates: recipeCandidates as Recipe[],
+      assignments: matchRecipesToSlots(
+        slots,
+        recipeCandidates,
+        (slot, candidate) => this.isEligible(slot as WeeklyMealSlot, candidate),
+      ) as Map<string, Recipe>,
+      isEligible: (slot: WeeklyMealSlot, candidate: Recipe) => this.isEligible(slot, candidate),
+      classificationAi: {
+        invoked: false,
+        provider: 'none',
+        model: 'none',
+        models: [],
+        promptVersion: MEALTYPE_CLASSIFICATION_PROMPT_VERSION,
+        schemaVersion: MEALTYPE_CLASSIFICATION_SCHEMA_VERSION,
+        pagesClassified: 0,
+        classifiedCount: 0,
+      },
+    };
+  }
+
+  private async loadClassifiedCatalog(input: WeeklyProposalInput, slots: WeeklyMealSlot[]) {
+    const candidates: Recipe[] = [];
+    const mealTypesByRecipeId = new Map<string, MealType[]>();
+    const nutritionEligibleIds = new Set<string>();
+    const excludedCatalogRecipeFingerprints = new Set(input.excludeCatalogRecipeFingerprints ?? []);
+    let assignments = new Map<string, Recipe>();
+    let afterId: string | undefined;
+    let pagesClassified = 0;
+    let classifiedCount = 0;
+    let model = 'none';
+    const models: string[] = [];
+
+    if (!hasSupportedProfilePolicy(input.profile)) {
+      return {
+        candidates,
+        assignments,
+        isEligible: (_slot: WeeklyMealSlot, _recipe: Recipe) => false,
+        classificationAi: {
+          invoked: false,
+          provider: 'none',
+          model: 'none',
+          models,
+          promptVersion: MEALTYPE_CLASSIFICATION_PROMPT_VERSION,
+          schemaVersion: MEALTYPE_CLASSIFICATION_SCHEMA_VERSION,
+          pagesClassified,
+          classifiedCount,
+        },
+      };
+    }
+
+    const forbiddenRestrictions = profileForbiddenRestrictions(input.profile);
+
+    while (true) {
+      let page: Recipe[];
+      try {
+        page = await this.recipeRepository!.findMealTypeCatalogPage({
+          ...(afterId ? { afterId } : {}),
+          limit: RECIPE_CATALOG_PAGE_SIZE,
+        });
+      } catch {
+        await this.failRun(input.runId, input.userId, 'RECIPE_CATALOG_UNAVAILABLE');
+        throw new ServiceUnavailableException('Recipe catalog is temporarily unavailable');
+      }
+      if (page.length === 0) break;
+
+      const profileEligiblePage = page.filter(recipe =>
+        !excludedCatalogRecipeFingerprints.has(recipeFingerprint(recipe)) &&
+        (forbiddenRestrictions.length === 0 || !findExcludedIngredientInSource(recipe, forbiddenRestrictions)),
+      );
+      if (profileEligiblePage.length === 0) {
+        afterId = page[page.length - 1].id;
+        continue;
+      }
+
+      let pageClassifications: MealType[][];
+      try {
+        pageClassifications = await this.classifier!.classify(
+          profileEligiblePage.map(({ title, ingredients }) => ({ title, ingredients })),
+          async selectedModel => {
+            model = selectedModel;
+            if (!models.includes(selectedModel)) models.push(selectedModel);
+            await this.recordSelectedModel(input, selectedModel);
+          },
+        );
+      } catch (error) {
+        if (error instanceof UnprocessableEntityException) {
+          await this.validation.rejectWithCode(this.run(input, model === 'none' ? OPENAI_MODEL_NAME : model), 'AI_INVALID_SCHEMA');
+          throw error;
+        }
+        if (error instanceof ServiceUnavailableException || error instanceof AiProviderUnavailableError) {
+          const errorCode = error instanceof RecipeMealTypeClassifierUnavailableException || error instanceof AiProviderUnavailableError
+            ? error.reason
+            : 'AI_PROVIDER_ERROR';
+          await this.failRun(input.runId, input.userId, errorCode);
+          if (error instanceof ServiceUnavailableException) throw error;
+          throw new ServiceUnavailableException('The AI provider is not available; retry later');
+        }
+        await this.failRun(input.runId, input.userId, 'AI_PROVIDER_ERROR');
+        throw error;
+      }
+
+      if (model === 'none') {
+        model = OPENAI_MODEL_NAME;
+        if (!models.includes(model)) models.push(model);
+        await this.recordSelectedModel(input, model);
+      }
+
+      pagesClassified += 1;
+      classifiedCount += profileEligiblePage.length;
+      candidates.push(...profileEligiblePage);
+      profileEligiblePage.forEach((recipe, index) => {
+        mealTypesByRecipeId.set(recipe.id, pageClassifications[index]);
+        try {
+          mapRecipeNutritionToMeal(recipe);
+          nutritionEligibleIds.add(recipe.id);
+        } catch {
+          // A classifier edge cannot be used if the selected Recipe has no meal nutrition.
+        }
+      });
+
+      assignments = matchRecipesToSlots(
+        slots,
+        candidates,
+        (slot, recipe) => nutritionEligibleIds.has(recipe.id) &&
+          (mealTypesByRecipeId.get(recipe.id) ?? []).includes((slot as WeeklyMealSlot).mealType),
+      );
+      if (assignments.size === slots.length) break;
+
+      afterId = page[page.length - 1].id;
+    }
+
+    return {
+      candidates,
+      assignments,
+      isEligible: (slot: WeeklyMealSlot, recipe: Recipe) => nutritionEligibleIds.has(recipe.id) &&
+        (mealTypesByRecipeId.get(recipe.id) ?? []).includes(slot.mealType),
+      classificationAi: {
+        invoked: pagesClassified > 0,
+        provider: pagesClassified > 0 ? OPENAI_PROVIDER : 'none',
+        model,
+        models,
+        promptVersion: MEALTYPE_CLASSIFICATION_PROMPT_VERSION,
+        schemaVersion: MEALTYPE_CLASSIFICATION_SCHEMA_VERSION,
+        pagesClassified,
+        classifiedCount,
+      },
+    };
   }
 
   private canMatchAnySlot(slots: WeeklyMealSlot[], candidate: RecipeCoverageCandidate): boolean {
@@ -247,11 +455,7 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
           schemaVersion: RECIPE_GENERATION_SCHEMA_VERSION,
         }, async model => {
           selectedModel = model;
-          if (model !== OPENAI_MODEL_NAME && typeof (this.repository as any).updatePendingGenerationRunModel === 'function') {
-            const updated = await this.repository.updatePendingGenerationRunModel(input.runId, input.userId, model);
-            if (updated === 0) throw new Error(`GenerationRun ${input.runId} is no longer pending`);
-          }
-          input.onModelSelected?.(model);
+          await this.recordSelectedModel(input, model);
         });
       } catch (error) {
         if (error instanceof AiProviderUnavailableError) {
@@ -286,15 +490,15 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
     return { slotOrder, validationResults, batches };
   }
 
-  private async findReusableCandidate(id: string, candidates: RecipeCoverageCandidate[]) {
+  private async findReusableCandidate(id: string, candidates: Recipe[]) {
     const discovered = candidates.find(candidate => candidate.id === id);
     if (discovered) return discovered;
-    return this.validation.findRecipeById(id) as Promise<RecipeCoverageCandidate | null>;
+    return this.validation.findRecipeById(id) as Promise<Recipe | null>;
   }
 
   private buildDays(
     slots: WeeklyMealSlot[],
-    assignedCatalog: Map<string, RecipeCoverageCandidate>,
+    assignedCatalog: Map<string, Recipe>,
     newRecipeBySlot: Map<string, RecipeDraft>,
   ) {
     const days = new Map<string, { day: DayOfWeek; date: string; meals: any[] }>();
@@ -329,6 +533,14 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
 
   private run(input: WeeklyProposalInput, model: string = OPENAI_MODEL_NAME): ValidatedRun {
     return { id: input.runId, userId: input.userId, provider: OPENAI_PROVIDER, model };
+  }
+
+  private async recordSelectedModel(input: WeeklyProposalInput, model: string): Promise<void> {
+    if (typeof (this.repository as any).updatePendingGenerationRunModel === 'function') {
+      const updated = await this.repository.updatePendingGenerationRunModel(input.runId, input.userId, model);
+      if (updated === 0) throw new Error(`GenerationRun ${input.runId} is no longer pending`);
+    }
+    input.onModelSelected?.(model);
   }
 
   private async rejectMissingMealNutrition(input: WeeklyProposalInput): Promise<never> {

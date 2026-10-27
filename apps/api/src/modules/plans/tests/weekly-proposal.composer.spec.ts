@@ -54,6 +54,8 @@ function setup(options: {
   providerResponse?: (count: number, callIndex: number) => string;
   providerError?: Error;
   profile?: any;
+  recipeRepository?: any;
+  classifier?: any;
 } = {}) {
   const plans = { transitionGenerationRun: jest.fn().mockResolvedValue(1) };
   const recipeRepository = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
@@ -98,6 +100,8 @@ function setup(options: {
     provider as any,
     validation,
     eligible as any,
+    options.recipeRepository as any,
+    options.classifier as any,
   );
   const compose = () => composer.composeWeeklyProposal({
     userId: 'user-1',
@@ -223,6 +227,20 @@ describe('OpenAIWeeklyProposalComposer catalog-first composition (NUT-76)', () =
 
     await expect(compose()).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(provider.generate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['catalog repository without classifier', { recipeRepository: { findMealTypeCatalogPage: jest.fn() } }],
+    ['classifier without catalog repository', { classifier: { classify: jest.fn() } }],
+  ])('fails fast for partial production classifier wiring: %s', async (_description, partialWiring) => {
+    const { catalog } = candidateCatalogForSlots();
+    const { compose } = setup({
+      catalog,
+      eligibilityPolicy: () => true,
+      ...partialWiring,
+    });
+
+    await expect(compose()).rejects.toThrow();
   });
 
   it('maps provider unavailability to 503 and records the failed run', async () => {
