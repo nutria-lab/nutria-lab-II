@@ -60,7 +60,7 @@ Resumen: porcentaje, "X de N comidas completadas", barra de progreso, contadores
 - Barra `role="progressbar"` con nombre "Progreso de la semana", `aria-valuenow`, `aria-valuemin=0`, `aria-valuemax=100` y `aria-valuetext` igual al texto visible.
 - Contadores en `dl`; el estado se dice con texto, nunca solo con color.
 - Único control: "Reintentar" (botón nativo, mínimo 44 px, foco visible). Sin error no hay paradas de foco.
-- Una columna en todos los anchos; contadores en grilla de 3 con `min-w-0` y etiquetas con `break-words` (entra en 320 px). Ubicación en la grilla del inicio: columna completa en móvil y tablet; en `lg`, 5 columnas a la derecha cuando hay siguiente comida y 12 cuando no.
+- Una columna en todos los anchos; contadores en grilla de 3 con `min-w-0`. Desde 320 px ninguna etiqueta se parte dentro de una palabra ("Sin registrar" puede pasar a dos líneas entre palabras): en móvil la grilla usa separación de 4 px, las cajas 2 px de padding horizontal y la etiqueta 11 px; desde `sm`, 8 px, 12 px y 12 px. `break-words` queda solo como resguardo contra desbordes. Ubicación en la grilla del inicio: columna completa en móvil y tablet; en `lg`, 5 columnas a la derecha cuando hay siguiente comida y 12 cuando no.
 - No hay imágenes ni títulos dinámicos en el widget, así que no aplican huecos de imagen ni `line-clamp`.
 
 ## 6. Fixtures y pruebas

@@ -91,10 +91,11 @@ function ProgressSummary({ summary, percent }: { summary: AdherenceResponse['sum
         <div className="h-full rounded-full bg-brand-green" style={{ width: `${percent}%` }} />
       </div>
 
-      <dl className="grid grid-cols-3 gap-2">
+      {/* En móvil, gap, padding y etiqueta reducidos para que "Completadas" entre entera desde 320 px. */}
+      <dl className="grid grid-cols-3 gap-1 sm:gap-2">
         {COUNTERS.map(({ key, label }) => (
-          <div key={key} className="min-w-0 rounded-xl bg-surface-container-low p-3 text-center">
-            <dt className="break-words text-xs font-semibold text-on-surface-variant">{label}</dt>
+          <div key={key} className="min-w-0 rounded-xl bg-surface-container-low px-0.5 py-3 text-center sm:p-3">
+            <dt className="break-words text-[11px] font-semibold text-on-surface-variant sm:text-xs">{label}</dt>
             <dd className="mt-1 font-headline text-xl font-bold text-on-surface">{summary[key]}</dd>
           </div>
         ))}

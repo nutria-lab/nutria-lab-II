@@ -327,7 +327,7 @@ describe('AdherenceWidget responsive layout', () => {
     }
   });
 
-  it('counters stay in three columns that shrink on narrow screens, and the bar width is a percentage', () => {
+  it('counters stay in three columns that shrink on narrow screens', () => {
     const { widget } = renderWidget(createAdherenceWidgetProps('partial'));
 
     const list = widget.querySelector('dl');
@@ -335,6 +335,33 @@ describe('AdherenceWidget responsive layout', () => {
     for (const item of list!.children) {
       expect(item).toHaveClass('min-w-0');
     }
+  });
+
+  it('on mobile, counters shrink gap, padding and label size so no label breaks mid-word from 320 px, and recover them from sm', () => {
+    const { widget } = renderWidget(createAdherenceWidgetProps('partial'));
+
+    const list = widget.querySelector('dl')!;
+    expect(list).toHaveClass('gap-1', 'sm:gap-2');
+    expect(list).not.toHaveClass('gap-2');
+    for (const item of list.children) {
+      expect(item).toHaveClass('px-0.5', 'py-3', 'sm:p-3');
+      expect(item).not.toHaveClass('p-3');
+      const label = item.querySelector('dt')!;
+      expect(label).toHaveClass('text-[11px]', 'sm:text-xs');
+      expect(label).not.toHaveClass('text-xs');
+    }
+  });
+
+  it('keeps the three counter labels', () => {
+    const { widget } = renderWidget(createAdherenceWidgetProps('partial'));
+
+    const labels = [...widget.querySelectorAll('dt')].map((dt) => dt.textContent);
+    expect(labels).toEqual(['Completadas', 'Omitidas', 'Sin registrar']);
+  });
+
+  it('the bar width is a percentage', () => {
+    const { widget } = renderWidget(createAdherenceWidgetProps('partial'));
+
     const fill = within(widget).getByRole('progressbar').firstElementChild as HTMLElement;
     expect(fill.style.width).toBe('32.1%');
   });
