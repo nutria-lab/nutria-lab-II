@@ -146,7 +146,7 @@ function compositionInput() {
 }
 
 describe('NUT-76 PlansModule classifier production wiring', () => {
-  it('uses the default composer and classifier service to reuse catalog pages without generation', async () => {
+  it('uses the real matcher to reach full catalog coverage on page three and avoids a fourth read', async () => {
     const catalog = Array.from({ length: 31 }, (_, index) => catalogRecipe(index));
     const queryRaw = jest.fn()
       .mockResolvedValueOnce(catalog.slice(0, 10))
@@ -180,6 +180,7 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
           invoked: true,
           provider: 'openai',
           model: 'classification-test-model',
+          pagesClassified: 3,
           classifiedCount: 30,
         }),
         generationAi: expect.objectContaining({ invoked: false, provider: 'none', model: 'none' }),
@@ -196,6 +197,136 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
       }
       expect(meals).toHaveLength(28);
       expect(proposal.compositionSnapshot?.classificationAi).not.toEqual(proposal.compositionSnapshot?.generationAi);
+    } finally {
+      await module.close();
+    }
+  });
+
+  it('caps classification at three pages for a large catalog and generates exactly the unmatched slots', async () => {
+    const catalog = Array.from({ length: 60 }, (_, index) => catalogRecipe(index));
+    const queryRaw = jest.fn();
+    for (let offset = 0; offset < catalog.length; offset += 10) {
+      queryRaw.mockResolvedValueOnce(catalog.slice(offset, offset + 10));
+    }
+    queryRaw.mockResolvedValue([]);
+
+    let classificationCall = 0;
+    const classify = jest.fn(async (
+      inputs: Array<{ title: string; ingredients: unknown[] }>,
+      onModelSelected?: (model: string) => void | Promise<void>,
+    ) => {
+      await onModelSelected?.('classification-test-model');
+      const hasOneCompatibleRecipe = classificationCall++ === 0;
+      return JSON.stringify({
+        classifications: inputs.map((_, index) => hasOneCompatibleRecipe && index === 0 ? [MealType.BREAKFAST] : []),
+      });
+    });
+    let generatedIndex = 0;
+    const generationProvider = {
+      generate: jest.fn(async (
+        { count }: { count: number },
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('generation-test-model');
+        return JSON.stringify({ recipes: Array.from({ length: count }, () => generatedRecipe(generatedIndex++)) });
+      }),
+    };
+    const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
+
+    try {
+      const proposal = await module.get(WeeklyProposalComposer).composeWeeklyProposal(compositionInput());
+      const meals = proposal.dto.days.flatMap(day => day.meals) as any[];
+
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(3);
+      expect(classify).toHaveBeenCalledTimes(3);
+      expect(classify.mock.calls.map(([page]) => page.length)).toEqual([10, 10, 10]);
+      expect(classify.mock.calls.flatMap(([page]) => page.map(recipe => recipe.title))).toEqual(
+        catalog.slice(0, 30).map(recipe => recipe.title),
+      );
+      expect(generationProvider.generate.mock.calls.reduce((total, [input]) => total + input.count, 0)).toBe(27);
+      expect(meals.filter(meal => meal.reuseRecipeId)).toHaveLength(1);
+      expect(meals.filter(meal => meal.recipe)).toHaveLength(27);
+      expect(proposal.compositionSnapshot).toMatchObject({
+        classificationAi: expect.objectContaining({ pagesClassified: 3, classifiedCount: 30 }),
+        generationAi: expect.objectContaining({ generatedCount: 27 }),
+      });
+    } finally {
+      await module.close();
+    }
+  });
+
+  it('counts non-empty filtered pages toward the scan bound and does not reach later catalog pages', async () => {
+    const catalog = Array.from({ length: 40 }, (_, index) => catalogRecipe(index));
+    const queryRaw = jest.fn()
+      .mockResolvedValueOnce(catalog.slice(0, 10))
+      .mockResolvedValueOnce(catalog.slice(10, 20))
+      .mockResolvedValueOnce(catalog.slice(20, 30))
+      .mockResolvedValueOnce(catalog.slice(30, 40))
+      .mockResolvedValue([]);
+    const classify = jest.fn(async (
+      inputs: Array<{ title: string; ingredients: unknown[] }>,
+      onModelSelected?: (model: string) => void | Promise<void>,
+    ) => {
+      await onModelSelected?.('classification-test-model');
+      return JSON.stringify({ classifications: inputs.map(() => []) });
+    });
+    let generatedIndex = 0;
+    const generationProvider = {
+      generate: jest.fn(async (
+        { count }: { count: number },
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('generation-test-model');
+        return JSON.stringify({ recipes: Array.from({ length: count }, () => generatedRecipe(generatedIndex++)) });
+      }),
+    };
+    const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
+
+    try {
+      const proposal = await module.get(WeeklyProposalComposer).composeWeeklyProposal({
+        ...compositionInput(),
+        excludeCatalogRecipeFingerprints: catalog.slice(0, 30).map(recipeFingerprint),
+      } as any);
+
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(3);
+      expect(classify).not.toHaveBeenCalled();
+      expect(generationProvider.generate.mock.calls.reduce((total, [input]) => total + input.count, 0)).toBe(28);
+      expect(proposal.dto.days.flatMap(day => day.meals)).toHaveLength(28);
+    } finally {
+      await module.close();
+    }
+  });
+
+  it('preserves short-catalog pagination and generates only slots still unmatched after two pages', async () => {
+    const catalog = Array.from({ length: 15 }, (_, index) => catalogRecipe(index));
+    const queryRaw = jest.fn()
+      .mockResolvedValueOnce(catalog.slice(0, 10))
+      .mockResolvedValueOnce(catalog.slice(10, 15))
+      .mockResolvedValue([]);
+    const classify = classifyFirstTwentyFive();
+    let generatedIndex = 0;
+    const generationProvider = {
+      generate: jest.fn(async (
+        { count }: { count: number },
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('generation-test-model');
+        return JSON.stringify({ recipes: Array.from({ length: count }, () => generatedRecipe(generatedIndex++)) });
+      }),
+    };
+    const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
+
+    try {
+      const proposal = await module.get(WeeklyProposalComposer).composeWeeklyProposal(compositionInput());
+
+      expect(classify).toHaveBeenCalledTimes(2);
+      expect(classify.mock.calls.map(([page]) => page.length)).toEqual([10, 5]);
+      expect(findMealTypeCatalogPage.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(generationProvider.generate.mock.calls.reduce((total, [input]) => total + input.count, 0)).toBe(13);
+      expect(proposal.dto.days.flatMap(day => day.meals)).toHaveLength(28);
     } finally {
       await module.close();
     }
@@ -220,12 +351,14 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
       }),
     };
     const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
 
     try {
       const proposal = await module.get(WeeklyProposalComposer).composeWeeklyProposal(compositionInput());
 
       expect(classify).toHaveBeenCalledTimes(3);
       expect(classify.mock.calls.map(([page]) => page.length)).toEqual([10, 10, 5]);
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(3);
       expect(generationProvider.generate).toHaveBeenCalledTimes(1);
       expect(generationProvider.generate.mock.calls[0][0]).toMatchObject({
         count: 3,
@@ -256,10 +389,12 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
       }),
     };
     const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
 
     try {
       const proposal = await module.get(WeeklyProposalComposer).composeWeeklyProposal(compositionInput());
 
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(1);
       expect(classify).not.toHaveBeenCalled();
       expect(generationProvider.generate.mock.calls.map(([input]) => input.count)).toEqual([7, 7, 7, 7]);
       expect(generationProvider.generate.mock.calls.every(([input]) => input.count <= 10)).toBe(true);
@@ -273,7 +408,7 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
     }
   });
 
-  it('skips catalog fingerprint duplicates and reaches distinct full coverage on the second PlansModule composition', async () => {
+  it('does not scan beyond three pages when earlier pages are excluded by fingerprint', async () => {
     const originalRecipes = Array.from({ length: 28 }, (_, index) => catalogRecipe(index));
     const unclassifiedFillers = Array.from({ length: 2 }, (_, index) => ({
       ...catalogRecipe(28 + index),
@@ -304,8 +439,18 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
       .mockResolvedValueOnce(catalog.slice(80, 86))
       .mockResolvedValue([]);
     const classify = classifyCatalogByMealType();
-    const generationProvider = { generate: jest.fn() };
+    let generatedIndex = 0;
+    const generationProvider = {
+      generate: jest.fn(async (
+        { count }: { count: number },
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('generation-test-model');
+        return JSON.stringify({ recipes: Array.from({ length: count }, () => generatedRecipe(generatedIndex++)) });
+      }),
+    };
     const module = await createPlansModule(queryRaw, { classify }, generationProvider);
+    const findMealTypeCatalogPage = jest.spyOn(module.get(RecipeRepository), 'findMealTypeCatalogPage');
 
     try {
       const composer = module.get(WeeklyProposalComposer);
@@ -315,7 +460,7 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
       const firstFingerprints = firstProposal.comparableDays.flatMap(day => day.meals)
         .map((meal: any) => recipeFingerprint(meal.recipe));
 
-      expect(queryRaw).toHaveBeenCalledTimes(3);
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(3);
       expect(new Set(firstIds)).toEqual(new Set(originalRecipes.map(recipe => recipe.id)));
       const firstClassificationCallCount = classify.mock.calls.length;
 
@@ -327,18 +472,23 @@ describe('NUT-76 PlansModule classifier production wiring', () => {
         .flatMap((meal: any) => meal.reuseRecipeId ? [meal.reuseRecipeId] : []);
       const secondFingerprints = secondProposal.comparableDays.flatMap(day => day.meals)
         .map((meal: any) => recipeFingerprint(meal.recipe));
+      const secondClassifiedPageCount = classify.mock.calls.length - firstClassificationCallCount;
       const secondClassifiedTitles = classify.mock.calls.slice(firstClassificationCallCount)
         .flatMap(([page]) => page.map((recipe: any) => recipe.title));
 
       expect(firstIds).toHaveLength(28);
-      expect(secondIds).toHaveLength(28);
+      expect(secondIds).toHaveLength(0);
       expect(secondFingerprints).toHaveLength(28);
       expect(secondFingerprints.some(fingerprint => firstFingerprints.includes(fingerprint))).toBe(false);
-      expect(secondClassifiedTitles).toEqual([
-        ...unclassifiedFillers.map(recipe => recipe.title),
-        ...distinctAlternatives.map(recipe => recipe.title),
-      ]);
-      expect(generationProvider.generate).not.toHaveBeenCalled();
+      expect(findMealTypeCatalogPage).toHaveBeenCalledTimes(6);
+      expect(secondClassifiedPageCount).toBe(1);
+      expect(secondClassifiedTitles).toEqual(unclassifiedFillers.map(recipe => recipe.title));
+      expect(secondClassifiedTitles).not.toContain(distinctAlternatives[0].title);
+      expect(generationProvider.generate.mock.calls.slice(0).reduce((total, [input]) => total + input.count, 0)).toBe(28);
+      expect(secondProposal.compositionSnapshot).toMatchObject({
+        classificationAi: expect.objectContaining({ pagesClassified: 1, classifiedCount: 2 }),
+        generationAi: expect.objectContaining({ generatedCount: 28 }),
+      });
     } finally {
       await module.close();
     }

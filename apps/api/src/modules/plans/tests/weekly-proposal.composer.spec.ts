@@ -6,9 +6,10 @@ import { RecipeValidationService } from '../recipe-validation.service';
 import { OpenAIWeeklyProposalComposer } from '../weekly-proposal.composer';
 
 type Slot = { key: string; date: string; day: DayOfWeek; mealType: MealType };
-const { buildWeeklySlots } = require('../weekly-proposal-assignment') as {
+const weeklyProposalAssignment = require('../weekly-proposal-assignment') as {
   buildWeeklySlots: (weekStart: Date) => Slot[];
 };
+const { buildWeeklySlots } = weeklyProposalAssignment;
 
 const weekStart = new Date('2026-09-14T00:00:00.000Z');
 const profile: any = {
@@ -129,6 +130,39 @@ function mealsOf(proposal: any) {
 }
 
 describe('OpenAIWeeklyProposalComposer catalog-first composition (NUT-76)', () => {
+  it('stops catalog orchestration immediately when the matcher reports full coverage (controlled matcher only)', async () => {
+    const catalog = Array.from({ length: 10 }, (_, index) => recipe(`catalog-${index}`));
+    const recipeRepository = {
+      findMealTypeCatalogPage: jest.fn().mockResolvedValue(catalog),
+    };
+    const classifier = {
+      classify: jest.fn(async (
+        inputs: Array<{ title: string; ingredients: unknown[] }>,
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('classification-test-model');
+        return inputs.map(() => [MealType.BREAKFAST]);
+      }),
+    };
+    const { provider, compose } = setup({ recipeRepository, classifier });
+    const matcherSpy = jest.spyOn(weeklyProposalAssignment as any, 'matchRecipesToSlots')
+      .mockImplementation((...args: unknown[]) => {
+        const [slots, candidates] = args as [Slot[], any[]];
+        return new Map(slots.map((slot, index) => [slot.key, candidates[index % candidates.length]]));
+      });
+
+    try {
+      const proposal = await compose();
+
+      expect(recipeRepository.findMealTypeCatalogPage).toHaveBeenCalledTimes(1);
+      expect(classifier.classify).toHaveBeenCalledTimes(1);
+      expect(provider.generate).not.toHaveBeenCalled();
+      expect(mealsOf(proposal)).toHaveLength(28);
+    } finally {
+      matcherSpy.mockRestore();
+    }
+  });
+
   it('uses a fully covered catalog without calling the provider and preserves each existing Recipe ID', async () => {
     const { catalog, eligibleSlotByRecipeId } = candidateCatalogForSlots();
     const { coverage, provider, compose } = setup({ catalog, eligibleSlotByRecipeId });

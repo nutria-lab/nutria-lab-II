@@ -110,6 +110,7 @@ export const WEEKLY_RECIPE_ELIGIBILITY_POLICY = Symbol('WEEKLY_RECIPE_ELIGIBILIT
 export const WEEKLY_COMPOSITION_VERSION = 'weekly-catalog-composition-v2' as const;
 const GENERATION_MEAL_ORDER = [MealType.BREAKFAST, MealType.LUNCH, MealType.SNACK, MealType.DINNER];
 const RECIPE_CATALOG_PAGE_SIZE = 10;
+const MAX_CLASSIFICATION_PAGES = 3;
 
 // Compatibility fallback for direct composer tests without the production classifier wiring.
 export const noClassifiedWeeklyRecipe: WeeklyRecipeEligibilityPolicy = () => false;
@@ -302,6 +303,7 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
     const excludedCatalogRecipeFingerprints = new Set(input.excludeCatalogRecipeFingerprints ?? []);
     let assignments = new Map<string, Recipe>();
     let afterId: string | undefined;
+    let catalogPagesScanned = 0;
     let pagesClassified = 0;
     let classifiedCount = 0;
     let model = 'none';
@@ -327,7 +329,7 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
 
     const forbiddenRestrictions = profileForbiddenRestrictions(input.profile);
 
-    while (true) {
+    while (catalogPagesScanned < MAX_CLASSIFICATION_PAGES) {
       let page: Recipe[];
       try {
         page = await this.recipeRepository!.findMealTypeCatalogPage({
@@ -339,12 +341,15 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
         throw new ServiceUnavailableException('Recipe catalog is temporarily unavailable');
       }
       if (page.length === 0) break;
+      catalogPagesScanned += 1;
+      const catalogExhausted = page.length < RECIPE_CATALOG_PAGE_SIZE;
 
       const profileEligiblePage = page.filter(recipe =>
         !excludedCatalogRecipeFingerprints.has(recipeFingerprint(recipe)) &&
         (forbiddenRestrictions.length === 0 || !findExcludedIngredientInSource(recipe, forbiddenRestrictions)),
       );
       if (profileEligiblePage.length === 0) {
+        if (catalogExhausted) break;
         afterId = page[page.length - 1].id;
         continue;
       }
@@ -401,7 +406,11 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
         (slot, recipe) => nutritionEligibleIds.has(recipe.id) &&
           (mealTypesByRecipeId.get(recipe.id) ?? []).includes((slot as WeeklyMealSlot).mealType),
       );
-      if (assignments.size === slots.length) break;
+      if (
+        assignments.size === slots.length ||
+        catalogPagesScanned >= MAX_CLASSIFICATION_PAGES ||
+        catalogExhausted
+      ) break;
 
       afterId = page[page.length - 1].id;
     }
