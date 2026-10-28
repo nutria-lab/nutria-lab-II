@@ -1,0 +1,54 @@
+[
+  {
+    "name": "mobile",
+    "width": 390,
+    "height": 844,
+    "viewport": 390,
+    "documentWidth": 390,
+    "controls": 21,
+    "clipped": 0,
+    "smallTargets": 0,
+    "pressed": 7,
+    "blocked": 6,
+    "errors": []
+  },
+  {
+    "name": "tablet",
+    "width": 768,
+    "height": 1024,
+    "viewport": 768,
+    "documentWidth": 768,
+    "controls": 21,
+    "clipped": 0,
+    "smallTargets": 0,
+    "pressed": 7,
+    "blocked": 6,
+    "errors": []
+  },
+  {
+    "name": "desktop",
+    "width": 1440,
+    "height": 1000,
+    "viewport": 1440,
+    "documentWidth": 1440,
+    "controls": 21,
+    "clipped": 0,
+    "smallTargets": 0,
+    "pressed": 7,
+    "blocked": 6,
+    "errors": []
+  },
+  {
+    "name": "narrow",
+    "width": 320,
+    "height": 844,
+    "viewport": 320,
+    "documentWidth": 320,
+    "controls": 21,
+    "clipped": 0,
+    "smallTargets": 0,
+    "pressed": 7,
+    "blocked": 6,
+    "errors": []
+  }
+]

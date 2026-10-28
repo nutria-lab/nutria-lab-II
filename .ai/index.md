@@ -28,6 +28,8 @@ This is the project-specific operating map for humans and agents. Read this inde
 
 ## Rules of use
 
+Project resource links are centralized in `management/links.md`. Every agent and workflow must read required project URLs there and register new user-authorized links in that file rather than duplicating them in instructions.
+
 1. Linear is the current work source; this folder is the enduring project guide.
 2. Do not read every module by default. Load the smallest relevant module.
 3. When an approved decision changes a module, update that module and save a curated Engram observation.
