@@ -272,8 +272,70 @@ export class RecipeRepository {
   }
 
   async delete(id: string) {
-    return this.prisma.recipe.delete({
-      where: { id },
-    });
+    // The existing FK action used to null recipeId without advancing PlannedMeal.updatedAt.
+    // Clear each reference explicitly under the same plan -> meal lock order as adherence.
+    // A plan referenced after the first scan is retried so its parent can be locked first.
+    // A reference that arrives after the re-read is still safe: the FK trigger advances its
+    // PlannedMeal token when PostgreSQL performs ON DELETE SET NULL.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(async (tx: any) => {
+          const recipe = await tx.recipe.findUniqueOrThrow({ where: { id } });
+          const references = await tx.$queryRaw<Array<{ planId: string }>>`
+            SELECT DISTINCT d."mealPlanId" AS "planId"
+            FROM "planned_meals" AS pm
+            INNER JOIN "meal_plan_days" AS d ON d."id" = pm."dayId"
+            WHERE pm."recipeId" = ${id}
+            ORDER BY d."mealPlanId"
+          `;
+
+          const lockedPlanIds: string[] = [];
+          for (const { planId } of references) {
+            const rows = await tx.$queryRaw<Array<{ id: string }>>`
+              SELECT "id" FROM "meal_plans" WHERE "id" = ${planId} FOR UPDATE
+            `;
+            if (rows[0]) lockedPlanIds.push(rows[0].id);
+          }
+
+          const meals: Array<{ id: string; planId: string; updatedAt: Date }> = await tx.$queryRaw`
+            SELECT pm."id", d."mealPlanId" AS "planId", pm."updatedAt"
+            FROM "planned_meals" AS pm
+            INNER JOIN "meal_plan_days" AS d ON d."id" = pm."dayId"
+            WHERE pm."recipeId" = ${id}
+            ORDER BY d."mealPlanId", pm."id"
+          `;
+          const referencedPlanIds = [...new Set(meals.map((meal) => meal.planId))].sort();
+          if (referencedPlanIds.some((planId) => !lockedPlanIds.includes(planId))) {
+            // A concurrent plan started referencing this recipe after the first scan.
+            // Abort so the next attempt can acquire its parent first.
+            throw new RecipeDeleteRetryError();
+          }
+
+          const changedAt = new Date();
+          for (const meal of meals) {
+            await tx.plannedMeal.update({
+              where: { id: meal.id },
+              data: {
+                recipeId: null,
+                updatedAt: new Date(Math.max(changedAt.getTime(), new Date(meal.updatedAt).getTime() + 1)),
+              },
+            });
+          }
+
+          await tx.recipe.delete({ where: { id } });
+          return recipe;
+        }, {
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+          maxWait: 10_000,
+          timeout: 30_000,
+        });
+      } catch (error) {
+        if (!(error instanceof RecipeDeleteRetryError)) throw error;
+        if (attempt === 2) throw error;
+      }
+    }
+    throw new Error('Recipe deletion retries exhausted');
   }
 }
+
+class RecipeDeleteRetryError extends Error {}

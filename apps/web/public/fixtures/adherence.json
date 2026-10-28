@@ -1,0 +1,175 @@
+{
+  "populated": {
+    "weekStart": "2026-10-19",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "today": "2026-10-22",
+    "plan": {
+      "id": "00000000-0000-4000-8000-000000000092",
+      "version": 2,
+      "updatedAt": "2026-10-19T07:00:00.000Z"
+    },
+    "days": [
+      {
+        "date": "2026-10-19",
+        "plannedMeals": 4,
+        "completedMeals": 1,
+        "skippedMeals": 1,
+        "notLoggedMeals": 2,
+        "adherencePercent": 25,
+        "meals": [
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000001",
+            "mealUpdatedAt": "2026-10-19T08:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000401",
+            "mealType": "BREAKFAST",
+            "title": "Yogur y avena",
+            "status": "COMPLETED",
+            "canEdit": true
+          },
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000002",
+            "mealUpdatedAt": "2026-10-19T08:01:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000402",
+            "mealType": "BREAKFAST",
+            "title": "Tostadas",
+            "status": "SKIPPED",
+            "canEdit": true
+          },
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000003",
+            "mealUpdatedAt": "2026-10-19T12:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000403",
+            "mealType": "LUNCH",
+            "title": "Almuerzo sin registrar",
+            "status": "NOT_LOGGED",
+            "canEdit": true
+          },
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000004",
+            "mealUpdatedAt": "2026-10-19T16:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000404",
+            "mealType": "SNACK",
+            "title": "Merienda con token viejo",
+            "status": "NOT_LOGGED",
+            "canEdit": true
+          }
+        ]
+      },
+      {
+        "date": "2026-10-20",
+        "plannedMeals": 1,
+        "completedMeals": 0,
+        "skippedMeals": 0,
+        "notLoggedMeals": 1,
+        "adherencePercent": 0,
+        "meals": [
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000005",
+            "mealUpdatedAt": "2026-10-20T20:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000405",
+            "mealType": "DINNER",
+            "title": "Cena con receta cambiada",
+            "status": "NOT_LOGGED",
+            "canEdit": true
+          }
+        ]
+      },
+      {
+        "date": "2026-10-21",
+        "plannedMeals": 1,
+        "completedMeals": 0,
+        "skippedMeals": 1,
+        "notLoggedMeals": 0,
+        "adherencePercent": 0,
+        "meals": [
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000006",
+            "mealUpdatedAt": "2026-10-21T12:00:00.000Z",
+            "recipeId": null,
+            "mealType": "LUNCH",
+            "title": "Comida sin receta",
+            "status": "SKIPPED",
+            "canEdit": true
+          }
+        ]
+      },
+      {
+        "date": "2026-10-22",
+        "plannedMeals": 1,
+        "completedMeals": 1,
+        "skippedMeals": 0,
+        "notLoggedMeals": 0,
+        "adherencePercent": 100,
+        "meals": [
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000007",
+            "mealUpdatedAt": "2026-10-22T20:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000407",
+            "mealType": "DINNER",
+            "title": "Cena de hoy",
+            "status": "COMPLETED",
+            "canEdit": true
+          }
+        ]
+      },
+      {
+        "date": "2026-10-23",
+        "plannedMeals": 1,
+        "completedMeals": 0,
+        "skippedMeals": 0,
+        "notLoggedMeals": 1,
+        "adherencePercent": 0,
+        "meals": [
+          {
+            "plannedMealId": "00000000-0000-4000-8000-000000000008",
+            "mealUpdatedAt": "2026-10-23T08:00:00.000Z",
+            "recipeId": "00000000-0000-4000-8000-000000000408",
+            "mealType": "BREAKFAST",
+            "title": "Desayuno futuro",
+            "status": "NOT_LOGGED",
+            "canEdit": false
+          }
+        ]
+      },
+      {
+        "date": "2026-10-24",
+        "plannedMeals": 0,
+        "completedMeals": 0,
+        "skippedMeals": 0,
+        "notLoggedMeals": 0,
+        "adherencePercent": null,
+        "meals": []
+      },
+      {
+        "date": "2026-10-25",
+        "plannedMeals": 0,
+        "completedMeals": 0,
+        "skippedMeals": 0,
+        "notLoggedMeals": 0,
+        "adherencePercent": null,
+        "meals": []
+      }
+    ],
+    "summary": {
+      "plannedMeals": 8,
+      "completedMeals": 2,
+      "skippedMeals": 2,
+      "notLoggedMeals": 4,
+      "adherencePercent": 25
+    }
+  },
+  "empty": {
+    "weekStart": "2026-10-19",
+    "timezone": "America/Argentina/Buenos_Aires",
+    "today": "2026-10-22",
+    "plan": null,
+    "days": [],
+    "summary": {
+      "plannedMeals": 0,
+      "completedMeals": 0,
+      "skippedMeals": 0,
+      "notLoggedMeals": 0,
+      "adherencePercent": null
+    }
+  }
+}
