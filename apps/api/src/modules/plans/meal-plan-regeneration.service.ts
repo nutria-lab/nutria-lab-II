@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -40,10 +39,10 @@ export class MealPlanRegenerationService {
   ) {}
 
   async regenerate(userId: string, planId: string, idempotencyKey: string, dto: RegenerateMealPlanDto) {
-    // 1. El plan existe (404) y es del usuario (403).
+    // 1. Los planes inexistentes o ajenos comparten el mismo 404.
     const plan = await this.repository.findPlanWithMeals(planId);
     if (!plan) throw new NotFoundException('Meal plan not found');
-    if (plan.userId !== userId) throw new ForbiddenException('This meal plan belongs to another user');
+    if (plan.userId !== userId) throw new NotFoundException('Meal plan not found');
 
     const user = await this.repository.getUserWithProfile(userId);
     if (!user?.nutritionProfile) throw new BadRequestException('User needs a nutrition profile');

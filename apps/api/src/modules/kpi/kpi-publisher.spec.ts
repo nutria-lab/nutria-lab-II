@@ -7,7 +7,7 @@ import type { PublicationRepository } from './publication-repository.port';
 const ids: readonly KpiId[] = [
   'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
   'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
+  'initial_plans_count', 'manual_recipes_count', 'adherence_rate',
 ];
 const date = '2026-10-09';
 const runId = 'run-86';
@@ -15,7 +15,14 @@ const retryChainId = 'f049dc13-8d9f-4c23-9f55-0f1a4d676fe4';
 const sourceCommit = 'a'.repeat(40);
 
 function result(kpi_id: KpiId): KpiResult {
-  return { kpi_id, value: 0, quality: 'observed', reason: null, sample_count: 0, measured_at: '2026-10-10T00:00:00.000Z' };
+  return {
+    kpi_id, value: kpi_id === 'adherence_rate' ? 80 : 0, quality: 'observed', reason: null,
+    sample_count: kpi_id === 'adherence_rate' ? 40 : 0, measured_at: '2026-10-10T00:00:00.000Z',
+    ...(kpi_id === 'adherence_rate' ? { evidence: {
+      numerator: 32, denominator: 40, quality: 'observed', reason: null,
+      collection_date: '2026-10-10', measured_at: '2026-10-10T00:00:00.000Z', environment: 'prod',
+    } } : {}),
+  };
 }
 
 function collector(): jest.Mocked<KpiLogger> {
@@ -80,6 +87,8 @@ describe('KpiPublisher', () => {
     const publication = await repository.getPublication('prod', date);
     expect(logger.collect).toHaveBeenCalledTimes(1);
     expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+    expect(JSON.parse(publication.frozenPayload!.toString('utf8'))).toHaveLength(11);
+    expect(JSON.parse(publication.frozenPayload!.toString('utf8')).map((item: { kpi_id: string }) => item.kpi_id)).toContain('adherence_rate');
     expect(publication).toMatchObject({ status: 'delivered', acceptedAt: expect.any(String), frozenBatch: expect.any(Object) });
   });
 
@@ -94,6 +103,30 @@ describe('KpiPublisher', () => {
 
     expect(logger.collect).not.toHaveBeenCalled();
     expect(remoteClient.post).toHaveBeenCalledWith(publication.frozenPayload);
+    await expect(repository.getPublication('prod', date)).resolves.toMatchObject({ payloadSha256: publication.payloadSha256 });
+  });
+
+  it('keeps an HTTP 4xx rejection visible and unsuccessful without truncating the frozen eleven', async () => {
+    const remoteClient = {
+      post: jest.fn().mockResolvedValue({ kind: 'definitive', status: 400 }),
+      verify: jest.fn(),
+    };
+    const { publisher, repository, logger, artifactWriter, request } = publisherHarness({ remoteClient });
+
+    const result = await publisher.publish(request);
+    const publication = await repository.getPublication('prod', date);
+    const posted = JSON.parse(remoteClient.post.mock.calls[0][0].toString('utf8')) as { kpi_id: string }[];
+
+    expect(result).toMatchObject({ status: 'failed', postAccepted: false, failureCode: 'REMOTE_POST_ERROR', httpStatus: 400 });
+    expect(posted).toHaveLength(11);
+    expect(posted.map(({ kpi_id }) => kpi_id)).toContain('adherence_rate');
+    expect(publication).toMatchObject({ status: 'failed', failureCode: 'REMOTE_POST_ERROR', payloadSha256: expect.any(String) });
+    expect(logger.collect).toHaveBeenCalledTimes(1);
+    expect(remoteClient.verify).not.toHaveBeenCalled();
+    const diagnostics = JSON.parse(
+      artifactWriter.write.mock.calls[0][0]['diagnostics.json'].toString('utf8'),
+    ) as Record<string, unknown>;
+    expect(diagnostics).toMatchObject({ post_accepted: false, status: 'failed', failure_code: 'REMOTE_POST_ERROR', http_status: 400 });
   });
 
   it.each(['accepted', 'delivered'] as const)('does not recollect or repost a previously %s publication', async (status) => {

@@ -1,3 +1,4 @@
+import { ALL_KPI_IDS as CURRENT_KPI_IDS, isAdherenceEvidence, LEGACY_KPI_IDS } from './kpi-contract';
 import type { CollectionContext, KpiResult } from './kpi-contract';
 import type { KpiLogger } from './kpi-contract';
 import { canonicalPayloadBytes } from './kpi-batch';
@@ -51,7 +52,7 @@ export class KpiApiClient implements PublicationRepository {
   }
 
   collect(context: CollectionContext): Promise<readonly KpiResult[]> {
-    return this.post('/kpi/collect', context, isKpiResults);
+    return this.post('/kpi/collect', context, value => isKpiResults(value, context));
   }
 
   async reservePublication(reservation: PublicationReservation): Promise<PublicationRecord> {
@@ -229,15 +230,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
-function isKpiResults(value: unknown): value is readonly KpiResult[] {
-  return isKpiResultArray(value, ALL_KPI_IDS);
+function isKpiResults(value: unknown, context: CollectionContext): value is readonly KpiResult[] {
+  return isKpiResultArray(value, CURRENT_KPI_IDS, context.environment);
 }
-
-const ALL_KPI_IDS = [
-  'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
-  'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
-] as const;
 
 type PublicationRecordDto = Omit<PublicationRecord, 'frozenPayload'>;
 
@@ -259,10 +254,41 @@ function isFrozenBatch(value: unknown): value is FrozenBatch {
   if (!isRecord(value) || value.contract_version !== '1' || !isRecord(value.context) ||
     !Array.isArray(value.measurements) || !Array.isArray(value.diagnostics)) return false;
   const context = value.context;
-  return context.contract_version === '1' && typeof context.run_id === 'string' &&
-    typeof context.date === 'string' && typeof context.environment === 'string' &&
-    typeof context.window_start === 'string' && typeof context.window_end === 'string' &&
-    typeof value.payload_sha256 === 'string' && /^[0-9a-f]{64}$/i.test(value.payload_sha256);
+  if (context.contract_version !== '1' || typeof context.run_id !== 'string' ||
+    typeof context.date !== 'string' || typeof context.environment !== 'string' ||
+    typeof context.window_start !== 'string' || typeof context.window_end !== 'string' ||
+    typeof value.payload_sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(value.payload_sha256)) return false;
+
+  const measurementIds = new Set(value.measurements.filter(isRecord).map(item => item.kpi_id).filter((id): id is string => typeof id === 'string'));
+  const diagnosticIds = new Set(value.diagnostics.filter(isRecord).map(item => item.kpi_id).filter((id): id is string => typeof id === 'string'));
+  const expectedIds = hasExactSet(measurementIds, CURRENT_KPI_IDS)
+    ? CURRENT_KPI_IDS
+    : hasExactSet(measurementIds, LEGACY_KPI_IDS) ? LEGACY_KPI_IDS : null;
+  if (!expectedIds || !hasExactSet(diagnosticIds, expectedIds) || value.measurements.length !== expectedIds.length ||
+    value.diagnostics.length !== expectedIds.length) return false;
+
+  for (const measurement of value.measurements) {
+    if (!isRecord(measurement) || typeof measurement.kpi_id !== 'string' || !expectedIds.includes(measurement.kpi_id as never) ||
+      measurement.date !== context.date || measurement.env !== context.environment || measurement.run_id !== context.run_id ||
+      typeof measurement.value !== 'number' || !Number.isFinite(measurement.value)) return false;
+  }
+  for (const diagnostic of value.diagnostics) {
+    if (!isRecord(diagnostic) || typeof diagnostic.kpi_id !== 'string' || !expectedIds.includes(diagnostic.kpi_id as never) ||
+      (diagnostic.quality !== 'observed' && diagnostic.quality !== 'defaulted') ||
+      !(diagnostic.reason === null || typeof diagnostic.reason === 'string') ||
+      !Number.isSafeInteger(diagnostic.sample_count) || (diagnostic.sample_count as number) < 0) return false;
+    if (diagnostic.kpi_id === 'adherence_rate') {
+      if (!isAdherenceEvidence(diagnostic.evidence) || diagnostic.evidence.environment !== context.environment ||
+        diagnostic.sample_count !== (diagnostic.evidence.denominator ?? 0) ||
+        diagnostic.reason !== diagnostic.evidence.reason ||
+        diagnostic.quality !== (diagnostic.evidence.quality === 'unavailable' ? 'defaulted' : 'observed') ||
+        value.measurements.find(item => isRecord(item) && item.kpi_id === 'adherence_rate')?.value !==
+          (diagnostic.evidence.quality === 'observed'
+            ? (100 * diagnostic.evidence.numerator!) / diagnostic.evidence.denominator!
+            : 0)) return false;
+    } else if (diagnostic.evidence !== undefined) return false;
+  }
+  return true;
 }
 
 function decodePublicationRecord(value: PublicationRecordDto): PublicationRecord {
@@ -293,7 +319,11 @@ function isSampleResponse(value: unknown): value is KpiSampleResponse {
     (purge.deleted === null || isCountRecord(purge.deleted));
 }
 
-function isKpiResultArray(value: unknown, expectedIds: readonly string[]): value is readonly KpiResult[] {
+function isKpiResultArray(
+  value: unknown,
+  expectedIds: readonly string[],
+  environment?: CollectionContext['environment'],
+): value is readonly KpiResult[] {
   if (!Array.isArray(value) || value.length !== expectedIds.length) return false;
   const ids = new Set<string>();
   for (const item of value) {
@@ -306,11 +336,22 @@ function isKpiResultArray(value: unknown, expectedIds: readonly string[]): value
     }
     if (!Number.isInteger(item.sample_count) || (item.sample_count as number) < 0) return false;
     if (typeof item.measured_at !== 'string' || !Number.isFinite(Date.parse(item.measured_at))) return false;
+    if (item.kpi_id === 'adherence_rate') {
+      if (!isAdherenceEvidence(item.evidence) || item.sample_count !== (item.evidence.denominator ?? 0) ||
+        item.quality !== item.evidence.quality || item.reason !== item.evidence.reason ||
+        (environment !== undefined && item.evidence.environment !== environment) || item.evidence.measured_at !== item.measured_at ||
+        (item.evidence.quality === 'observed' && item.value !== (100 * item.evidence.numerator!) / item.evidence.denominator!) ||
+        (item.evidence.quality === 'unavailable' && item.value !== null)) return false;
+    } else if (item.evidence !== undefined) return false;
   }
   return expectedIds.every(id => ids.has(id));
 }
 
 function isCountRecord(value: unknown): value is Record<string, number> {
   return isRecord(value) && Object.values(value).every(item => Number.isInteger(item) && (item as number) >= 0);
+}
+
+function hasExactSet(actual: ReadonlySet<string>, expected: readonly string[]): boolean {
+  return actual.size === expected.length && expected.every(id => actual.has(id));
 }
 

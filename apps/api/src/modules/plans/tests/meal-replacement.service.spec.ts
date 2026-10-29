@@ -2,7 +2,6 @@ import 'reflect-metadata';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -119,11 +118,11 @@ describe('MealReplacementService - plan y comida del usuario', () => {
     expect(repository.createOrRecoverGenerationRun).not.toHaveBeenCalled();
   });
 
-  it('403 si el plan es de otro usuario', async () => {
+  it('404 si el plan pertenece a otro usuario', async () => {
     const { plan, repository, replace } = setup();
     repository.findPlanWithMeals.mockResolvedValue({ ...plan, userId: 'otro-usuario' });
 
-    await expect(replace()).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(replace()).rejects.toBeInstanceOf(NotFoundException);
     expect(repository.createOrRecoverGenerationRun).not.toHaveBeenCalled();
   });
 

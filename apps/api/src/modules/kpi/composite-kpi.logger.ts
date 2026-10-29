@@ -1,4 +1,6 @@
+import { isAdherenceEvidence } from './kpi-contract';
 import type { CollectionContext, KpiId, KpiLogger, KpiResult } from './kpi-contract';
+import { dateInBuenosAires } from '@/modules/adherence/adherence.repository';
 
 const telemetryKpiIds = [
   'operations_count',
@@ -11,7 +13,7 @@ const telemetryKpiIds = [
   'availability_rate',
 ] as const satisfies readonly KpiId[];
 
-const dataKpiIds = ['initial_plans_count', 'manual_recipes_count'] as const satisfies readonly KpiId[];
+const dataKpiIds = ['initial_plans_count', 'manual_recipes_count', 'adherence_rate'] as const satisfies readonly KpiId[];
 
 type Source = 'telemetry' | 'data';
 
@@ -43,11 +45,11 @@ export class CompositeKpiLogger implements KpiLogger {
   ): Promise<readonly KpiResult[]> {
     try {
       const results = await logger.collect(context);
-      return validateResults(results, expectedIds, source);
+      return validateResults(results, expectedIds, source, context.environment);
     } catch (error) {
       if (isExpectedSourceFailure(error)) {
         const measuredAt = this.clock().toISOString();
-        return expectedIds.map((kpi_id) => unavailable(kpi_id, measuredAt));
+        return expectedIds.map((kpi_id) => unavailable(kpi_id, measuredAt, context));
       }
 
       throw error;
@@ -59,6 +61,7 @@ function validateResults(
   results: unknown,
   expectedIds: readonly KpiId[],
   source: Source,
+  environment: CollectionContext['environment'],
 ): readonly KpiResult[] {
   if (!Array.isArray(results)) {
     throw new TypeError(`${source} KPI result must be an array`);
@@ -81,6 +84,7 @@ function validateResults(
     }
     seen.add(kpiId);
     validateResultShape(result, source);
+    if (result.evidence !== undefined) validateAdherenceEvidence(result, source, environment);
   }
 
   for (const id of expectedIds) {
@@ -115,7 +119,39 @@ function validateResultShape(result: Record<string, unknown>, source: Source): v
   }
 }
 
-function unavailable(kpi_id: KpiId, measured_at: string): KpiResult {
+function validateAdherenceEvidence(result: Record<string, unknown>, source: Source, environment: CollectionContext['environment']): void {
+  if (result.kpi_id !== 'adherence_rate' || !isAdherenceEvidence(result.evidence)) {
+    throw new TypeError(`${source} adherence KPI has invalid evidence`);
+  }
+  const evidence = result.evidence;
+  if (result.sample_count !== (evidence.denominator ?? 0) || result.quality !== evidence.quality || result.reason !== evidence.reason ||
+    evidence.environment !== environment || evidence.measured_at !== result.measured_at ||
+    (evidence.quality === 'observed' && result.value !== (100 * evidence.numerator!) / evidence.denominator!) ||
+    (evidence.quality === 'unavailable' && result.value !== null)) {
+    throw new TypeError(`${source} adherence KPI result does not match its evidence`);
+  }
+}
+
+function unavailable(kpi_id: KpiId, measured_at: string, context: CollectionContext): KpiResult {
+  if (kpi_id === 'adherence_rate') {
+    return {
+      kpi_id,
+      value: null,
+      quality: 'unavailable',
+      reason: 'SOURCE_UNAVAILABLE',
+      sample_count: 0,
+      measured_at,
+      evidence: {
+        numerator: null,
+        denominator: null,
+        quality: 'unavailable',
+        reason: 'SOURCE_UNAVAILABLE',
+        collection_date: dateInBuenosAires(new Date(measured_at)),
+        measured_at,
+        environment: context.environment,
+      },
+    };
+  }
   return {
     kpi_id,
     value: null,

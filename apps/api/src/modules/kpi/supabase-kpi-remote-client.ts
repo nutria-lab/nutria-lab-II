@@ -1,3 +1,4 @@
+import { ALL_KPI_IDS, LEGACY_KPI_IDS } from './kpi-contract';
 import type { KpiEnvironment, Measurement } from './kpi-contract';
 import { KPI_CATALOG_DEFINITIONS, validateKpiCatalogDefinitions } from './kpi-catalog-definitions';
 import type { KpiCatalogDefinition } from './kpi-catalog-definitions';
@@ -8,11 +9,7 @@ const PUBLISH_PATH = '/rest/v1/measurement?on_conflict=project_id,kpi_id,date,en
 const VERIFY_PATH = '/rest/v1/measurement';
 const DEFAULT_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT = Symbol('REQUEST_TIMEOUT');
-const KPI_IDS = [
-  'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
-  'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
-] as const;
+const KPI_IDS = ALL_KPI_IDS;
 
 type RemoteResponse = { kind: 'response'; response: Response; body?: unknown; bodyValid?: boolean };
 type RemoteRequestFailure = { kind: 'failure'; outcome: Extract<RemotePost, { kind: 'retryable' }> };
@@ -93,7 +90,7 @@ export class SupabaseKpiRemoteClient implements KpiRemoteClient {
     const first = await this.readCatalog(environment);
     const firstCheck = validateActiveCatalog(first, definitions);
     const missing = definitions.filter(definition => !firstCheck.activeById.has(definition.id));
-    if (firstCheck.activeById.size + missing.length > 10) throw catalogConflict('KPI_CATALOG_ACTIVE_LIMIT');
+    if (firstCheck.activeById.size + missing.length > KPI_IDS.length) throw catalogConflict('KPI_CATALOG_ACTIVE_LIMIT');
 
     if (missing.length > 0) {
       const response = await this.request('/rest/v1/kpi_catalog', {
@@ -122,7 +119,7 @@ export class SupabaseKpiRemoteClient implements KpiRemoteClient {
   }
 
   async verify(environment: KpiEnvironment, date: string, expected: readonly Measurement[]): Promise<RemoteVerification> {
-    if (expected.length !== KPI_IDS.length) throw new StructuralKpiError('KPI_REMOTE_EXPECTED_SET_INVALID');
+    if (!hasSupportedSet(expected.map(({ kpi_id }) => kpi_id))) throw new StructuralKpiError('KPI_REMOTE_EXPECTED_SET_INVALID');
     const query = new URLSearchParams({
       select: 'kpi_id,date,env,value,run_id',
       date: `eq.${date}`,
@@ -209,7 +206,7 @@ function validateActiveCatalog(
     activeById.set(id, row);
   }
   if (inactiveExpected.size > 0) throw catalogConflict('KPI_CATALOG_INACTIVE_DEFINITION');
-  if (activeById.size > 10) throw catalogConflict('KPI_CATALOG_ACTIVE_LIMIT');
+  if (activeById.size > KPI_IDS.length) throw catalogConflict('KPI_CATALOG_ACTIVE_LIMIT');
   return { activeById };
 }
 
@@ -218,7 +215,7 @@ function catalogRowIsActive(row: Record<string, unknown>): boolean {
   if (typeof row.active === 'boolean') return row.active;
   if (typeof row.status === 'string') return row.status === 'active';
   // Some API versions expose only the active view; absence is treated fail-closed
-  // for unexpected rows by validating the exact ten-ID set above.
+  // for unexpected rows by validating an exact supported ID set above.
   return true;
 }
 
@@ -253,14 +250,13 @@ function assertMeasurementPayload(payload: Buffer): void {
   } catch {
     throw new StructuralKpiError('KPI_MEASUREMENT_PAYLOAD_INVALID');
   }
-  if (!Array.isArray(parsed) || parsed.length !== KPI_IDS.length ||
+  if (!Array.isArray(parsed) ||
     !parsed.every(isMeasurementRecord)) {
     throw new StructuralKpiError('KPI_MEASUREMENT_SET_INVALID');
   }
   const measurements = parsed as Measurement[];
   const ids = measurements.map(item => item.kpi_id);
-  if (new Set(ids).size !== KPI_IDS.length ||
-    ![...ids].sort().every((id, index) => id === [...KPI_IDS].sort()[index]) ||
+  if (!hasSupportedSet(ids) ||
     measurements.some(item => item.date !== measurements[0].date || item.env !== measurements[0].env || item.run_id !== measurements[0].run_id)) {
     throw new StructuralKpiError('KPI_MEASUREMENT_SET_INVALID');
   }
@@ -294,4 +290,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAbortError(error: unknown): boolean {
   return isRecord(error) && error.name === 'AbortError';
+}
+
+function hasSupportedSet(ids: readonly string[]): boolean {
+  if (new Set(ids).size !== ids.length) return false;
+  const actual = new Set(ids);
+  return hasExactSet(actual, KPI_IDS) || hasExactSet(actual, LEGACY_KPI_IDS);
+}
+
+function hasExactSet(actual: ReadonlySet<string>, expected: readonly string[]): boolean {
+  return actual.size === expected.length && expected.every(id => actual.has(id));
 }
