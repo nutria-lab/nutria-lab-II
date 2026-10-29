@@ -38,4 +38,13 @@ describe('BrandMark', () => {
     expectOfficialBrandAssets(container);
     expectNoAdditionalFocusableControls(container);
   });
+
+  it('renders the same official assets compactly for a header, without the bottom margin of the other variants', () => {
+    const { container } = render(<BrandMark variant="header" />);
+
+    expect(container.firstElementChild).toHaveClass('flex', 'min-w-0', 'items-center');
+    expect(container.firstElementChild).not.toHaveClass('mb-6');
+    expectOfficialBrandAssets(container);
+    expectNoAdditionalFocusableControls(container);
+  });
 });
