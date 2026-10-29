@@ -16,6 +16,7 @@ export function freezeBatch(context: CollectionContext, results: readonly KpiRes
     quality: result.quality === 'unavailable' ? 'defaulted' as const : 'observed' as const,
     reason: result.reason,
     sample_count: result.sample_count,
+    ...(result.evidence ? { evidence: result.evidence } : {}),
   }));
   const bytes = canonicalPayloadBytes(measurements);
 

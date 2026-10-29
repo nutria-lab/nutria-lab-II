@@ -9,7 +9,7 @@ const PROJECT_KEY = 'project_fixture_key';
 const DATE = '2026-10-09';
 const ENVIRONMENT = 'prod' as const;
 const EXPECTED = [
-  ['availability_rate', 99.5], ['dependency_error_rate', 4], ['error_rate', 3],
+  ['adherence_rate', 80], ['availability_rate', 99.5], ['dependency_error_rate', 4], ['error_rate', 3],
   ['health_status', 1], ['initial_plans_count', 2], ['last_success_age_seconds', 30],
   ['latency_p95_ms', 19], ['manual_recipes_count', 5], ['operations_count', 7], ['timeout_rate', 1],
 ].map(([kpi_id, value]) => ({
@@ -20,6 +20,8 @@ const EXPECTED = [
   run_id: 'cbd79c1e-0f46-4e5a-b86b-02d354277791',
 }));
 const FROZEN_BYTES = Buffer.from(JSON.stringify(EXPECTED), 'utf8');
+const LEGACY_EXPECTED = EXPECTED.filter(({ kpi_id }) => kpi_id !== 'adherence_rate');
+const LEGACY_FROZEN_BYTES = Buffer.from(JSON.stringify(LEGACY_EXPECTED), 'utf8');
 
 type CapturedRequest = {
   method: string | undefined;
@@ -128,6 +130,18 @@ describe('SupabaseKpiRemoteClient POST', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it('replays the exact legacy ten-result batch without enriching or changing its frozen bytes', async () => {
+    const server = await startServer((_request, response) => response.writeHead(201).end());
+    try {
+      await expect(client(server.baseUrl).post(LEGACY_FROZEN_BYTES)).resolves.toEqual({ kind: 'accepted', status: 201 });
+      expect(server.requests).toHaveLength(1);
+      expect(server.requests[0].body).toEqual(LEGACY_FROZEN_BYTES);
+      expect(JSON.parse(server.requests[0].body.toString('utf8'))).toHaveLength(10);
+    } finally {
+      await server.close();
+    }
+  });
+
   it.each([
     [400, 'definitive'],
     [401, 'definitive'],
@@ -198,6 +212,18 @@ describe('SupabaseKpiRemoteClient GET verification', () => {
     }
   });
 
+  it('verifies an exact legacy ten-result frozen batch during retry', async () => {
+    const server = await startServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(LEGACY_EXPECTED));
+    });
+    try {
+      await expect(client(server.baseUrl).verify(ENVIRONMENT, DATE, LEGACY_EXPECTED))
+        .resolves.toEqual({ kind: 'match', status: 200 });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('classifies no records as NOT_FOUND and any missing, extra, or value-mismatched record as VALUE_CONFLICT', async () => {
     const cases: readonly [string, unknown[], 'not_found' | 'conflict'][] = [
       ['no records', [], 'not_found'],
@@ -245,16 +271,17 @@ describe('SupabaseKpiRemoteClient GET verification', () => {
 });
 
 describe('versioned KPI catalog registration', () => {
-  it('defines exactly ten valid IDs with source and justification, including no average aggregation for p95', () => {
+  it('defines exactly eleven valid IDs with source and justification, including no average aggregation for p95', () => {
     expect(() => validateKpiCatalogDefinitions()).not.toThrow();
-    expect(KPI_CATALOG_DEFINITIONS).toHaveLength(10);
+    expect(KPI_CATALOG_DEFINITIONS).toHaveLength(11);
     expect(KPI_CATALOG_DEFINITIONS.every(definition => definition.description.length >= 5 && definition.description.length <= 500)).toBe(true);
     expect(KPI_CATALOG_DEFINITIONS.every(definition => definition.source && definition.justification)).toBe(true);
     expect(KPI_CATALOG_DEFINITIONS.find(definition => definition.id === 'latency_p95_ms')).not.toHaveProperty('aggregation');
+    expect(KPI_CATALOG_DEFINITIONS.find(definition => definition.id === 'adherence_rate')).toMatchObject({ kind: 'business', unit: '%' });
   });
 
   it('posts only missing catalog definitions, then re-reads and verifies the exact active set', async () => {
-    const existing = KPI_CATALOG_DEFINITIONS.slice(0, 9).map(definition => ({ ...definition, active: true }));
+    const existing = KPI_CATALOG_DEFINITIONS.slice(0, 10).map(definition => ({ ...definition, active: true }));
     const fetcher = jest.fn()
       .mockResolvedValueOnce(new Response('{}', { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(existing), { status: 200 }))
@@ -264,7 +291,7 @@ describe('versioned KPI catalog registration', () => {
 
     await remote.validateIdentity();
     await expect(remote.registerCatalog('prod')).resolves.toEqual({
-      added_ids: ['manual_recipes_count'], active_count: 10,
+      added_ids: ['adherence_rate'], active_count: 11,
     });
 
     const catalogRequests = fetcher.mock.calls.slice(1).map(call => ({
@@ -274,7 +301,7 @@ describe('versioned KPI catalog registration', () => {
     expect(catalogRequests[0].init.method).toBe('GET');
     expect(catalogRequests[1].init.method).toBe('POST');
     expect(catalogRequests[1].init.headers).toMatchObject({ Prefer: 'resolution=ignore-duplicates' });
-    expect(JSON.parse(String(catalogRequests[1].init.body))).toEqual([KPI_CATALOG_DEFINITIONS[9]]);
+    expect(JSON.parse(String(catalogRequests[1].init.body))).toEqual([KPI_CATALOG_DEFINITIONS[10]]);
     expect(catalogRequests[2].init.method).toBe('GET');
   });
 

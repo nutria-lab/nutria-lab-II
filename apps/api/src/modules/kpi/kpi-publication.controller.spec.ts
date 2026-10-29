@@ -10,7 +10,7 @@ import type { PublicationRecord, PublicationRepository } from './publication-rep
 const IDS: readonly KpiId[] = [
   'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
   'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
+  'initial_plans_count', 'manual_recipes_count', 'adherence_rate',
 ];
 
 const context: CollectionContext = {
@@ -25,11 +25,15 @@ const context: CollectionContext = {
 function results(): KpiResult[] {
   return IDS.map(kpi_id => ({
     kpi_id,
-    value: 0,
+    value: kpi_id === 'adherence_rate' ? 80 : 0,
     quality: 'observed',
     reason: null,
-    sample_count: 1,
+    sample_count: kpi_id === 'adherence_rate' ? 40 : 1,
     measured_at: context.window_end,
+    ...(kpi_id === 'adherence_rate' ? { evidence: {
+      numerator: 32, denominator: 40, quality: 'observed', reason: null,
+      collection_date: '2026-10-09', measured_at: context.window_end, environment: 'dev',
+    } } : {}),
   }));
 }
 
@@ -104,6 +108,18 @@ describe('KpiPublicationController', () => {
     );
     expect(result).toMatchObject({ won: true, publication: { frozenBatch: batch } });
     expect(result.publication).not.toHaveProperty('frozenPayload');
+  });
+
+  it('rejects a ten-result subset when freezing a new publication batch', async () => {
+    const { repository, controller } = setup();
+    const incomplete = {
+      ...batch,
+      measurements: batch.measurements.slice(1),
+      diagnostics: batch.diagnostics.slice(1),
+    };
+
+    await expect(controller.freeze({ run_id: context.run_id, batch: incomplete })).rejects.toThrow(BadRequestException);
+    expect(repository.freezeBatchConditionally).not.toHaveBeenCalled();
   });
 
   it('rejects malformed frozen payloads and non-technical failure details before touching the database', async () => {

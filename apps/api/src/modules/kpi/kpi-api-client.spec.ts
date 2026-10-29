@@ -5,7 +5,7 @@ import type { PublicationRecord, PublicationRepository, PublicationReservation }
 const IDS = [
   'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
   'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
+  'initial_plans_count', 'manual_recipes_count', 'adherence_rate',
 ] as const;
 
 const context: CollectionContext = {
@@ -20,11 +20,15 @@ const context: CollectionContext = {
 function results(): KpiResult[] {
   return IDS.map(kpi_id => ({
     kpi_id,
-    value: 0,
+    value: kpi_id === 'adherence_rate' ? 80 : 0,
     quality: 'observed',
     reason: null,
-    sample_count: 1,
+    sample_count: kpi_id === 'adherence_rate' ? 40 : 1,
     measured_at: '2026-10-13T00:05:00.000Z',
+    ...(kpi_id === 'adherence_rate' ? { evidence: {
+      numerator: 32, denominator: 40, quality: 'observed', reason: null,
+      collection_date: '2026-10-13', measured_at: '2026-10-13T00:05:00.000Z', environment: 'dev',
+    } } : {}),
   }));
 }
 
@@ -55,7 +59,7 @@ describe('KpiApiClient', () => {
     const fetcher = jest.fn(async () => new Response(JSON.stringify(results()), { status: 200 }));
     const client = new KpiApiClient('https://nutria.example/', 'internal-secret', 1000, fetcher);
 
-    await expect(client.collect(context)).resolves.toHaveLength(10);
+    await expect(client.collect(context)).resolves.toEqual(results());
 
     expect(fetcher).toHaveBeenCalledWith('https://nutria.example/kpi/collect', expect.objectContaining({
       method: 'POST',
@@ -137,12 +141,12 @@ describe('KpiApiClient', () => {
     const fallback = { collect: jest.fn(async () => results()) };
     const logger = new ApiFirstKpiLogger(client, fallback);
 
-    await expect(logger.collect(context)).resolves.toHaveLength(10);
+    await expect(logger.collect(context)).resolves.toHaveLength(11);
     expect(fallback.collect).toHaveBeenCalledWith(context);
   });
 
   it('rejects malformed successful responses without falling back', async () => {
-    const fetcher = jest.fn(async () => new Response(JSON.stringify(results().slice(0, 9)), { status: 200 }));
+    const fetcher = jest.fn(async () => new Response(JSON.stringify(results().slice(0, 10)), { status: 200 }));
     const client = new KpiApiClient('https://nutria.example', 'token', 1000, fetcher);
     const fallback = { collect: jest.fn(async () => results()) };
 

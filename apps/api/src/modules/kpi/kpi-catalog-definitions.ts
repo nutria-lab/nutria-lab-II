@@ -73,6 +73,12 @@ export const KPI_CATALOG_DEFINITIONS: readonly KpiCatalogDefinition[] = [
     source: 'recipes: origin=MANUAL y createdAt en [start, end).',
     justification: 'Excluye recetas AI y ediciones de recetas previas; cuenta filas existentes al leer.',
   },
+  {
+    id: 'adherence_rate', kind: 'business', unit: '%',
+    description: 'Porcentaje global de comidas planificadas elegibles que están completadas efectivamente en la base al recolectar.',
+    source: 'meal_plans actuales y sus comidas con fecha civil UTC almacenada <= hoy en America/Argentina/Buenos_Aires; effectiveMealStatus determina completions válidas.',
+    justification: 'Agrega por comida sobre la población completa; una fuente vacía o caída queda unavailable y no se presenta como cero observado.',
+  },
 ];
 
 export function validateKpiCatalogDefinitions(definitions: readonly KpiCatalogDefinition[] = KPI_CATALOG_DEFINITIONS): void {
@@ -84,5 +90,5 @@ export function validateKpiCatalogDefinitions(definitions: readonly KpiCatalogDe
     }
     ids.add(definition.id);
   }
-  if (ids.size !== 10) throw new TypeError('KPI_CATALOG_DEFINITIONS_INVALID');
+  if (ids.size !== 11) throw new TypeError('KPI_CATALOG_DEFINITIONS_INVALID');
 }

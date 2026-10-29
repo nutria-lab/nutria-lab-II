@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { BadRequestException, Body, Controller, Inject, InternalServerErrorException, Logger, Post, UseGuards } from '@nestjs/common';
 
 import { canonicalPayloadBytes } from './kpi-batch';
+import { ALL_KPI_IDS, isAdherenceEvidence, LEGACY_KPI_IDS } from './kpi-contract';
 import type { FrozenBatch, KpiEnvironment } from './kpi-contract';
 import type { KpiConfig } from './config/kpi-config';
 import { KPI_CONFIG } from './kpi.tokens';
@@ -15,11 +16,8 @@ const logger = new Logger('KpiPublicationController');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256 = /^[0-9a-f]{64}$/i;
 const TECHNICAL_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
-const KPI_IDS = new Set([
-  'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
-  'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
-]);
+const KPI_IDS = new Set<string>(ALL_KPI_IDS);
+const LEGACY_IDS = new Set<string>(LEGACY_KPI_IDS);
 
 @Controller('kpi/publications')
 @UseGuards(KpiInternalAuthGuard)
@@ -50,6 +48,9 @@ export class KpiPublicationController {
     const input = asRecord(body, 'KPI_PUBLICATION_REQUEST_INVALID');
     const runId = parseUuid(input.run_id);
     const batch = parseFrozenBatch(input.batch);
+    if (!batch.measurements.some(({ kpi_id }) => kpi_id === 'adherence_rate')) {
+      throw new BadRequestException('KPI_PUBLICATION_CURRENT_SET_REQUIRED');
+    }
     this.assertEnvironment(batch.context.environment);
     if (runId !== batch.context.run_id) throw new BadRequestException('KPI_PUBLICATION_CONTEXT_MISMATCH');
     const payload = canonicalPayloadBytes(batch.measurements);
@@ -154,12 +155,13 @@ function parseFrozenBatch(value: unknown): FrozenBatch {
   const runId = parseUuid(context.run_id);
   const expectedWindow = windowForDate(date);
   if (context.contract_version !== '1' || context.window_start !== expectedWindow.start.toISOString() ||
-    context.window_end !== expectedWindow.end.toISOString() || batch.measurements.length !== KPI_IDS.size ||
-    batch.diagnostics.length !== KPI_IDS.size) {
+    context.window_end !== expectedWindow.end.toISOString() || batch.measurements.length !== batch.diagnostics.length ||
+    !hasCurrentOrLegacyCardinality(batch.measurements.length)) {
     throw new BadRequestException('KPI_PUBLICATION_CONTEXT_INVALID');
   }
 
   const measurementIds = new Set<string>();
+  const measurementValues = new Map<string, number>();
   for (const raw of batch.measurements) {
     if (!isRecord(raw) || typeof raw.kpi_id !== 'string' || !KPI_IDS.has(raw.kpi_id) || measurementIds.has(raw.kpi_id) ||
       raw.date !== date || raw.env !== environment || raw.run_id !== runId ||
@@ -167,20 +169,35 @@ function parseFrozenBatch(value: unknown): FrozenBatch {
       throw new BadRequestException('KPI_PUBLICATION_MEASUREMENTS_INVALID');
     }
     measurementIds.add(raw.kpi_id);
+    measurementValues.set(raw.kpi_id, raw.value);
   }
-  if (!sameSet(measurementIds, KPI_IDS)) throw new BadRequestException('KPI_PUBLICATION_MEASUREMENTS_INVALID');
+  const expectedIds = sameSet(measurementIds, KPI_IDS) ? KPI_IDS : LEGACY_IDS;
+  if (!sameSet(measurementIds, expectedIds)) throw new BadRequestException('KPI_PUBLICATION_MEASUREMENTS_INVALID');
 
   const diagnosticIds = new Set<string>();
   for (const raw of batch.diagnostics) {
-    if (!isRecord(raw) || typeof raw.kpi_id !== 'string' || !KPI_IDS.has(raw.kpi_id) || diagnosticIds.has(raw.kpi_id) ||
+    if (!isRecord(raw) || typeof raw.kpi_id !== 'string' || !expectedIds.has(raw.kpi_id) || diagnosticIds.has(raw.kpi_id) ||
       (raw.quality !== 'observed' && raw.quality !== 'defaulted') ||
       !(raw.reason === null || (typeof raw.reason === 'string' && TECHNICAL_CODE.test(raw.reason))) ||
       !Number.isInteger(raw.sample_count) || (raw.sample_count as number) < 0) {
       throw new BadRequestException('KPI_PUBLICATION_DIAGNOSTICS_INVALID');
     }
+    if (raw.evidence !== undefined) {
+      if (raw.kpi_id !== 'adherence_rate' || !isAdherenceEvidence(raw.evidence) ||
+        raw.evidence.environment !== environment || raw.sample_count !== (raw.evidence.denominator ?? 0) ||
+        raw.quality !== (raw.evidence.quality === 'unavailable' ? 'defaulted' : 'observed') ||
+        raw.reason !== raw.evidence.reason ||
+        measurementValues.get('adherence_rate') !== (raw.evidence.quality === 'observed'
+          ? (100 * raw.evidence.numerator!) / raw.evidence.denominator!
+          : 0)) {
+        throw new BadRequestException('KPI_PUBLICATION_DIAGNOSTICS_INVALID');
+      }
+    } else if (raw.kpi_id === 'adherence_rate' && expectedIds === KPI_IDS) {
+      throw new BadRequestException('KPI_PUBLICATION_DIAGNOSTICS_INVALID');
+    }
     diagnosticIds.add(raw.kpi_id);
   }
-  if (!sameSet(diagnosticIds, KPI_IDS)) throw new BadRequestException('KPI_PUBLICATION_DIAGNOSTICS_INVALID');
+  if (!sameSet(diagnosticIds, expectedIds)) throw new BadRequestException('KPI_PUBLICATION_DIAGNOSTICS_INVALID');
 
   return batch as unknown as FrozenBatch;
 }
@@ -221,6 +238,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sameSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
   return left.size === right.size && [...right].every(value => left.has(value));
+}
+
+function hasCurrentOrLegacyCardinality(size: number): boolean {
+  return size === KPI_IDS.size || size === LEGACY_IDS.size;
 }
 
 function serialize(record: PublicationRecord) {
