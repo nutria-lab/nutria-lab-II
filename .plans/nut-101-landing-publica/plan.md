@@ -8,10 +8,11 @@ Generado: 2026-10-28 · Base: `main` @ 6bdf082
 |---|---|---|
 | `apps/web/src/app/App.tsx` | `App` pasa a tener `<Routes>`: `/` → `LandingPage`; `*` → `AccessGateBoundary` + `AuthenticatedApp`. Se elimina el `Navigate` de `/` a `/goals` dentro de `ProtectedApp`. | NUT-101. NUT-97 modifica después sólo el destino por defecto del login (`LoginRoute`) sobre este archivo ya mergeado. Orden de merge: NUT-101 → NUT-97. |
 | `apps/web/src/modules/landing/pages/LandingPage.tsx` | Nuevo. Página estática, mobile first con breakpoints `md`/`lg`, con su propio `header` sticky. | NUT-101 |
+| `apps/web/src/modules/landing/components/WeekPreview.tsx` | Nuevo. Ilustración decorativa de "Tu semana" (plan semanal + teléfono) con contenido de ejemplo fijo, sin imágenes ni datos de usuario. | NUT-101 |
 | `apps/web/src/index.css` | Regla `html:has(.landing-page)` con `scroll-padding-top`, activa sólo mientras la landing está montada. | NUT-101 (la regla) |
 | `apps/web/src/common/components/BrandMark.tsx` | Variante nueva `header` (mismos assets que `auth`, compacta, sin `mb-6`). Cambio sólo aditivo: `auth` y `app` no cambian. | Componente común; la variante `header` es de NUT-101. |
 | `apps/web/src/common/components/tests/BrandMark.test.tsx` | Test de la variante `header`. | NUT-101 |
-| `apps/web/src/modules/landing/pages/tests/LandingPage.test.tsx` | Nuevo. Semántica, enlaces, aria y carga diferida de la imagen del cierre. | NUT-101 |
+| `apps/web/src/modules/landing/pages/tests/LandingPage.test.tsx` | Nuevo. Semántica, enlaces, aria, carga diferida de la imagen del cierre y la sección "Tu semana" (posición, `aria-hidden`, sin interactivos ni cifras). | NUT-101 |
 | `apps/web/src/app/tests/App.test.tsx` | Nuevo `describe('App public landing')`: `/` sin sesión y con sesión, gate, CTAs. | NUT-101 |
 
 ## Reutilizado sin modificar

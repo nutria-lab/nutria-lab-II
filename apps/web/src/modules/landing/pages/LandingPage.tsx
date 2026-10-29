@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 
 import nutriaIsotype from '../../../assets/nutria-isotype.png';
 import { BrandMark } from '../../../common/components/BrandMark';
+import { WeekPreview } from '../components/WeekPreview';
 import {
   FOCUS_VISIBLE_CLASSES,
   PRIMARY_CTA_CLASSES,
@@ -122,6 +123,22 @@ export function LandingPage() {
               </li>
             ))}
           </ol>
+        </section>
+
+        <section aria-labelledby="landing-preview-title" className="border-t border-outline-variant/40 py-10 md:py-16 lg:py-20">
+          <div className="mb-8 text-center md:mb-12">
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-widest text-brand-green-dark">Vista previa</p>
+            <h2 id="landing-preview-title" className="font-headline text-2xl font-bold text-on-surface md:text-4xl">
+              Tu semana, más fácil de visualizar
+            </h2>
+            <p className="mt-2 text-sm text-on-surface-variant md:text-base">
+              Plan de comidas y lista de compras en un solo lugar.
+            </p>
+          </div>
+          <p className="sr-only">
+            Vista previa ilustrativa con un plan semanal de ejemplo y la pantalla de inicio de la app en un teléfono.
+          </p>
+          <WeekPreview />
         </section>
 
         <section aria-labelledby="landing-closing-title" className="flex flex-col items-center gap-6 py-12 text-center md:py-20">

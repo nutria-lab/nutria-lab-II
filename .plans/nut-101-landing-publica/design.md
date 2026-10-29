@@ -7,7 +7,7 @@ La ruta `/` muestra una landing estática y pública. Se resuelve en el router a
 ## Alcance
 
 - Mobile first. Tablet desde `md` (768px) y desktop desde `lg` (1024px), con contenido limitado a 72rem y centrado.
-- Fuera de alcance: la sección "Tu semana" y cualquier mockup de producto, que esperan aprobación del PO.
+- La sección "Tu semana" (vista previa del plan y de la app en un teléfono) es una ilustración con contenido de ejemplo y queda sujeta a la aprobación del PO.
 
 ## Arquitectura y flujo
 
@@ -22,8 +22,12 @@ La ruta `/` muestra una landing estática y pública. Se resuelve en el router a
 1. **Encabezado** (`header` sticky): la misma marca oficial que la pantalla del gate de acceso (logotipo "nutria" + isotipo), en tamaño compacto, y el enlace "Iniciar sesión" → `/login`.
 2. **Hero** (centrado): isotipo chico decorativo (asset local; el PNG ya incluye su propio círculo), título `h1`, subtítulo, botón "Crear cuenta" → `/register` a ancho completo, y el texto "¿Ya tenés cuenta?" con el enlace "Iniciá sesión" → `/login`.
 3. **Cómo funciona**: antetítulo "Paso a paso", `h2` y una lista ordenada de 3 pasos en tarjetas (`h3` + descripción). El numeral visual 01/02/03 es decorativo (`aria-hidden`); el orden lo da la lista.
-4. **Cierre** (`h2`): isotipo decorativo con carga diferida (`loading="lazy"`, `decoding="async"`; el del hero carga normal porque está en la primera pantalla), "Crear cuenta" → `/register` a ancho completo y "¿Ya tenés cuenta? Iniciá sesión" → `/login`, igual que en el hero.
-5. **Footer**: "© {año} NutrIA".
+4. **Tu semana**: antetítulo "Vista previa", `h2` "Tu semana, más fácil de visualizar" y subtítulo. Debajo, una ilustración hecha con estilos Terra (sin imágenes):
+   - **Plan semanal**: días Lun–Dom con el lunes seleccionado y tres comidas de ejemplo (Desayuno, Almuerzo, Cena) con un ícono por tipo de comida, nombre y tiempo de preparación.
+   - **Teléfono**: la pantalla de inicio de la app con el saludo genérico "Hola", "Progreso semanal" con barra y días sin porcentaje, "Siguiente comida por registrar" con nombre y tiempo, y el acceso "Ver mi plan semanal".
+   - Toda la ilustración es `aria-hidden` y no tiene elementos interactivos: los días, flechas y accesos son decorativos. Un texto `sr-only` la describe. No muestra porcentajes, calorías ni nombres de personas.
+5. **Cierre** (`h2`): isotipo decorativo con carga diferida (`loading="lazy"`, `decoding="async"`; el del hero carga normal porque está en la primera pantalla), "Crear cuenta" → `/register` a ancho completo y "¿Ya tenés cuenta? Iniciá sesión" → `/login`, igual que en el hero.
+6. **Footer**: "© {año} NutrIA".
 
 ## Composición (tablet y desktop, `md`+)
 
@@ -31,8 +35,9 @@ La ruta `/` muestra una landing estática y pública. Se resuelve en el router a
 - **Hero**: dos columnas. A la izquierda, alineados a la izquierda, el título, el subtítulo y las acciones. A la derecha, el isotipo grande (256px en `md`, 320px en `lg`) sobre un círculo crema.
 - **Acciones** (hero y cierre): "Crear cuenta" con ancho propio y "¿Ya tenés cuenta? Iniciá sesión" al lado, en la misma fila. En el hero se alinean a la izquierda y en el cierre se centran.
 - **Cómo funciona**: las 3 tarjetas en 3 columnas.
+- **Tu semana**: el plan semanal a la izquierda y el teléfono a la derecha. En móvil, el teléfono va debajo del plan y las flechas de los días no se muestran.
 
-Sin sidebar, bottom navigation, carrusel, formularios, imágenes remotas ni animaciones.
+Sin sidebar, bottom navigation, carrusel, formularios, fotos, imágenes remotas ni animaciones.
 
 ## Estados
 
@@ -59,6 +64,9 @@ La página no tiene estados de datos: no recibe props, no hace fetch y no tiene 
 | Paso 2 | Armá tu plan — Obtené un plan semanal de comidas y recetas. |
 | Paso 3 | Organizá y registrá — Prepará tu lista de compras y registrá lo que comés. |
 | Antetítulo | Paso a paso |
+| Tu semana | Vista previa · Tu semana, más fácil de visualizar · Plan de comidas y lista de compras en un solo lugar. |
+| Tu semana (ejemplo) | Avena con frutas y semillas (10 min) · Bowl de quinoa con pollo y verduras (25 min) · Pasta integral con brócoli y champiñones (20 min) |
+| Tu semana (teléfono) | Reutiliza textos del dashboard: Hola · Hoy es un buen día para nutrirte. · Progreso semanal · Siguiente comida por registrar · Ver mi plan semanal · Revisá las comidas de la semana |
 | Cierre | Empezá a organizar tu semana |
 | CTAs | Crear cuenta · Iniciar sesión · ¿Ya tenés cuenta? Iniciá sesión |
 
@@ -72,6 +80,7 @@ Los textos usan voseo, igual que login y registro ("Iniciá sesión", "Registrat
 4. En la landing no hay landmarks de navegación de la app (ni sidebar ni bottom nav).
 5. `/dashboard` sin sesión sigue redirigiendo a `/login`, y las rutas no públicas siguen exigiendo el gate de acceso cuando es requerido.
 6. Hay un solo `h1`, los numerales son `aria-hidden` y los 3 pasos están en una lista ordenada.
+7. "Tu semana" va entre "Cómo funciona" y el cierre; su ilustración es `aria-hidden`, está descrita con texto `sr-only`, no tiene elementos interactivos ni encabezados y no muestra porcentajes, calorías ni nombres de personas.
 
 ## Base de datos y migraciones
 
