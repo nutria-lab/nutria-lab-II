@@ -62,7 +62,11 @@ export class ShoppingListRepository {
         select: { itemKey: true, checked: true },
       }) : [];
       return { plan, checks };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+      maxWait: 10_000,
+      timeout: 10_000,
+    });
   }
 
   async setChecked(userId: string, itemKey: string, input: ShoppingListItemCheckDto): Promise<void> {
