@@ -523,7 +523,7 @@ export class PlansRepository {
     return this.prisma.generationRun.findFirst({ where: { id, userId } });
   }
 
-  // Busca el plan sólo por id (sin filtrar por usuario) para poder distinguir 403 de 404.
+  // Busca el plan por id; el servicio verifica el dueño y enmascara planes ajenos como 404.
   async findPlanWithMeals(planId: string) {
     return this.prisma.mealPlan.findUnique({
       where: { id: planId },
