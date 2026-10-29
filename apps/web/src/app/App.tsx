@@ -13,6 +13,7 @@ import { MealPlanPage } from '../modules/meal-plan/pages/MealPlanPage';
 import { RecipeDetailPage } from '../modules/recipes/pages/RecipeDetailPage';
 import { RecipesListPage } from '../modules/recipes/pages/RecipesListPage';
 import { RecipeGenerationPage } from '../modules/recipes/generation/RecipeGenerationPage';
+import { ShoppingListPage } from '../modules/shopping-list/pages/ShoppingListPage';
 
 function LoginRoute() {
   const { status: authStatus, login } = useAuth();
@@ -85,7 +86,7 @@ function AuthenticatedApp() {
               <Route path="/recipes" element={<RecipesListPage />} />
               <Route path="/recipes/generate" element={<RecipeGenerationPage />} />
               <Route path="/recipes/:id" element={<RecipeDetailPage inLayout />} />
-              <Route path="/shopping-list" element={<PlaceholderPage title="Shopping List" />} />
+              <Route path="/shopping-list" element={<ShoppingListPage />} />
               <Route path="/goals" element={<PreferencesPage />} />
             </Routes>
           </ProtectedApp>
