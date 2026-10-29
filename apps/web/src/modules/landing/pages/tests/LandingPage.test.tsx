@@ -86,6 +86,7 @@ describe('LandingPage', () => {
     const preview = screen.getByRole('region', { name: 'Tu semana, más fácil de visualizar' });
     const closing = screen.getByRole('region', { name: 'Empezá a organizar tu semana' });
 
+    expect(within(preview).getByText('Así se ve tu plan de comidas en NutrIA.')).toBeVisible();
     expect(howItWorks.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(preview.compareDocumentPosition(closing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });

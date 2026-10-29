@@ -14,8 +14,13 @@ const COMPLETED_PROGRESS_DAYS = 4;
 
 const CARD_CLASSES = 'rounded-3xl border border-outline-variant/30 bg-white shadow-[0_4px_20px_rgba(46,50,48,0.06)]';
 
-function Icon({ name, className = '' }: { name: string; className?: string }) {
-  return <span className={`material-symbols-outlined ${className}`}>{name}</span>;
+// Sizes go through `style` like the rest of the app: the global `.material-symbols-outlined` rule overrides text-* classes.
+function Icon({ name, size = 20, className = '' }: { name: string; size?: number; className?: string }) {
+  return (
+    <span className={`material-symbols-outlined ${className}`} style={{ fontSize: `${size}px` }}>
+      {name}
+    </span>
+  );
 }
 
 function WeeklyPlanCard() {
@@ -23,14 +28,14 @@ function WeeklyPlanCard() {
     <div className={`${CARD_CLASSES} w-full p-5 md:p-7`}>
       <div className="mb-5 flex items-center gap-3">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-container text-brand-green">
-          <Icon name="calendar_month" className="text-xl" />
+          <Icon name="calendar_month" />
         </span>
         <p className="font-headline text-xl font-bold text-on-surface">Plan semanal</p>
       </div>
 
       <div className="mb-4 flex items-center gap-1.5">
         <span className="hidden h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-container text-on-surface-variant md:flex">
-          <Icon name="chevron_left" className="text-lg" />
+          <Icon name="chevron_left" size={18} />
         </span>
         <div className="grid flex-1 grid-cols-7 gap-1">
           {WEEK_DAYS.map((day, index) => (
@@ -45,7 +50,7 @@ function WeeklyPlanCard() {
           ))}
         </div>
         <span className="hidden h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-container text-on-surface-variant md:flex">
-          <Icon name="chevron_right" className="text-lg" />
+          <Icon name="chevron_right" size={18} />
         </span>
       </div>
 
@@ -59,15 +64,15 @@ function WeeklyPlanCard() {
               {meal.type}
             </span>
             <span className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl bg-surface-container text-brand-green [grid-area:icon] md:h-16 md:w-16">
-              <Icon name={meal.icon} className="text-2xl" />
+              <Icon name={meal.icon} size={30} />
             </span>
             <span className="text-sm font-semibold leading-snug text-on-surface [grid-area:name] md:text-base">{meal.name}</span>
             <span className="flex items-center gap-1 text-xs font-semibold text-brand-green-dark [grid-area:time]">
-              <Icon name="schedule" className="text-sm" />
+              <Icon name="schedule" size={14} />
               {meal.minutes} min
             </span>
             <span className="text-on-surface-variant [grid-area:chevron]">
-              <Icon name="chevron_right" className="text-xl" />
+              <Icon name="chevron_right" />
             </span>
           </li>
         ))}
@@ -78,16 +83,16 @@ function WeeklyPlanCard() {
 
 function PhoneMockup() {
   return (
-    <div className="mx-auto w-64 shrink-0 rounded-[2.5rem] border-[10px] border-on-surface bg-on-surface shadow-[0_24px_48px_rgba(46,50,48,0.18)]">
+    <div className="mx-auto hidden w-64 shrink-0 rounded-[2.5rem] md:block border-[10px] border-on-surface bg-on-surface shadow-[0_24px_48px_rgba(46,50,48,0.18)]">
       <div className="flex h-[30rem] flex-col gap-4 overflow-hidden rounded-[1.9rem] bg-brand-cream px-4 py-5">
         <div className="flex items-center justify-between">
           <span className="font-headline text-sm font-bold text-brand-green">NutrIA</span>
           <span className="flex items-center gap-1.5">
             <span className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-surface-container text-on-surface-variant">
-              <Icon name="notifications" className="text-base" />
+              <Icon name="notifications" size={16} />
             </span>
             <span className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-primary-fixed text-brand-green-dark">
-              <Icon name="person" className="text-base" />
+              <Icon name="person" size={16} />
             </span>
           </span>
         </div>
@@ -111,7 +116,7 @@ function PhoneMockup() {
                     index < COMPLETED_PROGRESS_DAYS ? 'bg-brand-green text-on-primary' : 'bg-surface-container-high'
                   }`}
                 >
-                  {index < COMPLETED_PROGRESS_DAYS && <Icon name="check" className="text-xs" />}
+                  {index < COMPLETED_PROGRESS_DAYS && <Icon name="check" size={12} />}
                 </span>
               </span>
             ))}
@@ -127,12 +132,12 @@ function PhoneMockup() {
           </div>
           <div className="flex items-center gap-3 rounded-2xl bg-white p-3 shadow-[0_4px_20px_rgba(46,50,48,0.06)]">
             <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container text-brand-green">
-              <Icon name="rice_bowl" className="text-2xl" />
+              <Icon name="rice_bowl" size={24} />
             </span>
             <span className="min-w-0">
               <span className="block text-xs font-semibold leading-snug text-on-surface">Bowl de quinoa con pollo y verduras</span>
               <span className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-brand-green-dark">
-                <Icon name="schedule" className="text-xs" />
+                <Icon name="schedule" size={12} />
                 25 min
               </span>
             </span>
@@ -141,13 +146,13 @@ function PhoneMockup() {
 
         <div className="mt-auto flex items-center gap-3 rounded-2xl bg-primary-fixed/50 p-3">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-brand-green text-on-primary">
-            <Icon name="calendar_month" className="text-base" />
+            <Icon name="calendar_month" size={16} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-[11px] font-semibold text-on-surface">Ver mi plan semanal</span>
             <span className="block text-[9px] text-on-surface-variant">Revisá las comidas de la semana</span>
           </span>
-          <Icon name="chevron_right" className="text-base text-on-surface-variant" />
+          <Icon name="chevron_right" size={16} className="text-on-surface-variant" />
         </div>
       </div>
     </div>

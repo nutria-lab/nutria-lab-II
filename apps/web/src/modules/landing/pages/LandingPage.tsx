@@ -132,11 +132,11 @@ export function LandingPage() {
               Tu semana, más fácil de visualizar
             </h2>
             <p className="mt-2 text-sm text-on-surface-variant md:text-base">
-              Plan de comidas y lista de compras en un solo lugar.
+              Así se ve tu plan de comidas en NutrIA.
             </p>
           </div>
           <p className="sr-only">
-            Vista previa ilustrativa con un plan semanal de ejemplo y la pantalla de inicio de la app en un teléfono.
+            Vista previa ilustrativa con un plan semanal de ejemplo y, en pantallas medianas o más grandes, la pantalla de inicio de la app en un teléfono.
           </p>
           <WeekPreview />
         </section>
