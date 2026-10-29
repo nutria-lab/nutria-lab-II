@@ -2,7 +2,6 @@ import 'reflect-metadata';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   NotFoundException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -91,11 +90,11 @@ describe('MealPlanRegenerationService - dueño, perfil y plan current (NUT-78)',
     expect(repository.createOrRecoverGenerationRun).not.toHaveBeenCalled();
   });
 
-  it('403 si el plan es de otro usuario, sin crear un run', async () => {
+  it('404 si el plan pertenece a otro usuario, sin crear un run', async () => {
     const { repository, regenerate } = setup();
     repository.findPlanWithMeals.mockResolvedValue(currentPlan({ userId: 'otro' }));
 
-    await expect(regenerate()).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(regenerate()).rejects.toBeInstanceOf(NotFoundException);
     expect(repository.createOrRecoverGenerationRun).not.toHaveBeenCalled();
   });
 

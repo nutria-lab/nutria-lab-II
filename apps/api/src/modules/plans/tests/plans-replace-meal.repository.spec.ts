@@ -42,7 +42,7 @@ const baseWrite = {
 };
 
 describe('PlansRepository.findPlanWithMeals (NUT-77)', () => {
-  it('busca sólo por id, sin filtrar por usuario (para poder distinguir 403 de 404)', async () => {
+  it('busca por id para que el servicio aplique su política de privacidad al verificar el dueño', async () => {
     const { repository, prisma } = setup();
 
     await repository.findPlanWithMeals('plan-1');
