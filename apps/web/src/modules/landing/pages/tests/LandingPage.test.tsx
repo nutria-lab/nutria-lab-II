@@ -54,7 +54,7 @@ describe('LandingPage', () => {
     for (const link of loginLinks) expect(link).toHaveAttribute('href', '/login');
   });
 
-  it('keeps the brand header and closing section and renders no app navigation, forms or remote images', () => {
+  it('renders the brand header, the closing section and the footer', () => {
     renderLanding();
 
     const banner = screen.getByRole('banner');
@@ -64,6 +64,24 @@ describe('LandingPage', () => {
     );
     expect(screen.getByRole('heading', { level: 2, name: 'Empezá a organizar tu semana' })).toBeVisible();
     expect(screen.getByRole('contentinfo')).toHaveTextContent('NutrIA');
+  });
+
+  it('loads the closing isotype lazily while the hero isotype loads eagerly', () => {
+    renderLanding();
+
+    const heroIsotype = screen.getByRole('heading', { level: 1 }).parentElement!.querySelector('img')!;
+    const closingIsotype = screen
+      .getByRole('heading', { level: 2, name: 'Empezá a organizar tu semana' })
+      .parentElement!.querySelector('img')!;
+
+    expect(heroIsotype).not.toHaveAttribute('loading');
+    expect(closingIsotype).toHaveAttribute('loading', 'lazy');
+    expect(closingIsotype).toHaveAttribute('decoding', 'async');
+  });
+
+  it('renders no app navigation, forms or remote images', () => {
+    renderLanding();
+
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(document.querySelector('form')).toBeNull();
     for (const image of Array.from(document.querySelectorAll('img'))) {

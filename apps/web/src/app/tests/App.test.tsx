@@ -492,6 +492,26 @@ describe('App public landing', () => {
     expect(requestedUrls).toEqual([]);
   });
 
+  it('shows the landing at / to a person with an active session instead of redirecting into the app', async () => {
+    const requestedUrls: Array<string | undefined> = [];
+    apiClient.defaults.adapter = async (config) => {
+      requestedUrls.push(config.url);
+      return response(config, authenticatedUser);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(requestedUrls).toEqual([]);
+  });
+
   it('shows the landing at / even when the access gate would be required for the app', async () => {
     apiClient.defaults.adapter = async (config) => {
       throw failedResponse(config, 401);

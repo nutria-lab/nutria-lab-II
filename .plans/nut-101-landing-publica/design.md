@@ -20,9 +20,9 @@ La ruta `/` muestra una landing estática y pública. Se resuelve en el router a
 ## Composición (móvil)
 
 1. **Encabezado** (`header` sticky): la misma marca oficial que la pantalla del gate de acceso (logotipo "nutria" + isotipo), en tamaño compacto, y el enlace "Iniciar sesión" → `/login`.
-2. **Hero** (centrado): isotipo chico decorativo (asset local, dentro de un círculo), título `h1`, subtítulo, botón "Crear cuenta" → `/register` a ancho completo, y el texto "¿Ya tenés cuenta?" con el enlace "Iniciá sesión" → `/login`.
+2. **Hero** (centrado): isotipo chico decorativo (asset local; el PNG ya incluye su propio círculo), título `h1`, subtítulo, botón "Crear cuenta" → `/register` a ancho completo, y el texto "¿Ya tenés cuenta?" con el enlace "Iniciá sesión" → `/login`.
 3. **Cómo funciona**: antetítulo "Paso a paso", `h2` y una lista ordenada de 3 pasos en tarjetas (`h3` + descripción). El numeral visual 01/02/03 es decorativo (`aria-hidden`); el orden lo da la lista.
-4. **Cierre** (`h2`): isotipo decorativo, "Crear cuenta" → `/register` a ancho completo y "¿Ya tenés cuenta? Iniciá sesión" → `/login`, igual que en el hero.
+4. **Cierre** (`h2`): isotipo decorativo con carga diferida (`loading="lazy"`, `decoding="async"`; el del hero carga normal porque está en la primera pantalla), "Crear cuenta" → `/register` a ancho completo y "¿Ya tenés cuenta? Iniciá sesión" → `/login`, igual que en el hero.
 5. **Footer**: "© {año} NutrIA".
 
 ## Composición (tablet y desktop, `md`+)
@@ -43,6 +43,9 @@ La página no tiene estados de datos: no recibe props, no hace fetch y no tiene 
 - Un solo `h1`; `h2` por sección y `h3` por paso.
 - Foco visible en todos los enlaces (anillo verde Terra).
 - Áreas táctiles de al menos 44px de alto.
+- El encabezado tiene alto mínimo, no fijo, y sus enlaces no se parten en dos líneas, para soportar el zoom de texto.
+- El foco nunca queda tapado por el encabezado sticky (`scroll-padding-top` de 5rem mientras la landing está montada).
+- Si la fuente de íconos no carga, el texto del ícono queda recortado dentro de su círculo.
 - Contraste: texto verde Terra sobre crema (4,52:1), antetítulo en verde oscuro (≥ 7:1), blanco sobre verde (4,86:1), gris de cuerpo sobre blanco o crema (≥ 7,5:1). Los numerales son decorativos.
 - Sin overflow horizontal a 360px, 390px, 768px y 1280px.
 

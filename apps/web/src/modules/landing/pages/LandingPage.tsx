@@ -28,21 +28,24 @@ const STEPS = [
 ] as const;
 
 // The isotype PNG already draws its own circle with transparent margin, so it is not wrapped in another one.
-function Isotype({ sizeClasses }: { sizeClasses: string }) {
+// Only below-the-fold copies defer loading; the hero copy is part of the first screen.
+function Isotype({ className, deferred = false }: { className: string; deferred?: boolean }) {
   return (
     <img
       alt=""
       aria-hidden="true"
-      className={`object-contain ${sizeClasses}`}
+      className={`object-contain ${className}`}
+      decoding={deferred ? 'async' : undefined}
       height="2048"
+      loading={deferred ? 'lazy' : undefined}
       src={nutriaIsotype}
       width="2048"
     />
   );
 }
 
-function SignUpActions({ desktopAlignment }: { desktopAlignment: 'start' | 'center' }) {
-  const alignment = desktopAlignment === 'start' ? 'md:justify-start' : 'md:justify-center';
+function SignUpActions({ mdAlignment }: { mdAlignment: 'start' | 'center' }) {
+  const alignment = mdAlignment === 'start' ? 'md:justify-start' : 'md:justify-center';
   return (
     <div className={`flex w-full flex-col items-center gap-2 md:flex-row md:gap-4 ${alignment}`}>
       <Link to="/register" className={`${PRIMARY_CTA_CLASSES} w-full md:w-auto md:px-8`}>
@@ -60,15 +63,16 @@ function SignUpActions({ desktopAlignment }: { desktopAlignment: 'start' | 'cent
 
 export function LandingPage() {
   return (
-    <div className="flex min-h-dvh flex-col bg-brand-cream">
-      <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-outline-variant/30 bg-brand-cream/90 px-6 backdrop-blur-md md:h-20 lg:px-[max(1.5rem,calc((100%-72rem)/2+1.5rem))]">
+    <div className="landing-page flex min-h-dvh flex-col bg-brand-cream">
+      <header className="sticky top-0 z-50 flex min-h-16 items-center justify-between gap-3 border-b border-outline-variant/30 bg-brand-cream/90 px-6 py-2 backdrop-blur-md md:min-h-20 lg:px-[max(1.5rem,calc((100%-72rem)/2+1.5rem))]">
         <BrandMark variant="header" />
         <div className="flex items-center gap-3">
-          <Link to="/login" className={TEXT_LINK_CLASSES}>
+          <Link to="/login" className={`${TEXT_LINK_CLASSES} whitespace-nowrap`}>
             Iniciar sesión
           </Link>
+          {/* The wrapper owns the display toggle: PRIMARY_CTA_CLASSES sets inline-flex, which would compete with `hidden` on the link itself. */}
           <span className="hidden md:block">
-            <Link to="/register" className={PRIMARY_CTA_CLASSES}>
+            <Link to="/register" className={`${PRIMARY_CTA_CLASSES} whitespace-nowrap`}>
               Crear cuenta
             </Link>
           </span>
@@ -77,7 +81,7 @@ export function LandingPage() {
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6">
         <section className="flex flex-col items-center gap-4 pb-12 pt-8 text-center md:grid md:grid-cols-[minmax(0,1fr)_auto] md:content-center md:items-center md:gap-x-10 md:py-16 md:text-left lg:gap-x-16 lg:py-24">
-          <Isotype sizeClasses="h-24 w-24 -my-3 md:col-start-2 md:row-span-3 md:row-start-1 md:my-0 md:h-64 md:w-64 md:rounded-full md:bg-surface-container md:p-2 lg:h-80 lg:w-80 lg:p-3" />
+          <Isotype className="h-24 w-24 -my-3 md:col-start-2 md:row-span-3 md:row-start-1 md:my-0 md:h-64 md:w-64 md:rounded-full md:bg-surface-container md:p-2 lg:h-80 lg:w-80 lg:p-3" />
           <h1 className="font-headline text-3xl font-bold leading-tight text-on-surface md:col-start-1 md:text-5xl lg:text-6xl">
             Planificá tus comidas, recetas y compras en un solo lugar
           </h1>
@@ -85,7 +89,7 @@ export function LandingPage() {
             NutrIA te ayuda a armar tu plan semanal según tus preferencias y a organizar tu lista de compras.
           </p>
           <div className="w-full md:col-start-1">
-            <SignUpActions desktopAlignment="start" />
+            <SignUpActions mdAlignment="start" />
           </div>
         </section>
 
@@ -105,7 +109,7 @@ export function LandingPage() {
                 <div className="mb-4 flex items-center justify-between">
                   <span
                     aria-hidden="true"
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-container text-brand-green"
+                    className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-surface-container text-brand-green"
                   >
                     <span className="material-symbols-outlined text-xl">{step.icon}</span>
                   </span>
@@ -121,11 +125,11 @@ export function LandingPage() {
         </section>
 
         <section aria-labelledby="landing-closing-title" className="flex flex-col items-center gap-6 py-12 text-center md:py-20">
-          <Isotype sizeClasses="h-20 w-20 -my-3" />
+          <Isotype className="h-20 w-20 -my-3" deferred />
           <h2 id="landing-closing-title" className="font-headline text-2xl font-bold leading-tight text-on-surface md:text-4xl">
             Empezá a organizar tu semana
           </h2>
-          <SignUpActions desktopAlignment="center" />
+          <SignUpActions mdAlignment="center" />
         </section>
       </main>
 
