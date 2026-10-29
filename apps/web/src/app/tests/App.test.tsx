@@ -485,7 +485,7 @@ describe('App public landing', () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole('heading', { level: 1, name: /planifica tus comidas/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
     await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/));
     expect(screen.queryByRole('status', { name: /comprobando/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
@@ -499,7 +499,7 @@ describe('App public landing', () => {
 
     renderApp('/', { required: true, unlocked: false });
 
-    expect(await screen.findByRole('heading', { level: 1, name: /planifica tus comidas/i })).toBeVisible();
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
     expect(screen.queryByRole('heading', { name: /acceso/i })).not.toBeInTheDocument();
   });
 
@@ -511,7 +511,7 @@ describe('App public landing', () => {
     renderApp('/dashboard', { required: true, unlocked: false });
 
     expect(await screen.findByRole('heading', { level: 1 })).toHaveAttribute('id', 'access-gate-title');
-    expect(screen.queryByRole('heading', { name: /planifica tus comidas/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /planificá tus comidas/i })).not.toBeInTheDocument();
   });
 
   it.each([

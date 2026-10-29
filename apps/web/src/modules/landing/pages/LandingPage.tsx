@@ -41,10 +41,11 @@ function Isotype({ sizeClasses }: { sizeClasses: string }) {
   );
 }
 
-function SignUpActions() {
+function SignUpActions({ desktopAlignment }: { desktopAlignment: 'start' | 'center' }) {
+  const alignment = desktopAlignment === 'start' ? 'md:justify-start' : 'md:justify-center';
   return (
-    <div className="flex w-full flex-col items-center gap-2">
-      <Link to="/register" className={`${PRIMARY_CTA_CLASSES} w-full`}>
+    <div className={`flex w-full flex-col items-center gap-2 md:flex-row md:gap-4 ${alignment}`}>
+      <Link to="/register" className={`${PRIMARY_CTA_CLASSES} w-full md:w-auto md:px-8`}>
         Crear cuenta
       </Link>
       <p className="flex flex-wrap items-center justify-center text-sm text-on-surface-variant">
@@ -60,33 +61,42 @@ function SignUpActions() {
 export function LandingPage() {
   return (
     <div className="flex min-h-dvh flex-col bg-brand-cream">
-      <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-outline-variant/30 bg-brand-cream/90 px-6 backdrop-blur-md">
+      <header className="sticky top-0 z-50 flex h-16 items-center justify-between border-b border-outline-variant/30 bg-brand-cream/90 px-6 backdrop-blur-md md:h-20 lg:px-[max(1.5rem,calc((100%-72rem)/2+1.5rem))]">
         <BrandMark variant="header" />
-        <Link to="/login" className={TEXT_LINK_CLASSES}>
-          Iniciar sesión
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link to="/login" className={TEXT_LINK_CLASSES}>
+            Iniciar sesión
+          </Link>
+          <span className="hidden md:block">
+            <Link to="/register" className={PRIMARY_CTA_CLASSES}>
+              Crear cuenta
+            </Link>
+          </span>
+        </div>
       </header>
 
-      <main className="flex flex-1 flex-col px-6">
-        <section className="flex flex-col items-center gap-4 pb-12 pt-8 text-center">
-          <Isotype sizeClasses="h-24 w-24 -my-3" />
-          <h1 className="font-headline text-3xl font-bold leading-tight text-on-surface">
-            Planifica tus comidas, recetas y compras en un solo lugar
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6">
+        <section className="flex flex-col items-center gap-4 pb-12 pt-8 text-center md:grid md:grid-cols-[minmax(0,1fr)_auto] md:content-center md:items-center md:gap-x-10 md:py-16 md:text-left lg:gap-x-16 lg:py-24">
+          <Isotype sizeClasses="h-24 w-24 -my-3 md:col-start-2 md:row-span-3 md:row-start-1 md:my-0 md:h-64 md:w-64 md:rounded-full md:bg-surface-container md:p-2 lg:h-80 lg:w-80 lg:p-3" />
+          <h1 className="font-headline text-3xl font-bold leading-tight text-on-surface md:col-start-1 md:text-5xl lg:text-6xl">
+            Planificá tus comidas, recetas y compras en un solo lugar
           </h1>
-          <p className="mb-2 text-sm leading-relaxed text-on-surface-variant">
+          <p className="mb-2 text-sm leading-relaxed text-on-surface-variant md:col-start-1 md:max-w-xl md:text-base lg:text-lg">
             NutrIA te ayuda a armar tu plan semanal según tus preferencias y a organizar tu lista de compras.
           </p>
-          <SignUpActions />
+          <div className="w-full md:col-start-1">
+            <SignUpActions desktopAlignment="start" />
+          </div>
         </section>
 
-        <section aria-labelledby="landing-how-it-works-title" className="border-t border-outline-variant/40 py-10">
-          <div className="mb-8 text-center">
+        <section aria-labelledby="landing-how-it-works-title" className="border-t border-outline-variant/40 py-10 md:py-16 lg:py-20">
+          <div className="mb-8 text-center md:mb-12">
             <p className="mb-1.5 text-[11px] font-bold uppercase tracking-widest text-brand-green-dark">Paso a paso</p>
-            <h2 id="landing-how-it-works-title" className="font-headline text-2xl font-bold text-on-surface">
+            <h2 id="landing-how-it-works-title" className="font-headline text-2xl font-bold text-on-surface md:text-4xl">
               Cómo funciona
             </h2>
           </div>
-          <ol className="flex flex-col gap-4">
+          <ol className="flex flex-col gap-4 md:grid md:grid-cols-3 lg:gap-6">
             {STEPS.map((step, index) => (
               <li
                 key={step.title}
@@ -110,12 +120,12 @@ export function LandingPage() {
           </ol>
         </section>
 
-        <section aria-labelledby="landing-closing-title" className="flex flex-col items-center gap-6 py-12 text-center">
+        <section aria-labelledby="landing-closing-title" className="flex flex-col items-center gap-6 py-12 text-center md:py-20">
           <Isotype sizeClasses="h-20 w-20 -my-3" />
-          <h2 id="landing-closing-title" className="font-headline text-2xl font-bold leading-tight text-on-surface">
+          <h2 id="landing-closing-title" className="font-headline text-2xl font-bold leading-tight text-on-surface md:text-4xl">
             Empezá a organizar tu semana
           </h2>
-          <SignUpActions />
+          <SignUpActions desktopAlignment="center" />
         </section>
       </main>
 

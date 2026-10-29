@@ -18,7 +18,7 @@ describe('LandingPage', () => {
 
     const headings = screen.getAllByRole('heading', { level: 1 });
     expect(headings).toHaveLength(1);
-    expect(headings[0]).toHaveTextContent('Planifica tus comidas, recetas y compras en un solo lugar');
+    expect(headings[0]).toHaveTextContent('Planificá tus comidas, recetas y compras en un solo lugar');
   });
 
   it('lists the three how-it-works steps in order with decorative numerals hidden from assistive tech', () => {
@@ -42,8 +42,9 @@ describe('LandingPage', () => {
     renderLanding();
 
     const signUpLinks = screen.getAllByRole('link', { name: 'Crear cuenta' });
-    expect(signUpLinks).toHaveLength(2);
+    expect(signUpLinks).toHaveLength(3);
     for (const link of signUpLinks) expect(link).toHaveAttribute('href', '/register');
+    expect(within(screen.getByRole('banner')).getByRole('link', { name: 'Crear cuenta' })).toBeInTheDocument();
 
     const loginLinks = [
       screen.getByRole('link', { name: 'Iniciar sesión' }),
