@@ -425,6 +425,7 @@ describe('buildUnavailableViewModel', () => {
       userName: 'María José',
       todayMeals: { kind: 'unavailable' },
       adherence: { data: null, loading: false, error: null, onRetry: expect.any(Function) },
+      shopping: { kind: 'unavailable' },
     });
   });
 

@@ -1,10 +1,19 @@
 import { Link } from 'react-router-dom';
 
-import { FOCUS_VISIBLE_CLASSES } from './classNames';
+import type { CardState, ShoppingProgress } from '../types';
+import { FOCUS_VISIBLE_CLASSES, PRIMARY_CTA_CLASSES } from './classNames';
+
+// Vocabulario de la lista de compras (NUT-89). Los contadores son los del contrato C, sin recalcular.
+function shoppingDescription(shopping: CardState<ShoppingProgress>, fallback: string): string {
+  if (shopping.kind !== 'ready' || shopping.data.plan === null) return fallback;
+  const { totalItems, checkedItems } = shopping.data.summary;
+  return totalItems === 0 ? 'Todavía no hay productos para marcar.' : `${checkedItems} de ${totalItems} marcados`;
+}
 
 const QUICK_ACCESS_ITEMS = [
   {
     to: '/meal-plan',
+    showsShoppingProgress: false,
     title: 'Ver mi plan semanal',
     description: 'Revisá las comidas de la semana',
     icon: 'calendar_month',
@@ -13,6 +22,7 @@ const QUICK_ACCESS_ITEMS = [
   },
   {
     to: '/recipes',
+    showsShoppingProgress: false,
     title: 'Explorar recetas',
     description: 'Buscá ideas y preparaciones',
     icon: 'menu_book',
@@ -21,6 +31,7 @@ const QUICK_ACCESS_ITEMS = [
   },
   {
     to: '/shopping-list',
+    showsShoppingProgress: true,
     title: 'Lista de compras',
     description: 'Ingredientes de tu plan',
     icon: 'shopping_cart',
@@ -29,7 +40,12 @@ const QUICK_ACCESS_ITEMS = [
   },
 ] as const;
 
-export function QuickAccessLinks({ className = '' }: { className?: string }) {
+type Props = {
+  shopping: CardState<ShoppingProgress>;
+  className?: string;
+};
+
+export function QuickAccessLinks({ shopping, className = '' }: Props) {
   return (
     <nav aria-labelledby="dashboard-quick-access-title" className={className}>
       <h2 id="dashboard-quick-access-title" className="mb-4 font-headline text-xl font-semibold text-on-surface">
@@ -50,12 +66,23 @@ export function QuickAccessLinks({ className = '' }: { className?: string }) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold">{item.title}</span>
-                <span className="block text-sm opacity-80">{item.description}</span>
+                <span className="block break-words text-sm opacity-80">
+                  {item.showsShoppingProgress ? shoppingDescription(shopping, item.description) : item.description}
+                </span>
               </span>
               <span aria-hidden="true" className="material-symbols-outlined">
                 chevron_right
               </span>
             </Link>
+            {/* El reintento va fuera del enlace: un botón dentro de un enlace no es accesible. */}
+            {item.showsShoppingProgress && shopping.kind === 'error' && (
+              <div role="alert" className="mt-2 flex flex-wrap items-center justify-between gap-3 px-1">
+                <p className="text-sm text-on-surface-variant">No pudimos cargar el avance de tus compras.</p>
+                <button type="button" onClick={shopping.retry} className={PRIMARY_CTA_CLASSES}>
+                  Reintentar
+                </button>
+              </div>
+            )}
           </li>
         ))}
       </ul>

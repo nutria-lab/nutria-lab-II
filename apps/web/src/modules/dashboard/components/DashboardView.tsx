@@ -31,7 +31,7 @@ export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) 
           />
           <NextMealHighlight state={viewModel.todayMeals} className="lg:col-span-7 lg:col-start-1 lg:row-start-1" />
           <TodayMealsCard state={viewModel.todayMeals} className="lg:col-span-12" />
-          <QuickAccessLinks className="lg:col-span-12" />
+          <QuickAccessLinks shopping={viewModel.shopping} className="lg:col-span-12" />
         </div>
       </main>
     </div>

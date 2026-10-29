@@ -1,43 +1,15 @@
 import type { MealType } from '../../services/mealPlanService';
 import type { RecipeImage } from '../../services/recipeService';
+import type { AdherenceResponse, MealCompletionStatus } from '../adherence/types';
+import type { ShoppingListResponse } from '../shopping-list/types';
 import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
 
-export type MealCompletionStatus = 'NOT_LOGGED' | 'COMPLETED' | 'SKIPPED';
+// Contrato A: un único modelo, el del módulo de adherencia.
+export type { AdherenceMeal, AdherenceResponse, MealCompletionStatus } from '../adherence/types';
+export type AdherenceDay = AdherenceResponse['days'][number];
 
-export type AdherenceMeal = {
-  plannedMealId: string;
-  mealUpdatedAt: string;
-  recipeId: string | null;
-  mealType: MealType;
-  title: string;
-  status: MealCompletionStatus;
-  canEdit: boolean;
-};
-
-export type AdherenceDay = {
-  date: string;
-  plannedMeals: number;
-  completedMeals: number;
-  skippedMeals: number;
-  notLoggedMeals: number;
-  adherencePercent: number | null;
-  meals: AdherenceMeal[];
-};
-
-export type AdherenceResponse = {
-  weekStart: string;
-  timezone: 'America/Argentina/Buenos_Aires';
-  today: string;
-  plan: { id: string; version: number; updatedAt: string } | null;
-  days: AdherenceDay[];
-  summary: {
-    plannedMeals: number;
-    completedMeals: number;
-    skippedMeals: number;
-    notLoggedMeals: number;
-    adherencePercent: number | null;
-  };
-};
+// Parte del contrato C que usa el Inicio: los contadores vienen del servidor y no se recalculan.
+export type ShoppingProgress = Pick<ShoppingListResponse, 'weekStart' | 'plan' | 'summary'>;
 
 export type CardState<T> =
   | { kind: 'loading' }
@@ -65,4 +37,5 @@ export type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
   adherence: AdherenceWidgetViewProps;
+  shopping: CardState<ShoppingProgress>;
 };

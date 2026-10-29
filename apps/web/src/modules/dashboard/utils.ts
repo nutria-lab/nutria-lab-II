@@ -13,6 +13,10 @@ import type {
 // así que no se puede derivar de ahí.
 export const MEAL_TYPE_ORDER: readonly MealType[] = ['BREAKFAST', 'LUNCH', 'SNACK', 'DINNER'];
 
+export function isKnownMealType(mealType: string): mealType is MealType {
+  return (MEAL_TYPE_ORDER as readonly string[]).includes(mealType);
+}
+
 // Glosario aprobado en NUT-93; debe moverse a un módulo compartido con NUT-93/NUT-94.
 export const MEAL_STATUS_LABELS: Record<MealCompletionStatus, string> = {
   NOT_LOGGED: 'Sin registrar',
@@ -85,5 +89,6 @@ export function buildUnavailableViewModel(userName: string | null): DashboardVie
     userName,
     todayMeals: { kind: 'unavailable' },
     adherence: { data: null, loading: false, error: null, onRetry: () => {} },
+    shopping: { kind: 'unavailable' },
   };
 }
