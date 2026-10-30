@@ -3,6 +3,8 @@ import { JsonSchema } from '@/modules/openai/openai-schema';
 import { OpenAIService } from '@/modules/openai/openai.service';
 
 export const RECIPE_GENERATION_PROVIDER = Symbol('RECIPE_GENERATION_PROVIDER');
+export const RECIPE_GENERATION_PROMPT_VERSION = 'recipe-preview-openai-v1';
+export const RECIPE_GENERATION_SCHEMA_VERSION = 'recipe-candidate-openai-v1';
 
 export interface RecipeGenerationProvider {
   generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }, onModelSelected?: (model: string) => void | Promise<void>): Promise<string>;

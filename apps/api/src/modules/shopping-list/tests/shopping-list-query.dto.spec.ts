@@ -26,6 +26,24 @@ describe('ShoppingListQueryDto', () => {
     expect(await validate(dto)).not.toHaveLength(0);
   });
 
+  it.each([
+    ['a real Tuesday', '2026-10-20'],
+    ['an impossible calendar date', '2026-02-30'],
+    ['a malformed date', '2026-1-19'],
+    ['a timestamp', '2026-10-19T00:00:00.000Z'],
+  ])('rejects %s with HTTP 400 through the Nest validation pipe', async (_description, weekStart) => {
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
+
+    await expect(pipe.transform(
+      { weekStart },
+      { type: 'query', metatype: ShoppingListQueryDto },
+    )).rejects.toMatchObject({ status: 400 });
+  });
+
   it('rejects unknown query fields under the application validation policy', async () => {
     const pipe = new ValidationPipe({
       whitelist: true,

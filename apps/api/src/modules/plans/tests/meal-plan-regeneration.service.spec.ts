@@ -10,6 +10,7 @@ import {
 import { Logger } from '@nestjs/common';
 import { MealPlanRegenerationService } from '../meal-plan-regeneration.service';
 import { RecipeValidationService } from '../recipe-validation.service';
+import { recipeFingerprint } from '../../recipe/recipe-fingerprint.util';
 
 const USER = 'user-1';
 const PLAN = 'plan-1';
@@ -249,6 +250,27 @@ describe('MealPlanRegenerationService - regeneración (NUT-78)', () => {
 
     expect(composer.composeWeeklyProposal).toHaveBeenCalledTimes(2);
     expect(repository.updatePlanTransaction.mock.calls[0][2]).toEqual(proposal(meal('Wok de verduras')).dto.days);
+  });
+
+  it('reintenta excluyendo sólo las huellas de recetas de la primera asignación del catálogo', async () => {
+    const { composer, regenerate } = setup();
+    const firstProposal = proposal(meal('Ensalada de quinoa', {
+      reuseRecipeId: 'catalog-recipe-reused',
+      recipe: undefined,
+    }));
+    firstProposal.comparableDays = proposal(meal('Ensalada de quinoa')).comparableDays;
+    composer.composeWeeklyProposal
+      .mockResolvedValueOnce(firstProposal)
+      .mockResolvedValueOnce(proposal(meal('Wok de verduras')));
+
+    await regenerate();
+
+    const firstInput = composer.composeWeeklyProposal.mock.calls[0][0];
+    const secondInput = composer.composeWeeklyProposal.mock.calls[1][0];
+    const candidateFingerprints = firstProposal.comparableDays.flatMap(day => day.meals)
+      .map((candidateMeal: any) => recipeFingerprint(candidateMeal.recipe));
+    expect(firstInput).not.toHaveProperty('excludeCatalogRecipeFingerprints');
+    expect(secondInput.excludeCatalogRecipeFingerprints).toEqual(candidateFingerprints);
   });
 
   it('422 NO_DIFFERENT_PROPOSAL si tras 2 generaciones no cambió ninguna comida: run REJECTED, sin escribir nada', async () => {

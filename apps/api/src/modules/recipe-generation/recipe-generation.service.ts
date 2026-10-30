@@ -13,11 +13,11 @@ import { UnsplashService } from '@/modules/unsplash/unsplash.service';
 import { normalizeProperties } from '@/utils/normalize-properties.util';
 import { ConfirmGeneratedRecipesDto } from './dto/confirm-generated-recipes.dto';
 import { GeneratedRecipeCountMode, PreviewGeneratedRecipesDto } from './dto/preview-generated-recipes.dto';
-import { RECIPE_GENERATION_PROVIDER, RecipeGenerationProvider } from './recipe-generation.ports';
+import { RECIPE_GENERATION_PROMPT_VERSION, RECIPE_GENERATION_PROVIDER, RECIPE_GENERATION_SCHEMA_VERSION, RecipeGenerationProvider } from './recipe-generation.ports';
 import { RecipeGenerationRepository } from './recipe-generation.repository';
 
-const PROMPT_VERSION = 'recipe-preview-openai-v1';
-const SCHEMA_VERSION = 'recipe-candidate-openai-v1';
+const PROMPT_VERSION = RECIPE_GENERATION_PROMPT_VERSION;
+const SCHEMA_VERSION = RECIPE_GENERATION_SCHEMA_VERSION;
 type PersistedDraft = { draftId: string; recipe: RecipeDraft; image: Record<string, unknown> | null; warnings: Array<ValidationWarning | { code: 'IMAGE_UNAVAILABLE'; message: string }> };
 type RejectedCandidate = { candidateIndex: number | null; codes: string[]; errors?: Array<Pick<ValidationError, 'code' | 'field' | 'message'>> };
 

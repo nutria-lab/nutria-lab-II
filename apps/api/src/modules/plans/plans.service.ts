@@ -185,7 +185,14 @@ export class PlansService {
 
   private async generateForRun(userId: string, weekStartStr: string, weekStart: Date, profile: NutritionProfile, runId: string) {
     const proposal = await this.composer.composeWeeklyProposal({ userId, runId, profile, weekStart, weekStartStr });
-    return this.validateAndPersistPlan(userId, proposal.dto, runId, { ...proposal.summary });
+    return this.validateAndPersistPlan(
+      userId,
+      proposal.dto,
+      runId,
+      { ...proposal.summary },
+      proposal.compositionSnapshot,
+      proposal.selectedRecipeVersions,
+    );
   }
 
   /**
@@ -200,6 +207,8 @@ export class PlansService {
     dto: CreateMealPlanDto,
     generationRunId?: string,
     validationSnapshot?: Record<string, unknown>,
+    compositionSnapshot?: Record<string, unknown>,
+    selectedRecipeVersions?: Map<string, Date>,
   ) {
     const weekStart = this.parseDateString(dto.weekStart);
 
@@ -244,9 +253,12 @@ export class PlansService {
 
     let recipesForTracking: RecipeForTracking[] = [];
     try {
-      const persisted = await this.repository.createPlanTransaction(
-        userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot,
-      );
+      const persistArgs = [
+        userId, weekStart, daysForPersistence, generationRunId, undefined, validationSnapshot, compositionSnapshot,
+      ] as const;
+      const persisted = selectedRecipeVersions
+        ? await this.repository.createPlanTransaction(...persistArgs, selectedRecipeVersions)
+        : await this.repository.createPlanTransaction(...persistArgs);
       recipesForTracking = persisted.recipesForTracking;
     } catch (error) {
       // Gap 3 (alto, design.md Flujo C punto 2): si la transacción de dominio falla, el

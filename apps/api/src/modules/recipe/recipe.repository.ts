@@ -20,6 +20,11 @@ export interface PaginatedRecipes {
   total: number;
 }
 
+export interface MealTypeCatalogPageCriteria {
+  afterId?: string;
+  limit: number;
+}
+
 interface RecipeCount {
   total: bigint | number | string;
 }
@@ -112,6 +117,28 @@ export class RecipeRepository {
       ${where}
       ORDER BY score DESC, topic DESC, "prepMinutes" ASC, "id" ASC
       LIMIT ${criteria.desiredTotal}
+    `;
+  }
+
+  /** Stable keyset page used by NUT-76's ephemeral meal-type classifier. */
+  async findMealTypeCatalogPage(criteria: MealTypeCatalogPageCriteria): Promise<Recipe[]> {
+    if (!Number.isInteger(criteria.limit) || criteria.limit < 1 || criteria.limit > 100) {
+      throw new RangeError('limit must be an integer between 1 and 100');
+    }
+
+    const cursor = criteria.afterId
+      ? Prisma.sql`WHERE "id" > ${criteria.afterId}`
+      : Prisma.empty;
+
+    return this.prisma.$queryRaw<Recipe[]>`
+      SELECT
+        "id", "title", "description", "prepMinutes", "cookMinutes",
+        "ingredients", "instructions", "categories", "nutritionalValues",
+        "properties", "image", "origin", "generationRunId", "createdAt", "updatedAt"
+      FROM "recipes"
+      ${cursor}
+      ORDER BY "id" ASC
+      LIMIT ${criteria.limit}
     `;
   }
 
