@@ -52,6 +52,28 @@ function regeneratedVersion() {
   };
 }
 
+function regeneratedVersionWithMixedRelations() {
+  return {
+    ...regeneratedVersion(),
+    days: [
+      {
+        id: 'day-later', date: new Date('2026-09-15T00:00:00.000Z'), meals: [
+          { id: 'later-dinner', mealType: 'DINNER' },
+          { id: 'later-breakfast', mealType: 'BREAKFAST' },
+        ],
+      },
+      { id: 'day-empty', date: new Date('2026-09-16T00:00:00.000Z'), meals: [] },
+      {
+        id: 'day-earlier', date: new Date('2026-09-14T00:00:00.000Z'), meals: [
+          { id: 'earlier-snack', mealType: 'SNACK' },
+          { id: 'earlier-lunch', mealType: 'LUNCH' },
+          { id: 'earlier-breakfast', mealType: 'BREAKFAST' },
+        ],
+      },
+    ],
+  };
+}
+
 function setup() {
   const repository = {
     findPlanWithMeals: jest.fn().mockResolvedValue(currentPlan()),
@@ -159,6 +181,48 @@ describe('MealPlanRegenerationService - idempotencia (NUT-78)', () => {
     // La metadata privada de tracking de la imagen nunca sale (NUT-83).
     expect(JSON.stringify(response)).not.toContain('tracking');
     expect(repository.transitionGenerationRun).not.toHaveBeenCalled();
+  });
+
+  it('ordena la versión regenerada al persistir y al reproducir su resultado idempotente', async () => {
+    const { repository, composer, regenerate } = setup();
+    composer.composeWeeklyProposal.mockResolvedValue(proposal(meal('Wok de verduras', {
+      recipe: {
+        title: 'Wok de verduras',
+        description: 'Salteado de brócoli',
+        prepMinutes: 15,
+        cookMinutes: 10,
+        ingredients: [{ name: 'Brócoli', quantity: 200, unit: 'g' }],
+        instructions: ['Saltear el brócoli'],
+      },
+    })));
+    repository.findPlanByGenerationRunId.mockResolvedValue(regeneratedVersionWithMixedRelations());
+
+    const response: any = await regenerate();
+
+    expect(response.days.map((day: any) => day.id)).toEqual(['day-earlier', 'day-later', 'day-empty']);
+    expect(response.days.map((day: any) => day.meals.map((meal: any) => meal.mealType))).toEqual([
+      ['BREAKFAST', 'LUNCH', 'SNACK'],
+      ['BREAKFAST', 'DINNER'],
+      [],
+    ]);
+
+    const requestSnapshot = repository.createOrRecoverGenerationRun.mock.calls[0][6];
+    const replaySetup = setup();
+    replaySetup.repository.findPlanWithMeals.mockResolvedValue(currentPlan({ isCurrent: false }));
+    replaySetup.repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: { id: 'run-1', status: 'SUCCEEDED', requestSnapshot },
+      wasCreated: false,
+    });
+    replaySetup.repository.findPlanByGenerationRunId.mockResolvedValue(regeneratedVersionWithMixedRelations());
+
+    const replay: any = await replaySetup.regenerate();
+
+    expect(replay.days.map((day: any) => day.id)).toEqual(['day-earlier', 'day-later', 'day-empty']);
+    expect(replay.days.map((day: any) => day.meals.map((meal: any) => meal.mealType))).toEqual(
+      response.days.map((day: any) => day.meals.map((meal: any) => meal.mealType)),
+    );
+    expect(replaySetup.composer.composeWeeklyProposal).not.toHaveBeenCalled();
+    expect(replaySetup.repository.updatePlanTransaction).not.toHaveBeenCalled();
   });
 
   it('la misma clave en otro plan → 409', async () => {

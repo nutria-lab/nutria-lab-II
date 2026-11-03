@@ -135,6 +135,41 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       // Sólo debería haber una confirmación transaccional real (la primera vez).
       expect(mockRepository.createPlanTransaction).toHaveBeenCalledTimes(1);
     });
+
+    it('normaliza la generación inicial y su replay aunque las reconsultas hidraten los días y comidas en otro orden', async () => {
+      const persistedPlanFromRows = (reverse: boolean) => {
+        const sourceDays = reverse ? [...generatedDays].reverse() : [...generatedDays];
+        return {
+          ...persistedPlan,
+          days: sourceDays.map((day, dayIndex) => ({
+            id: `day-${day.day}`,
+            date: new Date(`${day.date}T00:00:00.000Z`),
+            day: day.day,
+            meals: (reverse ? [...day.meals].reverse() : [...day.meals]).map((meal, mealIndex) => ({
+              id: `meal-${dayIndex}-${mealIndex}`,
+              ...meal,
+            })),
+          })),
+        };
+      };
+      mockRepository.findPlanByWeek
+        .mockResolvedValueOnce(persistedPlanFromRows(true))
+        .mockResolvedValueOnce(persistedPlanFromRows(false));
+
+      const generated: any = await service.generateAndPersistPlan(userId, weekStartStr);
+      const replay: any = await service.generateAndPersistPlan(userId, weekStartStr);
+
+      const expectedDates = generatedDays.map(day => day.date);
+      expect(generated.days.map((day: any) => day.date.toISOString().slice(0, 10))).toEqual(expectedDates);
+      expect(generated.days[0].meals.map((meal: any) => meal.mealType)).toEqual([
+        'BREAKFAST', 'LUNCH', 'SNACK', 'DINNER',
+      ]);
+      expect(replay.days.map((day: any) => day.date.toISOString().slice(0, 10))).toEqual(expectedDates);
+      expect(replay.days.map((day: any) => day.meals.map((meal: any) => meal.mealType))).toEqual(
+        generated.days.map((day: any) => day.meals.map((meal: any) => meal.mealType)),
+      );
+      expect(mockComposer.composeWeeklyProposal).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('AC9 - GenerationRun se crea/recupera antes de componer la propuesta', () => {
