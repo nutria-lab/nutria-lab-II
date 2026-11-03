@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { RecipeRepository, type DuplicateCandidate } from '../recipe/recipe.repository';
 import { normalizeRecipeTitle } from '../recipe/recipe-fingerprint.util';
-import { validateRecipe } from '../recipe/validation/validate-recipe';
+import { validateRecipe, validateRecipes } from '../recipe/validation/validate-recipe';
 import type {
   ValidationErrorCode,
   ValidationResult,
@@ -61,10 +61,23 @@ export class RecipeValidationService {
     private readonly plans: PlansRepository,
   ) {}
 
-  // Un resultado por draft. Cada uno se valida por separado: repetir una comida en el plan es normal.
-  async validateDrafts(drafts: readonly unknown[], _profile?: { excludedIngredients?: unknown }): Promise<ValidationResult[]> {
+  // Los callers habituales validan cada receta de forma independiente: repetir una comida en el
+  // plan sigue siendo válido. La composición semanal opta explícitamente por detección de
+  // duplicados dentro de todos sus lotes.
+  async validateDrafts(
+    drafts: readonly unknown[],
+    _profile?: { excludedIngredients?: unknown },
+    options: { detectBatchDuplicates?: boolean } = {},
+  ): Promise<ValidationResult[]> {
     const ctx = { excludedIngredients: [], catalog: await this.reusableCatalog(drafts) };
-    return drafts.map(draft => validateRecipe(draft, ctx));
+    return options.detectBatchDuplicates
+      ? validateRecipes(drafts, ctx)
+      : drafts.map(draft => validateRecipe(draft, ctx));
+  }
+
+  async findRecipeById(id: string) {
+    if (typeof (this.recipes as any).findById !== 'function') return null;
+    return this.recipes.findById(id);
   }
 
   // Contenido rechazado: run PENDING → REJECTED con el primer código y el resumen, y un log por código.
