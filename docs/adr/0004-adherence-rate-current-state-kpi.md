@@ -1,4 +1,4 @@
-# ADR-0003: `adherence_rate` observada al recolectar
+# ADR-0004: `adherence_rate` observada al recolectar
 
 **Estado:** Aprobada para NUT-98 por la decisión humana del TL/PO del 2026-10-29.
 

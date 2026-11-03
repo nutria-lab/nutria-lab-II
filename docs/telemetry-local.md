@@ -4,7 +4,7 @@ The GitHub `KPI Telemetry` workflow invokes `kpi:telemetry`. It probes `/health`
 
 The business `adherence_rate` observes the database state when collection begins. It counts meals on current plans whose stored civil date is less than or equal to the current date in `America/Argentina/Buenos_Aires`; today's meals are eligible and future meals are excluded. `effectiveMealStatus` determines whether a completion is valid against the current meal snapshot. The numerator and denominator are summed across meals, not averaged across users. `0/N` is an observed zero; `0/0` is unavailable with `NO_ELIGIBLE_MEALS`. If this source is unavailable, the evidence reports unknown counts and `SOURCE_UNAVAILABLE`. It does not reconstruct a prior state at the report window's 21:00 cutoff. The rate's aggregate counts and collection context remain in frozen internal diagnostics and are absent from the external measurement payload.
 
-An existing frozen ten-measurement publication remains unchanged for retries. New collections freeze all eleven IDs. A remote rejection is a failed, visible publication; the publisher does not omit or split `adherence_rate` to fit a remote limit. See [ADR-0003](adr/0003-adherence-rate-current-state-kpi.md) for the collection and compatibility decision.
+An existing frozen ten-measurement publication remains unchanged for retries. New collections freeze all eleven IDs. A remote rejection is a failed, visible publication; the publisher does not omit or split `adherence_rate` to fit a remote limit. See [ADR-0004](adr/0004-adherence-rate-current-state-kpi.md) for the collection and compatibility decision.
 
 ## Terminal events and network latency
 
