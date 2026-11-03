@@ -1,6 +1,6 @@
 import type { MealType } from '../../services/mealPlanService';
 import type { RecipeImage } from '../../services/recipeService';
-import type { AdherenceWidgetProps } from './adherence-widget/types';
+import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
 
 export type MealCompletionStatus = 'NOT_LOGGED' | 'COMPLETED' | 'SKIPPED';
 
@@ -64,6 +64,5 @@ export type TodayMealsData =
 export type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
-  // Mismo contrato que el widget de adherencia (NUT-103); el slot nunca muestra valores de progreso.
-  adherence: AdherenceWidgetProps;
+  adherence: AdherenceWidgetViewProps;
 };

@@ -143,6 +143,48 @@ describe('RecipeRepository.findCoverageCandidates', () => {
   });
 });
 
+describe('RecipeRepository.findMealTypeCatalogPage (NUT-76)', () => {
+  const queryRaw = jest.fn();
+  const repository = new RecipeRepository({ $queryRaw: queryRaw } as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('uses stable id-ascending keyset pages with the same limit and no offset', async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ id: 'catalog-01' }, { id: 'catalog-02' }])
+      .mockResolvedValueOnce([{ id: 'catalog-03' }, { id: 'catalog-04' }]);
+
+    const firstPage = await repository.findMealTypeCatalogPage({ limit: 2 });
+    const secondPage = await repository.findMealTypeCatalogPage({ afterId: firstPage[firstPage.length - 1].id, limit: 2 });
+
+    expect(firstPage.map(({ id }) => id)).toEqual(['catalog-01', 'catalog-02']);
+    expect(secondPage.map(({ id }) => id)).toEqual(['catalog-03', 'catalog-04']);
+    expect(new Set([...firstPage, ...secondPage].map(({ id }) => id)).size).toBe(4);
+    expect(queryRaw).toHaveBeenCalledTimes(2);
+
+    const [firstTemplate, firstCursor, firstLimit] = queryRaw.mock.calls[0];
+    const [secondTemplate, secondCursor, secondLimit] = queryRaw.mock.calls[1];
+    const firstSql = (firstTemplate as TemplateStringsArray).join(' ');
+    const secondSql = (secondTemplate as TemplateStringsArray).join(' ');
+    const firstCursorQuery = firstCursor as RawQuery;
+    const secondCursorQuery = secondCursor as RawQuery;
+
+    expect(firstSql).toContain('ORDER BY "id" ASC');
+    expect(secondSql).toContain('ORDER BY "id" ASC');
+    expect(firstSql).toContain('LIMIT');
+    expect(secondSql).toContain('LIMIT');
+    expect(firstSql).not.toContain('OFFSET');
+    expect(secondSql).not.toContain('OFFSET');
+    expect(firstCursorQuery.values).toEqual([]);
+    expect(secondCursorQuery.sql).toContain('"id" >');
+    expect(secondCursorQuery.values).toEqual(['catalog-02']);
+    expect(firstLimit).toBe(2);
+    expect(secondLimit).toBe(2);
+  });
+});
+
 describe('RecipeRepository.findByNormalizedTitles (NUT-74, duplicados)', () => {
   const queryRaw = jest.fn();
   const repository = new RecipeRepository({ $queryRaw: queryRaw } as never);

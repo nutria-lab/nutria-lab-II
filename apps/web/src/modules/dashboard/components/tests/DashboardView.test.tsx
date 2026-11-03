@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createAdherenceWidgetProps } from '@/modules/dashboard/adherence-widget/fixtures';
 import type { AdherenceWidgetProps } from '@/modules/dashboard/adherence-widget/types';
 import { DashboardView } from '@/modules/dashboard/components/DashboardView';
 import {
@@ -238,10 +239,14 @@ describe('DashboardView card states', () => {
   it('no plan: explains and links to /meal-plan, without highlight', () => {
     const { view } = renderFixture('sin-plan');
 
-    expect(view.getByText('Todavía no tenés un plan para esta semana.')).toBeInTheDocument();
+    const mealsCard = view.getByRole('region', { name: 'Comidas de hoy' });
+    expect(within(mealsCard).getByText('Todavía no tenés un plan para esta semana.')).toBeInTheDocument();
+    // El progreso usa el mismo texto aprobado para el mismo estado.
+    expect(
+      within(view.getByRole('region', { name: 'Progreso de la semana' })).getByText('Todavía no tenés un plan para esta semana.'),
+    ).toBeInTheDocument();
     expect(view.getByRole('link', { name: 'Ir a mi plan' })).toHaveAttribute('href', '/meal-plan');
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
-    expect(view.getByText('Tu progreso aparecerá aquí.')).toBeInTheDocument();
   });
 
   it('no meals today: explains and links to /meal-plan, without highlight', () => {
@@ -292,8 +297,10 @@ describe('DashboardView card states', () => {
     expect(within(todayMealsList(view)).getAllByRole('listitem')).toHaveLength(3);
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
     expect(view.queryByText(ALL_LOGGED)).not.toBeInTheDocument();
+    // Acotado a la tarjeta: el widget de progreso usa "Sin registrar" como etiqueta de contador.
+    const mealsCard = view.getByRole('region', { name: 'Comidas de hoy' });
     for (const chip of STATUS_CHIPS) {
-      expect(view.queryByText(chip)).not.toBeInTheDocument();
+      expect(within(mealsCard).queryByText(chip)).not.toBeInTheDocument();
     }
     expect(view.getByText(PARTIAL_NOTE)).toBeInTheDocument();
   });
@@ -338,7 +345,7 @@ describe('DashboardView card states', () => {
     expect(view.getByText(MEALS_ERROR).closest('[role="alert"]')).not.toBeNull();
     expect(view.getByText(PROGRESS_ERROR).closest('[role="alert"]')).not.toBeNull();
     const meals = view.getByRole('region', { name: 'Comidas de hoy' });
-    const progress = view.getByRole('region', { name: 'Progreso semanal' });
+    const progress = view.getByRole('region', { name: 'Progreso de la semana' });
     expect(within(meals).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
     expect(within(progress).getByRole('button', { name: 'Reintentar' })).toBeInTheDocument();
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
@@ -352,7 +359,7 @@ describe('DashboardView card states', () => {
       within(view.getByRole('region', { name: 'Comidas de hoy' })).getByRole('button', { name: 'Reintentar' }),
     );
     await userEvent.click(
-      within(view.getByRole('region', { name: 'Progreso semanal' })).getByRole('button', { name: 'Reintentar' }),
+      within(view.getByRole('region', { name: 'Progreso de la semana' })).getByRole('button', { name: 'Reintentar' }),
     );
 
     expect(onRetry).toHaveBeenCalledTimes(2);
@@ -381,7 +388,7 @@ describe('DashboardView card states', () => {
       }),
     );
 
-    const slot = view.getByRole('region', { name: 'Progreso semanal' });
+    const slot = view.getByRole('region', { name: 'Progreso de la semana' });
     await userEvent.click(within(slot).getByRole('button', { name: 'Reintentar' }));
 
     expect(retry).toHaveBeenCalledTimes(1);
@@ -400,7 +407,7 @@ describe('DashboardView card states', () => {
     expect(view.getByText(PARTIAL_NOTE)).toBeInTheDocument();
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
 
-    const slot = view.getByRole('region', { name: 'Progreso semanal' });
+    const slot = view.getByRole('region', { name: 'Progreso de la semana' });
     expect(within(slot).getByRole('alert')).toHaveTextContent(PROGRESS_ERROR);
     await userEvent.click(within(slot).getByRole('button', { name: 'Reintentar' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
@@ -411,32 +418,39 @@ describe('DashboardView card states', () => {
 
     expect(view.getAllByText(UNAVAILABLE)).toHaveLength(2);
     expect(within(view.getByRole('region', { name: 'Comidas de hoy' })).getByText(UNAVAILABLE)).toBeInTheDocument();
-    expect(within(view.getByRole('region', { name: 'Progreso semanal' })).getByText(UNAVAILABLE)).toBeInTheDocument();
+    expect(within(view.getByRole('region', { name: 'Progreso de la semana' })).getByText(UNAVAILABLE)).toBeInTheDocument();
     expect(view.getByText('Pronto vas a ver aquí tus comidas del día.')).toBeInTheDocument();
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
     expect(view.queryByText(NEXT_MEAL_TITLE)).not.toBeInTheDocument();
   });
 });
 
-describe('DashboardView progress slot', () => {
-  const extraStates: Array<[string, AdherenceWidgetProps]> = [
-    ['error without data', { data: null, loading: false, error: 'Error 500: 85%', onRetry: () => undefined }],
-    ['data with error', readyAdherence({ error: 'Error 500: 85%' })],
-    ['data without error', readyAdherence()],
-  ];
+describe('DashboardView progress widget', () => {
+  it('renders the backend summary passed in the view model', () => {
+    const { view } = renderView(viewModel({ adherence: createAdherenceWidgetProps('partial') }));
 
-  it.each(FIXTURE_KEYS)('never shows digits or "%" in the %s fixture', (key) => {
-    const { view } = renderFixture(key);
-
-    const slot = view.getByRole('region', { name: 'Progreso semanal' });
-    expect(slot.textContent ?? '').not.toMatch(/\d|%/);
+    const progress = view.getByRole('region', { name: 'Progreso de la semana' });
+    expect(within(progress).getByText('32,1 %')).toBeInTheDocument();
+    expect(within(progress).getByText('9 de 28 comidas completadas')).toBeInTheDocument();
   });
 
-  it.each(extraStates)('never shows digits or "%" (%s)', (_label, adherence) => {
-    const { view } = renderView(viewModel({ adherence }));
+  it.each<DashboardFixtureKey>(['loading', 'error', 'error-parcial', 'no-disponible'])(
+    'never shows digits or "%" without adherence data (%s fixture)',
+    (key) => {
+      const { view } = renderFixture(key);
 
-    const slot = view.getByRole('region', { name: 'Progreso semanal' });
-    expect(slot.textContent ?? '').not.toMatch(/\d|%/);
+      const progress = view.getByRole('region', { name: 'Progreso de la semana' });
+      expect(progress.textContent ?? '').not.toMatch(/\d|%/);
+    },
+  );
+
+  it('never shows the internal error message', () => {
+    const { view } = renderView(
+      viewModel({ adherence: { data: null, loading: false, error: 'Error 500: 85%', onRetry: () => undefined } }),
+    );
+
+    const progress = view.getByRole('region', { name: 'Progreso de la semana' });
+    expect(progress.textContent ?? '').not.toMatch(/\d|%/);
   });
 });
 
