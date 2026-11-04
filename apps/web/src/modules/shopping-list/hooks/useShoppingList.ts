@@ -10,6 +10,13 @@ import type {
 
 type ViewState = "loading" | "success" | "error";
 
+type InFlightWrite = {
+  controller: AbortController;
+  promise: Promise<void>;
+  weekStart: string;
+  sessionIdentity: object;
+};
+
 function errorDetails(error: unknown) {
   if (!axios.isAxiosError(error)) return { status: 0, code: undefined };
   const data = error.response?.data;
@@ -40,7 +47,7 @@ export function useShoppingList(
   const currentContext = useRef({ weekStart, sessionIdentity, authenticated });
   const confirmed = useRef<ShoppingListResponse | undefined>(undefined);
   const lockedItems = useRef(new Set<string>());
-  const writes = useRef(new Map<string, Promise<void>>());
+  const writes = useRef(new Map<AbortController, InFlightWrite>());
   const errorRef = useRef(itemErrors);
   const staleRef = useRef(false);
   const reconciliation = useRef(false);
@@ -63,7 +70,7 @@ export function useShoppingList(
     [],
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (waitForSameContextWrites = false) => {
     const context = currentContext.current;
     if (!context.authenticated || !context.sessionIdentity) return;
     const generation = ++loadGeneration.current;
@@ -71,13 +78,24 @@ export function useShoppingList(
     setState("loading");
     setResponse(undefined);
     confirmed.current = undefined;
-    await Promise.allSettled([...writes.current.values()]);
+    if (waitForSameContextWrites) {
+      const sameContextWrites = [...writes.current.values()]
+        .filter(
+          (write) =>
+            write.weekStart === context.weekStart &&
+            write.sessionIdentity === context.sessionIdentity,
+        )
+        .map((write) => write.promise);
+      await Promise.allSettled(sameContextWrites);
+    }
     if (
       generation !== loadGeneration.current ||
       currentContext.current.weekStart !== context.weekStart ||
       currentContext.current.sessionIdentity !== context.sessionIdentity
     )
       return;
+    lockedItems.current.clear();
+    setPending({});
     const controller = new AbortController();
     activeRead.current = controller;
     setItemErrors({});
@@ -127,11 +145,12 @@ export function useShoppingList(
     return () => {
       loadGeneration.current += 1;
       activeRead.current?.abort();
+      for (const write of writes.current.values()) write.controller.abort();
     };
   }, [weekStart, sessionIdentity, authenticated, load]);
 
   const reload = useCallback(() => {
-    void load();
+    void load(true);
   }, [load]);
 
   const sendCheck = useCallback(
@@ -231,15 +250,19 @@ export function useShoppingList(
               return next;
             });
           }
-          writes.current.delete(itemKey);
+          writes.current.delete(controller);
           if (gotStale && !reconciliation.current) {
             reconciliation.current = true;
-            await Promise.allSettled([...writes.current.values()]);
-            if (isCurrent()) void load();
+            if (isCurrent()) void load(true);
           }
         }
       });
-      writes.current.set(itemKey, operation);
+      writes.current.set(controller, {
+        controller,
+        promise: operation,
+        weekStart: context.weekStart,
+        sessionIdentity: context.sessionIdentity,
+      });
     },
     [load, setErrors],
   );

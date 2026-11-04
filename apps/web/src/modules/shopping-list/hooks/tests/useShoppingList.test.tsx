@@ -149,6 +149,16 @@ describe("useShoppingList mutations", () => {
       { initialProps: { weekStart: "2026-10-19", user: identity } },
     );
 
+    await waitFor(() =>
+      expect(shoppingListService.getForWeek).toHaveBeenCalledWith(
+        "2026-10-19",
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+          isRequestCurrent: expect.any(Function),
+        }),
+      ),
+    );
+
     rerender({ weekStart: "2026-10-26", user: nextIdentity });
     await waitFor(() =>
       expect(result.current.response?.weekStart).toBe("2026-10-26"),
