@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MealCard } from '@/modules/meal-plan/components/MealCard';
 
 // NUT-10: fixture inline con la forma REAL de `PlannedMeal`/`Recipe` (ver
@@ -124,5 +124,51 @@ describe('MealCard', () => {
     render(<MealCard meal={mealWithoutRecipe as never} compact />);
 
     expect(screen.getByText('Receta no disponible')).toBeInTheDocument();
+  });
+
+  it.each([false, true])('renders the adherence control in the %s card layout', async (compact) => {
+    const onSetStatus = vi.fn();
+    const adherence = {
+      meal: {
+        plannedMealId: 'meal-1',
+        mealUpdatedAt: '2026-08-24T12:00:00.000Z',
+        recipeId: 'recipe-1',
+        mealType: 'BREAKFAST' as const,
+        title: 'Avena con frutos rojos',
+        status: 'NOT_LOGGED' as const,
+        canEdit: true,
+      },
+      pending: false,
+      error: null,
+      onSetStatus,
+    };
+    const user = userEvent.setup();
+    render(<MealCard meal={buildMeal() as never} compact={compact} adherence={adherence} />);
+
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: 'Estado de Avena con frutos rojos' }),
+      'COMPLETED',
+    );
+    expect(onSetStatus).toHaveBeenCalledExactlyOnceWith('COMPLETED');
+  });
+
+  it('keeps adherence actions available when the planned meal has no recipe', () => {
+    const adherence = {
+      meal: {
+        plannedMealId: 'meal-1',
+        mealUpdatedAt: '2026-08-24T12:00:00.000Z',
+        recipeId: null,
+        mealType: 'BREAKFAST' as const,
+        title: 'Avena con frutos rojos',
+        status: 'NOT_LOGGED' as const,
+        canEdit: true,
+      },
+      pending: false,
+      error: null,
+      onSetStatus: vi.fn(),
+    };
+    render(<MealCard meal={buildMeal({ recipeId: null, recipe: null }) as never} adherence={adherence} />);
+
+    expect(screen.getByRole('group', { name: /Avena con frutos rojos/i })).toBeInTheDocument();
   });
 });

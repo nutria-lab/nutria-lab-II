@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
+import { getCurrentDateInBuenosAires } from '../../../common/utils/calendar';
 import { useMealPlan } from '../hooks/useMealPlan';
 import { useReplaceMeal } from '../hooks/useReplaceMeal';
 import { WeekSelector } from '../components/WeekSelector';
@@ -8,10 +9,11 @@ import { MealCard } from '../components/MealCard';
 import { RegenerateWeekDialog } from '../components/RegenerateWeekDialog';
 import { ScreenReaderAnnouncer } from '../components/ScreenReaderAnnouncer';
 import type { Meal } from '../../../services/mealPlanService';
+import type { MealAdherenceControlProps } from '../../adherence';
+import { useAdherence } from '../../adherence/hooks/useAdherence';
 import {
   formatDayName,
   formatFullDate,
-  formatLocalDateKey,
   formatShortDate,
   formatWeekRange,
 } from '../utils';
@@ -82,12 +84,35 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 }
 
 export function MealPlanPage() {
-  const { mealPlan, status, errorMessage, retry, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration } = useMealPlan();
+  const { mealPlan, status, errorMessage, retry, reload: reloadPlan, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration } = useMealPlan();
+  const adherenceWeekStart = mealPlan?.days[0]?.date ?? null;
+  const adherence = useAdherence(adherenceWeekStart, {
+    enabled: adherenceWeekStart !== null,
+    reloadPlan,
+  });
   const [searchParams, setSearchParams] = useSearchParams();
   const [isRegenerationDialogOpen, setIsRegenerationDialogOpen] = useState(false);
 
   const [announcement, setAnnouncement] = useState('');
   const [modalMeal, setModalMeal] = useState<Meal | null>(null);
+
+  const adherenceMatchesPlan = Boolean(
+    mealPlan &&
+    adherence.data?.weekStart === adherenceWeekStart &&
+    adherence.data.plan?.id === mealPlan.id,
+  );
+  const getAdherenceControl = (meal: Meal): MealAdherenceControlProps | undefined => {
+    if (!adherenceMatchesPlan || adherence.error) return undefined;
+    const status = adherence.data?.days.flatMap((day) => day.meals)
+      .find((entry) => entry.plannedMealId === meal.id);
+    if (!status) return undefined;
+    return {
+      meal: status,
+      pending: Boolean(adherence.pending[meal.id]),
+      error: adherence.itemErrors[meal.id] ?? null,
+      onSetStatus: (nextStatus) => { void adherence.setMealStatus(meal.id, nextStatus); },
+    };
+  };
 
   const {
     replacingMealId,
@@ -100,6 +125,7 @@ export function MealPlanPage() {
     onSuccess: (updatedMeal, previousMeal) => {
       updateMeal(updatedMeal);
       setModalMeal(null);
+      void adherence.reload();
       const prevTitle = previousMeal.recipe?.title ?? previousMeal.title;
       const newTitle = updatedMeal.recipe?.title ?? updatedMeal.title;
       setAnnouncement(`${prevTitle} reemplazado por ${newTitle}.`);
@@ -111,7 +137,7 @@ export function MealPlanPage() {
   });
 
   const dayParam = searchParams.get('day');
-  const todayKey = formatLocalDateKey(new Date());
+  const todayKey = getCurrentDateInBuenosAires();
   const defaultDate = (() => {
     if (!mealPlan) return null;
     const matchesToday = mealPlan.days.some((day) => day.date === todayKey);
@@ -136,6 +162,7 @@ export function MealPlanPage() {
   async function handleConfirmRegeneration() {
     const result = await confirmRegeneration();
     if (result) {
+      void adherence.reload();
       setIsRegenerationDialogOpen(false);
     }
   }
@@ -213,6 +240,28 @@ export function MealPlanPage() {
 
       {status === 'error' && errorMessage && <Banner variant="error" message={errorMessage} />}
 
+      {adherence.loading && !adherence.data && (
+        <p role="status" aria-live="polite" className="rounded-xl bg-surface-container px-4 py-3 text-sm text-on-surface-variant">
+          Cargando estado de las comidas…
+        </p>
+      )}
+      {adherence.error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container">
+          <p>No pudimos cargar tu progreso.</p>
+          <button type="button" onClick={() => { void adherence.reload(); }} className="font-bold underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+            Reintentar
+          </button>
+        </div>
+      )}
+      {mealPlan && !adherence.loading && !adherence.error && adherence.data && !adherenceMatchesPlan && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-error-container px-4 py-3 text-sm text-on-error-container">
+          <p>No pudimos confirmar el registro de las comidas de este plan.</p>
+          <button type="button" onClick={() => { void adherence.reload(); }} className="font-bold underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+            Reintentar
+          </button>
+        </div>
+      )}
+
       {regenerationStatus === 'submitting' && !isRegenerationDialogOpen && (
         <div role="status" aria-live="polite" className="rounded-xl bg-surface-container px-4 py-3 text-sm font-semibold text-on-surface">
           Regenerando tu semana… El plan actual sigue disponible.
@@ -238,6 +287,7 @@ export function MealPlanPage() {
               meal={meal}
               onReplace={handleStartMobileReplace}
               isReplacing={replacingMealId === meal.id}
+              adherence={getAdherenceControl(meal)}
               replaceError={
                 replaceError && replaceError.mealId === meal.id
                   ? {
@@ -285,6 +335,7 @@ export function MealPlanPage() {
                       onReplace={(m) => setModalMeal(m)}
                       onSwap={(m) => setModalMeal(m)}
                       isReplacing={replacingMealId === meal.id}
+                      adherence={getAdherenceControl(meal)}
                       replaceError={
                         replaceError && replaceError.mealId === meal.id
                           ? {

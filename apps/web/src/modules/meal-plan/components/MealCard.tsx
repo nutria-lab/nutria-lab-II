@@ -5,6 +5,7 @@ import { MealCardErrorBanner } from './MealCardErrorBanner';
 import { MealCardLoadingOverlay } from './MealCardLoadingOverlay';
 import { MealCardMobileConfirm } from './MealCardMobileConfirm';
 import { RecipeImage } from '../../recipes/components/RecipeImage';
+import { MealAdherenceControl, type MealAdherenceControlProps } from '../../adherence';
 
 const MEAL_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
   BREAKFAST: { bg: 'bg-tertiary-fixed/40', text: 'text-on-tertiary-container' },
@@ -37,6 +38,7 @@ type MealCardProps = {
   onReplace?: (meal: Meal) => void;
   isReplacing?: boolean;
   replaceError?: MealCardReplaceError | null;
+  adherence?: MealAdherenceControlProps;
 };
 
 export function MealCard({
@@ -46,6 +48,7 @@ export function MealCard({
   onReplace,
   isReplacing = false,
   replaceError = null,
+  adherence,
 }: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isConfirmingMobile, setIsConfirmingMobile] = useState(false);
@@ -68,7 +71,7 @@ export function MealCard({
   if (compact) {
     return (
       <article
-        aria-busy={isReplacing}
+        aria-busy={isReplacing || adherence?.pending}
         className="relative flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all"
       >
         {isReplacing && <MealCardLoadingOverlay compact />}
@@ -77,7 +80,7 @@ export function MealCard({
           <MealTypeBadge mealType={meal.mealType} />
           <button
             type="button"
-            disabled={isReplacing}
+            disabled={isReplacing || adherence?.pending}
             aria-label={`Cambiar comida ${recipe?.title ?? ''}`.trim()}
             onClick={handleTriggerReplace}
             className="flex h-7 w-7 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors disabled:opacity-40"
@@ -85,7 +88,7 @@ export function MealCard({
             <span aria-hidden="true" className="material-symbols-outlined text-sm">sync</span>
           </button>
         </div>
-        <a href={'/recipes/' + (recipe?.id ?? '')} aria-label={'Ver receta ' + (recipe?.title ?? 'Receta no disponible')} className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-brand-green"><RecipeImage image={recipe?.image} title={recipe?.title ?? 'Receta'} className="h-20 w-full rounded-lg" /><h4 className="mt-2 font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">{recipe ? recipe.title : 'Receta no disponible'}</h4></a>
+        <a href={'/recipes/' + (recipe?.id ?? '')} aria-label={recipe ? `Ver receta ${recipe.title}` : `Comida ${meal.title}`} className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-brand-green"><RecipeImage image={recipe?.image} title={recipe?.title ?? meal.title} className="h-20 w-full rounded-lg" /><h4 className="mt-2 font-headline text-xs font-bold leading-tight line-clamp-2 text-on-surface">{recipe ? recipe.title : meal.title}</h4>{!recipe && <span className="text-[10px] text-on-surface-variant">Receta no disponible</span>}</a>
         {recipe && (
           <div className="mt-auto flex items-center gap-2 text-[10px] font-semibold text-on-surface-variant">
             {totalMinutes != null && (
@@ -103,6 +106,8 @@ export function MealCard({
           </div>
         )}
 
+        {adherence && <MealAdherenceControl {...adherence} compact />}
+
         {replaceError && (
           <MealCardErrorBanner
             compact
@@ -117,15 +122,19 @@ export function MealCard({
 
   if (!recipe) {
     return (
-      <div className="flex items-center gap-4 rounded-xl bg-surface-container-low p-4">
-        <div className="h-24 w-24 shrink-0 rounded-lg bg-surface-container" aria-hidden="true" />
-        <div>
-          <MealTypeBadge mealType={meal.mealType} />
-          <p className="mt-1 font-headline text-base font-semibold text-on-surface-variant">
-            Receta no disponible
-          </p>
+      <article className="space-y-4 rounded-xl bg-surface-container-low p-4">
+        <div className="flex items-center gap-4">
+          <div className="h-24 w-24 shrink-0 rounded-lg bg-surface-container" aria-hidden="true" />
+          <div>
+            <MealTypeBadge mealType={meal.mealType} />
+            <div>
+              <p className="mt-1 font-headline text-base font-semibold text-on-surface">{meal.title}</p>
+              <p className="text-sm text-on-surface-variant">Receta no disponible</p>
+            </div>
+          </div>
         </div>
-      </div>
+        {adherence && <MealAdherenceControl {...adherence} />}
+      </article>
     );
   }
 
@@ -134,8 +143,8 @@ export function MealCard({
 
   return (
     <article
-      aria-busy={isReplacing}
-      className="relative overflow-hidden rounded-xl bg-white shadow-[0_4px_20px_rgba(46,50,48,0.06)] border border-outline-variant/30 transition-shadow hover:shadow-md"
+      aria-busy={isReplacing || adherence?.pending}
+      className="relative overflow-visible rounded-xl bg-white shadow-[0_4px_20px_rgba(46,50,48,0.06)] border border-outline-variant/30 transition-shadow hover:shadow-md"
     >
       {isReplacing && <MealCardLoadingOverlay />}
 
@@ -145,7 +154,7 @@ export function MealCard({
           <MealTypeBadge mealType={meal.mealType} />
           <button
             type="button"
-            disabled={isReplacing}
+            disabled={isReplacing || adherence?.pending}
             aria-label={`Reemplazar comida ${recipe.title}`}
             onClick={() => setIsConfirmingMobile((prev) => !prev)}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-brand-green transition-colors disabled:opacity-40"
@@ -198,7 +207,7 @@ export function MealCard({
       </div>
 
       {/* Mobile in-card confirmation prompt */}
-      {isConfirmingMobile && !isReplacing && (
+      {isConfirmingMobile && !isReplacing && !adherence?.pending && (
         <MealCardMobileConfirm
           mealTitle={recipe.title}
           onConfirm={() => {
@@ -246,6 +255,8 @@ export function MealCard({
           </div>
         </div>
       )}
+
+      {adherence && <MealAdherenceControl {...adherence} />}
 
       {/* Error banner */}
       {replaceError && (
