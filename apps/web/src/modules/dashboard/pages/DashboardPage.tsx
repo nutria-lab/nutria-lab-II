@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../features/auth/AuthProvider';
+import { getCurrentWeekStartInBuenosAires } from '../../../common/utils/calendar';
+import { useAdherence } from '../../adherence/hooks/useAdherence';
 import { DashboardView } from '../components/DashboardView';
 import { buildUnavailableViewModel } from '../utils';
 
@@ -38,6 +40,7 @@ function useDevFixtureRetry(): () => void {
 
 export function DashboardPage() {
   const userName = useAuth().user?.name ?? null;
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const retryFixture = useDevFixtureRetry();
 
@@ -45,7 +48,24 @@ export function DashboardPage() {
     import.meta.env.DEV && devFixtures
       ? devFixtures.selectDashboardFixture(searchParams.get('estado'), userName, retryFixture)
       : null;
-  const viewModel = fixture ?? buildUnavailableViewModel(userName);
+  const weekStart = getCurrentWeekStartInBuenosAires();
+  const adherence = useAdherence(weekStart, {
+    enabled: !import.meta.env.DEV && location.pathname.startsWith('/dashboard'),
+    refreshKey: location.key,
+  });
+  const baseViewModel = fixture ?? buildUnavailableViewModel(userName);
+  const viewModel = import.meta.env.DEV
+    ? baseViewModel
+    : {
+        ...baseViewModel,
+        adherence: {
+          data: adherence.data,
+          loading: adherence.loading,
+          error: adherence.error,
+          onRetry: () => { void adherence.reload(); },
+          expectedWeekStart: weekStart,
+        },
+      };
 
   return <DashboardView viewModel={viewModel} />;
 }

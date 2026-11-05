@@ -4,6 +4,9 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MealPlanPage } from '@/modules/meal-plan/pages/MealPlanPage';
 import { mealPlanService } from '@/services/mealPlanService';
+import { adherenceService } from '@/services/adherenceService';
+import type { MealPlan, MealPlanDay } from '@/services/mealPlanService';
+import type { AdherenceResponse } from '@/modules/adherence/types';
 
 // NUT-10: fixture inline con la forma REAL del backend (ver
 // .plans/nut-10-integrar-plan-de-comidas/plan.md sección 3). No usar
@@ -24,12 +27,18 @@ vi.mock('@/services/mealPlanService', async (importOriginal) => {
     mealPlanService: { getCurrentMealPlan: vi.fn(), generateMealPlan: vi.fn(), regenerateMealPlan: vi.fn() },
   };
 });
+vi.mock('@/services/adherenceService', () => ({
+  adherenceService: { getForWeek: vi.fn(), setMealStatus: vi.fn() },
+}));
+vi.mock('@/features/auth/AuthProvider', () => ({
+  useAuth: () => ({ status: 'authenticated', user: { id: 'user-1' } }),
+}));
 
-function buildDay(day: string, date: string, meals: unknown[]) {
+function buildDay(day: MealPlanDay['day'], date: string, meals: MealPlanDay['meals']): MealPlanDay {
   return { id: `day-${date}`, mealPlanId: 'plan-1', day, date, meals };
 }
 
-const REAL_MEAL_PLAN = {
+const REAL_MEAL_PLAN: MealPlan = {
   id: 'plan-1',
   userId: 'user-1',
   startDate: '2026-08-24T00:00:00.000Z',
@@ -89,8 +98,8 @@ const REAL_MEAL_PLAN = {
   ],
 };
 
-const REAL_7_DAY_MEAL_PLAN = {
-  id: 'plan-7days',
+const REAL_7_DAY_MEAL_PLAN: MealPlan = {
+  id: 'plan-1',
   userId: 'user-1',
   startDate: '2026-08-24T00:00:00.000Z',
   endDate: '2026-08-30T00:00:00.000Z',
@@ -143,6 +152,45 @@ const REAL_7_DAY_MEAL_PLAN = {
   ],
 };
 
+const EMPTY_ADHERENCE: AdherenceResponse = {
+  weekStart: '2026-08-24',
+  timezone: 'America/Argentina/Buenos_Aires',
+  today: '2026-08-24',
+  plan: { id: 'plan-1', version: 1, updatedAt: '2026-08-20T00:00:00.000Z' },
+  days: [],
+  summary: { plannedMeals: 0, completedMeals: 0, skippedMeals: 0, notLoggedMeals: 0, adherencePercent: null },
+};
+
+function adherenceForFirstMeal(plan: MealPlan): AdherenceResponse {
+  const day = plan.days[0];
+  const meal = day.meals[0];
+  if (!meal) throw new Error('Missing meal fixture');
+  return {
+    weekStart: day.date,
+    timezone: 'America/Argentina/Buenos_Aires',
+    today: day.date,
+    plan: { id: plan.id, version: 1, updatedAt: plan.updatedAt },
+    days: [{
+      date: day.date,
+      plannedMeals: 1,
+      completedMeals: 0,
+      skippedMeals: 0,
+      notLoggedMeals: 1,
+      adherencePercent: 0,
+      meals: [{
+        plannedMealId: meal.id,
+        mealUpdatedAt: plan.updatedAt,
+        recipeId: meal.recipeId,
+        mealType: meal.mealType as 'BREAKFAST' | 'LUNCH' | 'DINNER' | 'SNACK',
+        title: meal.title,
+        status: 'NOT_LOGGED',
+        canEdit: true,
+      }],
+    }],
+    summary: { plannedMeals: 1, completedMeals: 0, skippedMeals: 0, notLoggedMeals: 1, adherencePercent: 0 },
+  };
+}
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location-search">{location.search}</div>;
@@ -161,6 +209,8 @@ describe('MealPlanPage', () => {
   beforeEach(() => {
     vi.mocked(mealPlanService.getCurrentMealPlan).mockReset();
     vi.mocked(mealPlanService.generateMealPlan).mockReset();
+    vi.mocked(adherenceService.getForWeek).mockReset().mockResolvedValue(EMPTY_ADHERENCE);
+    vi.mocked(adherenceService.setMealStatus).mockReset();
   });
 
   it('renders the plan for the first day once loaded', async () => {
@@ -290,6 +340,33 @@ describe('MealPlanPage', () => {
     const singleDayView =
       screen.queryByTestId('single-day-view') ?? screen.getByRole('tablist').closest('.space-y-6');
     expect(singleDayView).toHaveClass('xl:hidden');
+  });
+
+  it('connects both card layouts to the current meal status by plannedMealId', async () => {
+    vi.mocked(mealPlanService.getCurrentMealPlan).mockResolvedValue(REAL_7_DAY_MEAL_PLAN as never);
+    vi.mocked(adherenceService.getForWeek).mockResolvedValue(adherenceForFirstMeal(REAL_7_DAY_MEAL_PLAN));
+    vi.mocked(adherenceService.setMealStatus).mockResolvedValue({
+      plannedMealId: 'meal-1',
+      status: 'COMPLETED',
+      updatedAt: '2026-08-24T13:00:00.000Z',
+    });
+    const user = userEvent.setup();
+
+    renderMealPlanPage();
+    await screen.findByText('Tu plan semanal');
+    const statusSelectors = await screen.findAllByRole('combobox', { name: 'Estado de Avena con frutos rojos' });
+    expect(statusSelectors).toHaveLength(2);
+    await user.selectOptions(statusSelectors[0], 'COMPLETED');
+
+    await waitFor(() => expect(adherenceService.setMealStatus).toHaveBeenCalledWith(
+      'meal-1',
+      expect.objectContaining({
+        planId: 'plan-1',
+        mealUpdatedAt: REAL_7_DAY_MEAL_PLAN.updatedAt,
+        status: 'COMPLETED',
+      }),
+      expect.any(AbortSignal),
+    ));
   });
 
   it('renders Sunday in the 7th column with Sunday planned meals', async () => {

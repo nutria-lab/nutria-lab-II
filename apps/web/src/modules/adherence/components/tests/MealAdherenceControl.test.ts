@@ -39,13 +39,14 @@ describe('MealAdherenceControl', () => {
     const meal = fixtureMeal(status);
     render(createElement(MealAdherenceControl, props({ meal })));
     const group = screen.getByRole('group', { name: new RegExp(meal.title, 'i') });
-    expect(within(group).getAllByRole('button')).toHaveLength(3);
+    const select = within(group).getByRole('combobox', { name: `Estado de ${meal.title}` });
+    expect(within(select).getAllByRole('option')).toHaveLength(3);
     for (const choice of statuses) {
-      expect(within(group).getByRole('button', { name: labels[choice] }))
-        .toHaveAttribute('aria-pressed', String(choice === status));
+      expect(within(select).getByRole('option', { name: labels[choice] })).toHaveValue(choice);
     }
+    expect(select).toHaveValue(status);
     expect(screen.getByRole('status')).toHaveTextContent(labels[status]);
-    expect(screen.getByText(meal.title)).toBeVisible();
+    expect(group).toHaveAccessibleName(new RegExp(meal.title, 'i'));
   });
 
   it.each([
@@ -59,53 +60,49 @@ describe('MealAdherenceControl', () => {
     const snapshot = { ...meal };
     const onSetStatus = vi.fn();
     render(createElement(MealAdherenceControl, props({ meal, onSetStatus })));
-    await user.click(screen.getByRole('button', { name: labels[to] }));
+    const select = screen.getByRole('combobox', { name: `Estado de ${meal.title}` });
+    await user.selectOptions(select, to);
     expect(onSetStatus).toHaveBeenCalledExactlyOnceWith(to);
-    expect(screen.getByRole('button', { name: labels[from] })).toHaveAttribute('aria-pressed', 'true');
+    expect(select).toHaveValue(from);
     expect(meal).toEqual(snapshot);
   });
 
   it.each(statuses)('ignores activation of the current %s choice', async (status) => {
     const user = userEvent.setup();
     const onSetStatus = vi.fn();
-    render(createElement(MealAdherenceControl, props({ meal: fixtureMeal(status), onSetStatus })));
-    await user.click(screen.getByRole('button', { name: labels[status] }));
+    const meal = fixtureMeal(status);
+    render(createElement(MealAdherenceControl, props({ meal, onSetStatus })));
+    await user.selectOptions(screen.getByRole('combobox', { name: `Estado de ${meal.title}` }), status);
     expect(onSetStatus).not.toHaveBeenCalled();
   });
 
-  it('blocks repeated click and keyboard activations while pending and retains focus and confirmed selection', async () => {
+  it('disables the selector while pending and retains the confirmed selection', async () => {
     const user = userEvent.setup();
     const input = props();
     const view = render(createElement(MealAdherenceControl, input));
-    const complete = screen.getByRole('button', { name: 'Completada' });
-    await user.click(complete);
+    const select = screen.getByRole('combobox', { name: `Estado de ${input.meal.title}` });
+    await user.selectOptions(select, 'COMPLETED');
     expect(input.onSetStatus).toHaveBeenCalledExactlyOnceWith('COMPLETED');
     const liveStatus = screen.getByRole('status');
     view.rerender(createElement(MealAdherenceControl, { ...input, pending: true }));
-    expect(complete).toHaveFocus();
+    expect(select).toBeDisabled();
     expect(screen.getByRole('status')).toBe(liveStatus);
     expect(liveStatus).toHaveTextContent(/Guardando/);
-    expect(screen.getByRole('button', { name: 'Sin registrar' })).toHaveAttribute('aria-pressed', 'true');
-    for (const button of screen.getAllByRole('button')) {
-      expect(button).toHaveAttribute('aria-disabled', 'true');
-      await user.click(button);
-      await user.keyboard('{Enter} ');
-    }
+    expect(select).toHaveValue('NOT_LOGGED');
+    await user.selectOptions(select, 'SKIPPED');
     expect(input.onSetStatus).toHaveBeenCalledTimes(1);
   });
 
-  it('explains and blocks a server read-only meal using click, Enter and Space', async () => {
+  it('disables a server read-only selector and exposes its explanation from the info button', async () => {
     const user = userEvent.setup();
     const input = props({ meal: { ...fixtureMeal(), canEdit: false } });
     render(createElement(MealAdherenceControl, input));
-    expect(screen.getByText(lockExplanation)).toBeVisible();
     const group = screen.getByRole('group', { name: new RegExp(input.meal.title, 'i') });
     expect(group).toHaveAccessibleDescription(lockExplanation);
-    for (const button of within(group).getAllByRole('button')) {
-      expect(button).toHaveAttribute('aria-disabled', 'true');
-      await user.click(button);
-      await user.keyboard('{Enter} ');
-    }
+    expect(within(group).getByRole('combobox')).toBeDisabled();
+    const info = within(group).getByRole('button', { name: `Información de disponibilidad para ${input.meal.title}` });
+    expect(info).toHaveAccessibleDescription(lockExplanation);
+    await user.hover(info);
     expect(input.onSetStatus).not.toHaveBeenCalled();
   });
 
@@ -113,45 +110,34 @@ describe('MealAdherenceControl', () => {
     const user = userEvent.setup();
     const input = props();
     const view = render(createElement(MealAdherenceControl, input));
-    const complete = screen.getByRole('button', { name: 'Completada' });
-    await user.click(complete);
+    const select = screen.getByRole('combobox', { name: `Estado de ${input.meal.title}` });
+    await user.selectOptions(select, 'COMPLETED');
     view.rerender(createElement(MealAdherenceControl, { ...input, pending: true }));
     const error = 'No se pudo guardar <img src=x onerror=alert(1)>'; 
     view.rerender(createElement(MealAdherenceControl, { ...input, error }));
-    expect(complete).toHaveFocus();
+    expect(select).toHaveValue('NOT_LOGGED');
     expect(screen.getByRole('alert')).toHaveTextContent(error);
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Sin registrar' })).toHaveAttribute('aria-pressed', 'true');
-    await user.keyboard('{Enter}');
+    await user.selectOptions(select, 'COMPLETED');
     expect(input.onSetStatus).toHaveBeenNthCalledWith(2, 'COMPLETED');
     view.rerender(createElement(MealAdherenceControl, { ...input, pending: true }));
     view.rerender(createElement(MealAdherenceControl, { ...input, meal: { ...input.meal, status: 'COMPLETED' } }));
-    expect(complete).toHaveFocus();
-    expect(complete).toHaveAttribute('aria-pressed', 'true');
+    expect(select).toHaveValue('COMPLETED');
     expect(screen.getByRole('status')).toHaveTextContent('Completada');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(input.onSetStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('supports Tab, Enter and Space in natural order without submitting an ancestor form', async () => {
+  it('supports keyboard selection without submitting an ancestor form', async () => {
     const user = userEvent.setup();
     const input = props();
     const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
     render(createElement('form', { onSubmit: submit }, createElement(MealAdherenceControl, input)));
-    const buttons = screen.getAllByRole('button');
-    for (const button of buttons) {
-      expect(button).toHaveAttribute('type', 'button');
-      await user.tab();
-      expect(button).toHaveFocus();
-    }
-    const complete = screen.getByRole('button', { name: 'Completada' });
-    complete.focus();
-    await user.keyboard('{Enter}');
-    const skipped = screen.getByRole('button', { name: 'Omitida' });
-    skipped.focus();
-    await user.keyboard(' ');
-    expect(input.onSetStatus).toHaveBeenNthCalledWith(1, 'COMPLETED');
-    expect(input.onSetStatus).toHaveBeenNthCalledWith(2, 'SKIPPED');
+    const select = screen.getByRole('combobox', { name: `Estado de ${input.meal.title}` });
+    await user.tab();
+    expect(select).toHaveFocus();
+    await user.keyboard('{ARROWDOWN}');
+    expect(input.onSetStatus).toHaveBeenCalledWith('COMPLETED');
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -162,8 +148,7 @@ describe('MealAdherenceControl', () => {
     const meal: AdherenceMeal = { ...pastMeal, recipeId: null, status: 'NOT_LOGGED' };
     const onSetStatus = vi.fn();
     render(createElement(MealAdherenceControl, props({ meal, onSetStatus })));
-    expect(screen.getByText(meal.title)).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Completada' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: `Estado de ${meal.title}` }), 'COMPLETED');
     expect(onSetStatus).toHaveBeenCalledExactlyOnceWith('COMPLETED');
   });
 
@@ -175,7 +160,7 @@ describe('MealAdherenceControl', () => {
     ));
     const groups = screen.getAllByRole('group');
     expect(groups).toHaveLength(2);
-    const descriptionIds = groups.map((group) => group.getAttribute('aria-describedby'));
+    const descriptionIds = groups.map((group) => within(group).getByRole('combobox').getAttribute('aria-describedby'));
     expect(descriptionIds[0]).toBeTruthy();
     expect(descriptionIds[1]).toBeTruthy();
     expect(descriptionIds[0]).not.toBe(descriptionIds[1]);
