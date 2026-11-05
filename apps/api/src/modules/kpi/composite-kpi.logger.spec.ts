@@ -23,7 +23,7 @@ const telemetryIds = [
   'availability_rate',
 ] as const satisfies readonly KpiId[];
 
-const dataIds = ['initial_plans_count', 'manual_recipes_count'] as const satisfies readonly KpiId[];
+const dataIds = ['adherence_rate', 'manual_recipes_count'] as const satisfies readonly KpiId[];
 
 function observed(kpi_id: KpiId, value = 1): KpiResult {
   return {
