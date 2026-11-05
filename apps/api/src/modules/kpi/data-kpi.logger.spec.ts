@@ -1,5 +1,8 @@
 import { DataKpiLogger } from './data-kpi.logger';
+import { effectiveMealStatus } from '@/modules/adherence/effective-meal-status';
+import { dateInBuenosAires } from '@/modules/adherence/adherence.repository';
 import type { CollectionContext } from './kpi-contract';
+import { selectAutomaticArgentinaKpiDate } from './kpi-window';
 
 const context: CollectionContext = {
   contract_version: '1',
@@ -10,17 +13,42 @@ const context: CollectionContext = {
   run_id: 'run-86',
 };
 
-function queryPrisma(row: Record<string, bigint | number>) {
-  const $queryRaw = jest.fn()
-    .mockResolvedValueOnce([row])
-    .mockResolvedValueOnce([]);
-  return { $queryRaw };
+const measuredInstant = new Date('2026-10-10T06:04:05.006Z');
+
+function queryPrisma(
+  row: Record<string, bigint | number>,
+  aggregate: { numerator: bigint | number; denominator: bigint | number } = { numerator: 0n, denominator: 0n },
+) {
+  const transactionCalls: { transaction: number | null; method: string; sql: string; values: unknown[] }[] = [];
+  let currentTransaction: number | null = null;
+  let transactionNumber = 0;
+  const record = (method: string, result: unknown | ((transaction: number | null) => unknown)) =>
+    jest.fn((strings: TemplateStringsArray | string, ...values: unknown[]) => {
+      const sql = typeof strings === 'string' ? strings : Array.from(strings).join('?');
+      transactionCalls.push({ transaction: currentTransaction, method, sql, values });
+      return Promise.resolve(typeof result === 'function' ? result(currentTransaction) : result);
+    });
+  const transaction = {
+    $executeRaw: record('$executeRaw', 0),
+    $executeRawUnsafe: record('$executeRawUnsafe', 0),
+    $queryRaw: record('$queryRaw', (transactionId: number | null) => transactionId === 1 ? [row] : [aggregate]),
+  };
+  const $queryRaw = jest.fn();
+  const $transaction = jest.fn(async (run: (tx: typeof transaction) => Promise<unknown>) => {
+    currentTransaction = ++transactionNumber;
+    try {
+      return await run(transaction);
+    } finally {
+      currentTransaction = null;
+    }
+  });
+  return { $queryRaw, $transaction, transaction, transactionCalls };
 }
 
 function adherenceMeal(
   id: string,
   status: 'COMPLETED' | 'SKIPPED' | null,
-  options: { userId?: string; stale?: boolean; date?: string } = {},
+  options: { userId?: string; stale?: boolean; staleRecipe?: boolean; staleUpdatedAt?: boolean; date?: string } = {},
 ) {
   const updatedAt = new Date('2026-10-28T12:00:00.000Z');
   return {
@@ -31,18 +59,33 @@ function adherenceMeal(
     recipe_id: `recipe-${id}`,
     meal_updated_at: updatedAt,
     completion_status: status,
-    completion_recipe_id_snapshot: status === null ? null : options.stale ? 'old-recipe' : `recipe-${id}`,
+    completion_recipe_id_snapshot: status === null ? null : options.stale || options.staleRecipe ? 'old-recipe' : `recipe-${id}`,
     completion_meal_updated_at_snapshot: status === null
       ? null
-      : options.stale ? new Date(updatedAt.getTime() - 1) : updatedAt,
+      : options.stale || options.staleUpdatedAt ? new Date(updatedAt.getTime() - 1) : updatedAt,
   };
 }
 
 function queryWithAdherenceRows(rows: readonly Record<string, unknown>[]) {
-  const $queryRaw = jest.fn()
-    .mockResolvedValueOnce([{ initial_plans_count: 2n, manual_recipes_count: 3n }])
-    .mockResolvedValueOnce(rows);
-  return { $queryRaw };
+  const numerator = rows.filter((row) => {
+    if (row.completion_status === null) return false;
+    return effectiveMealStatus({
+      status: row.completion_status as 'COMPLETED' | 'SKIPPED',
+      recipeIdSnapshot: row.completion_recipe_id_snapshot as string | null,
+      mealUpdatedAtSnapshot: row.completion_meal_updated_at_snapshot as Date,
+    }, {
+      recipeId: row.recipe_id as string | null,
+      updatedAt: row.meal_updated_at as Date,
+    }) === 'COMPLETED';
+  }).length;
+  return queryPrisma(
+    { initial_plans_count: 2n, manual_recipes_count: 3n },
+    { numerator: BigInt(numerator), denominator: BigInt(rows.length) },
+  );
+}
+
+function loggerFor(prisma: unknown) {
+  return new DataKpiLogger(prisma as never, () => measuredInstant);
 }
 
 function resultFor(results: readonly { kpi_id: string }[]) {
@@ -52,9 +95,9 @@ function resultFor(results: readonly { kpi_id: string }[]) {
 }
 
 describe('DataKpiLogger', () => {
-  it('keeps the tagged business-count query and reads adherence with an isolated second query', async () => {
+  it('keeps the tagged business-count query and aggregates adherence in its own bounded transaction', async () => {
     const prisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
-    const logger = new DataKpiLogger(prisma as never);
+    const logger = loggerFor(prisma);
 
     await expect(logger.collect(context)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -65,22 +108,30 @@ describe('DataKpiLogger', () => {
       }),
     ]));
 
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(2);
-    const [sql, start, end] = prisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray, Date, Date];
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining('meal_plans'));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining('generation_runs'));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining("'MEAL_PLAN_INITIAL'"));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining("'SUCCEEDED'"));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining('recipes'));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringContaining("'MANUAL'"));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringMatching(/"createdAt"\s*>=/));
-    expect(Array.from(sql).join('?')).toEqual(expect.stringMatching(/"createdAt"\s*</));
-    expect(start).toEqual(new Date(context.window_start));
-    expect(end).toEqual(new Date(context.window_end));
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    const businessQuery = prisma.transactionCalls.find(({ transaction, method }) => transaction === 1 && method === '$queryRaw');
+    expect(businessQuery?.sql).toContain('generation_runs');
+    expect(businessQuery?.sql).toContain('MEAL_PLAN_INITIAL');
+    expect(businessQuery?.sql).toContain('SUCCEEDED');
+    expect(businessQuery?.sql).toContain('recipes');
+    expect(businessQuery?.sql).toContain('MANUAL');
+    expect(businessQuery?.sql).toMatch(/"createdAt"\s*>=/);
+    expect(businessQuery?.sql).toMatch(/"createdAt"\s*</);
+    expect(businessQuery?.values).toContainEqual(new Date(context.window_start));
+    expect(businessQuery?.values).toContainEqual(new Date(context.window_end));
+    for (const transactionId of [1, 2]) {
+      const read = prisma.transactionCalls.find(({ transaction, method }) => transaction === transactionId && method === '$queryRaw');
+      expect(read).toBeDefined();
+      const readIndex = prisma.transactionCalls.indexOf(read!);
+      const timeout = prisma.transactionCalls.find((call, index) =>
+        call.transaction === transactionId && index < readIndex && /SET\s+LOCAL\s+statement_timeout/i.test(call.sql));
+      expect(timeout).toBeDefined();
+    }
   });
 
   it('preserves a successful zero as observed rather than unavailable', async () => {
-    const logger = new DataKpiLogger(queryPrisma({ initial_plans_count: 0n, manual_recipes_count: 0n }) as never);
+    const logger = loggerFor(queryPrisma({ initial_plans_count: 0n, manual_recipes_count: 0n }));
 
     await expect(logger.collect(context)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', reason: null }),
@@ -89,18 +140,24 @@ describe('DataKpiLogger', () => {
   });
 
   it('maps a successful business-count query with no row to two observed zeros and records the real calculation time', async () => {
-    const prisma = { $queryRaw: jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]) };
-    const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-10T00:04:05.006Z'));
+    const prisma = queryPrisma({ initial_plans_count: 0n, manual_recipes_count: 0n });
+    prisma.transaction.$queryRaw.mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ numerator: 0n, denominator: 0n }]);
+    const logger = new DataKpiLogger(prisma as never, () => measuredInstant);
 
     await expect(logger.collect(context)).resolves.toEqual(expect.arrayContaining([
-      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
-      expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
+      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', measured_at: '2026-10-10T06:04:05.006Z' }),
+      expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 0, quality: 'observed', measured_at: '2026-10-10T06:04:05.006Z' }),
     ]));
   });
 
   it('returns both business IDs as unavailable when the query source is unavailable', async () => {
-    const prisma = { $queryRaw: jest.fn().mockRejectedValueOnce({ code: 'P2021' }).mockResolvedValueOnce([]) };
-    const logger = new DataKpiLogger(prisma as never);
+    const prisma = queryPrisma({ initial_plans_count: 0n, manual_recipes_count: 0n });
+    prisma.transaction.$queryRaw.mockReset()
+      .mockRejectedValueOnce({ code: 'P2021' })
+      .mockResolvedValueOnce([{ numerator: 0n, denominator: 0n }]);
+    const logger = loggerFor(prisma);
 
     await expect(logger.collect(context)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -113,22 +170,22 @@ describe('DataKpiLogger', () => {
   });
 
   it('converts bigint only while it remains a safe integer and fails structurally on overflow', async () => {
-    const safe = new DataKpiLogger(queryPrisma({
+    const safe = loggerFor(queryPrisma({
       initial_plans_count: BigInt(Number.MAX_SAFE_INTEGER), manual_recipes_count: 1n,
-    }) as never);
+    }));
     await expect(safe.collect(context)).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ value: Number.MAX_SAFE_INTEGER }),
       expect.objectContaining({ value: 1 }),
     ]));
 
-    const overflow = new DataKpiLogger(queryPrisma({
+    const overflow = loggerFor(queryPrisma({
       initial_plans_count: BigInt(Number.MAX_SAFE_INTEGER) + 1n, manual_recipes_count: 1n,
-    }) as never);
+    }));
     await expect(overflow.collect(context)).rejects.toThrow(/safe integer|overflow/i);
   });
 
   it('collects adherence_rate as a third business KPI alongside the existing two', async () => {
-    const logger = new DataKpiLogger(queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n }) as never);
+    const logger = loggerFor(queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n }));
 
     const results = await logger.collect(context);
 
@@ -142,12 +199,9 @@ describe('DataKpiLogger', () => {
     [7999, 10000, 79.99],
   ])('calculates %i/%i as %s percent from planned meals and keeps numerator and denominator evidence', async (completed, eligible, value) => {
     const rows = Array.from({ length: eligible }, (_, index) => adherenceMeal(`meal-${index}`, index < completed ? 'COMPLETED' : null));
-    const logger = new DataKpiLogger(
-      queryWithAdherenceRows(rows) as never,
-      () => new Date('2026-10-29T03:00:00.000Z'),
-    );
+    const logger = loggerFor(queryWithAdherenceRows(rows));
 
-    const results = await logger.collect({ ...context, date: '2026-10-01', environment: 'qa' });
+    const results = await logger.collect({ ...context, environment: 'qa' });
     const result = resultFor(results);
 
     expect(result).toMatchObject({ value, quality: 'observed', reason: null, sample_count: eligible });
@@ -156,17 +210,17 @@ describe('DataKpiLogger', () => {
       denominator: eligible,
       quality: 'observed',
       reason: null,
-      collection_date: '2026-10-29',
-      measured_at: '2026-10-29T03:00:00.000Z',
+      collection_date: context.date,
+      measured_at: measuredInstant.toISOString(),
       environment: 'qa',
     });
   });
 
   it('treats zero completed meals with an eligible denominator as observed zero', async () => {
-    const logger = new DataKpiLogger(queryWithAdherenceRows([
+    const logger = loggerFor(queryWithAdherenceRows([
       adherenceMeal('meal-skipped', 'SKIPPED'),
       adherenceMeal('meal-not-logged', null),
-    ]) as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    ]));
 
     const result = resultFor(await logger.collect(context));
 
@@ -175,7 +229,7 @@ describe('DataKpiLogger', () => {
   });
 
   it('reports no eligible meals as unavailable rather than a fabricated observed zero', async () => {
-    const logger = new DataKpiLogger(queryWithAdherenceRows([]) as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    const logger = loggerFor(queryWithAdherenceRows([]));
 
     const result = resultFor(await logger.collect(context));
 
@@ -188,7 +242,7 @@ describe('DataKpiLogger', () => {
       adherenceMeal('one-meal-user-completed', 'COMPLETED', { userId: 'user-one' }),
       ...Array.from({ length: 9 }, (_, index) => adherenceMeal(`nine-meal-user-${index}`, null, { userId: 'user-nine' })),
     ];
-    const logger = new DataKpiLogger(queryWithAdherenceRows(rows) as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    const logger = loggerFor(queryWithAdherenceRows(rows));
 
     const result = resultFor(await logger.collect(context));
 
@@ -197,12 +251,12 @@ describe('DataKpiLogger', () => {
   });
 
   it('keeps skipped, not-logged, and completion snapshots stale from the numerator', async () => {
-    const logger = new DataKpiLogger(queryWithAdherenceRows([
+    const logger = loggerFor(queryWithAdherenceRows([
       adherenceMeal('completed', 'COMPLETED'),
       adherenceMeal('skipped', 'SKIPPED'),
       adherenceMeal('not-logged', null),
       adherenceMeal('stale', 'COMPLETED', { stale: true }),
-    ]) as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    ]));
 
     const result = resultFor(await logger.collect(context));
 
@@ -211,12 +265,11 @@ describe('DataKpiLogger', () => {
   });
 
   it('isolates an adherence source outage from the two existing business counts', async () => {
-    const prisma = {
-      $queryRaw: jest.fn()
-        .mockResolvedValueOnce([{ initial_plans_count: 2n, manual_recipes_count: 3n }])
-        .mockRejectedValueOnce({ code: 'P2021' }),
-    };
-    const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    const prisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
+    prisma.transaction.$queryRaw.mockReset()
+      .mockResolvedValueOnce([{ initial_plans_count: 2n, manual_recipes_count: 3n }])
+      .mockRejectedValueOnce({ code: 'P2021' });
+    const logger = loggerFor(prisma);
 
     const results = await logger.collect(context);
 
@@ -227,42 +280,117 @@ describe('DataKpiLogger', () => {
     ]));
   });
 
-  it('uses the Buenos Aires collection date, not the report date, to select current meals', async () => {
-    const prisma = queryWithAdherenceRows([adherenceMeal('today-meal', null)]);
-    const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-29T03:00:00.000Z'));
-
-    const result = resultFor(await logger.collect({ ...context, date: '2026-10-01', environment: 'qa' }));
-
-    expect(result?.evidence).toMatchObject({ collection_date: '2026-10-29', environment: 'qa' });
-    const [query] = prisma.$queryRaw.mock.calls[1] as unknown as [TemplateStringsArray, ...unknown[]];
-    const sql = Array.from(query).join('?');
-    expect(sql).toContain('meal_plans');
-    expect(sql).toContain('meal_plan_days');
-    expect(sql).toContain('planned_meals');
-    expect(sql).toContain('meal_completions');
-    expect(sql).toContain('isCurrent');
-    expect(sql).toContain('date');
-    expect(sql).not.toMatch(/updatedAt\s*</i);
-    expect(prisma.$queryRaw.mock.calls[1]).toContain('2026-10-29');
-  });
-
-  it('switches the collection civil date at Buenos Aires midnight even when the UTC day already changed', async () => {
-    const prisma = queryWithAdherenceRows([adherenceMeal('previous-local-day-meal', null, { date: '2026-10-28' })]);
-    const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-29T02:59:59.999Z'));
-
-    const result = resultFor(await logger.collect({ ...context, date: '2026-10-29' }));
-
-    expect(result?.evidence).toMatchObject({ collection_date: '2026-10-28' });
-    expect(prisma.$queryRaw.mock.calls[1]).toContain('2026-10-28');
-  });
-
   it('does not put user, meal, or recipe identifiers into adherence evidence', async () => {
-    const logger = new DataKpiLogger(queryWithAdherenceRows([
+    const logger = loggerFor(queryWithAdherenceRows([
       adherenceMeal('private-meal-id', 'COMPLETED', { userId: 'private-user-id' }),
-    ]) as never, () => new Date('2026-10-29T03:00:00.000Z'));
+    ]));
 
     const result = resultFor(await logger.collect(context));
 
     expect(JSON.stringify(result?.evidence)).not.toMatch(/private-(?:user|meal)-id|recipe-private/i);
+  });
+
+  it('gates the report date and runs one bounded PostgreSQL aggregate for that date', async () => {
+    const measuredAt = new Date('2026-10-10T06:04:05.006Z');
+    const validDate = selectAutomaticArgentinaKpiDate({ now: () => measuredAt });
+    expect(validDate).toBe('2026-10-09');
+
+    expect(dateInBuenosAires(measuredAt)).toBe('2026-10-10');
+    expect(validDate).not.toBe(dateInBuenosAires(measuredAt));
+    const prisma = queryPrisma(
+      { initial_plans_count: 2n, manual_recipes_count: 3n },
+      { numerator: 32n, denominator: 40n },
+    );
+    const logger = new DataKpiLogger(prisma as never, () => measuredAt);
+    const validContext = { ...context, date: validDate };
+
+    const validResult = resultFor(await logger.collect(validContext));
+
+    expect(validResult).toMatchObject({ value: 80, quality: 'observed', sample_count: 40 });
+    expect(validResult?.evidence).toMatchObject({ numerator: 32, denominator: 40, collection_date: validDate });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(prisma.transaction.$queryRaw).toHaveBeenCalledTimes(2);
+    const timeoutIndex = prisma.transactionCalls.findIndex(({ sql }) => /SET\s+LOCAL\s+statement_timeout/i.test(sql));
+    const aggregateIndex = prisma.transactionCalls.findIndex(({ sql }) => /COUNT\s*\(\s*\*\s*\)[\s\S]*FILTER\s*\(/i.test(sql));
+    expect(timeoutIndex).toBeGreaterThanOrEqual(0);
+    expect(aggregateIndex).toBeGreaterThan(timeoutIndex);
+    const timeoutSql = prisma.transactionCalls[timeoutIndex].sql;
+    const timeoutMatch = /statement_timeout\s*=\s*'?(\d+)(ms|s)'?/i.exec(timeoutSql);
+    expect(timeoutMatch).not.toBeNull();
+    const timeoutMs = Number(timeoutMatch?.[1]) * (timeoutMatch?.[2] === 's' ? 1000 : 1);
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(timeoutMs).toBeLessThan(5_000);
+
+    const aggregate = prisma.transactionCalls[aggregateIndex];
+    expect(aggregate.sql).toMatch(/"date"\s*::date\s*=\s*\?/i);
+    expect(aggregate.values).toContain(validDate);
+    expect(aggregate.sql).toMatch(/COUNT\s*\(\s*\*\s*\)[\s\S]*FILTER\s*\(/i);
+    expect(aggregate.sql).toMatch(/IS\s+NOT\s+DISTINCT\s+FROM/i);
+    expect(aggregate.sql).toMatch(/mealUpdatedAtSnapshot/i);
+    expect(aggregate.sql).not.toMatch(/SELECT\s+pm\."recipeId"\s+AS/i);
+
+    const invalidContext = { ...validContext, date: '2026-10-08' };
+    const invalidPrisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
+    const invalidResult = resultFor(await loggerFor(invalidPrisma).collect(invalidContext));
+
+    expect(invalidResult).toMatchObject({ value: null, quality: 'unavailable', reason: 'REPORT_DATE_NOT_CURRENT' });
+    expect(invalidPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(invalidPrisma.transactionCalls.filter(({ method }) => method === '$queryRaw')).toHaveLength(1);
+    expect(invalidPrisma.transactionCalls.some(({ sql }) => sql.includes('meal_plan_days'))).toBe(false);
+  });
+
+  it.each([
+    ['recipe snapshot', { staleRecipe: true }],
+    ['meal update snapshot', { staleUpdatedAt: true }],
+  ])('does not count a stale %s as effective completion', async (_name, staleSnapshot) => {
+    const prisma = queryWithAdherenceRows([
+      adherenceMeal('fresh-completion', 'COMPLETED'),
+      adherenceMeal('stale-completion', 'COMPLETED', staleSnapshot),
+    ]);
+
+    const result = resultFor(await loggerFor(prisma).collect(context));
+
+    expect(result).toMatchObject({ value: 50, quality: 'observed', sample_count: 2 });
+    expect(result?.evidence).toMatchObject({ numerator: 1, denominator: 2 });
+  });
+
+  it('maps the Prisma query-read timeout to unavailable adherence while preserving other KPIs', async () => {
+    const prisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
+    prisma.transaction.$queryRaw.mockReset()
+      .mockResolvedValueOnce([{ initial_plans_count: 2n, manual_recipes_count: 3n }])
+      .mockRejectedValueOnce(new Error('Query read timeout'));
+
+    const results = await loggerFor(prisma).collect(context);
+
+    expect(results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 2, quality: 'observed' }),
+      expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 3, quality: 'observed' }),
+      expect.objectContaining({ kpi_id: 'adherence_rate', value: null, quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE' }),
+    ]));
+  });
+
+  it('bounds both initial business counts and adherence with a local timeout in each transaction', async () => {
+    const prisma = queryPrisma(
+      { initial_plans_count: 2n, manual_recipes_count: 3n },
+      { numerator: 1n, denominator: 1n },
+    );
+
+    await loggerFor(prisma).collect(context);
+
+    const selects = prisma.transactionCalls.filter(({ method, sql }) => method === '$queryRaw' && /\bSELECT\b[\s\S]*\bCOUNT\s*\(/i.test(sql));
+    expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+    expect(selects).toHaveLength(2);
+    for (const select of selects) {
+      expect(select.transaction).not.toBeNull();
+      const queryIndex = prisma.transactionCalls.indexOf(select);
+      const timeout = prisma.transactionCalls.find((call, index) =>
+        call.transaction === select.transaction && index < queryIndex && /SET\s+LOCAL\s+statement_timeout/i.test(call.sql));
+      expect(timeout).toBeDefined();
+      const configured = timeout && /statement_timeout\s*=\s*'?(\d+)(ms|s)'?/i.exec(timeout.sql);
+      expect(configured).not.toBeNull();
+      const timeoutMs = Number(configured?.[1]) * (configured?.[2] === 's' ? 1000 : 1);
+      expect(timeoutMs).toBeGreaterThan(0);
+      expect(timeoutMs).toBeLessThan(5_000);
+    }
   });
 });

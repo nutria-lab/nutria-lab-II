@@ -14,15 +14,17 @@ presentar el estado actual como si fuera una captura histórica.
 ## Decisión
 
 - `adherence_rate` se calcula con el estado válido que la base asociada al ambiente
-  del logger contiene al comenzar `collect`. La fecha del reporte y su ventana no
-  seleccionan la población de este KPI.
-- Es elegible cada comida de un plan vigente cuya fecha civil almacenada sea menor o
-  igual a la fecha actual de `America/Argentina/Buenos_Aires`. Las comidas de hoy se
-  incluyen y las futuras se excluyen. No se asigna una hora individual de comida.
-- `effectiveMealStatus` decide si cada completion sigue correspondiendo al contenido
-  planificado. Sólo un `COMPLETED` efectivo suma al numerador. Toda comida elegible
-  suma una vez al denominador, incluso si está `SKIPPED`, `NOT_LOGGED` o tiene un
-  snapshot stale. Planes y versiones no vigentes quedan fuera.
+  del logger contiene al recolectar, y sólo para la última fecha cuyo corte
+  automático cerró en Argentina según `selectAutomaticArgentinaKpiDate`. Una fecha
+  de reporte distinta queda unavailable con `REPORT_DATE_NOT_CURRENT`.
+- Es elegible cada comida de un plan vigente cuya fecha civil almacenada coincida
+  con `context.date`. La consulta compara esa fecha civil en PostgreSQL; no acumula
+  días ni semanas anteriores.
+- El predicado PostgreSQL reproduce exactamente la semántica de
+  `effectiveMealStatus`: sólo una completion `COMPLETED` con snapshots de receta y
+  `updatedAt` vigentes suma al numerador. Toda comida elegible suma una vez al
+  denominador, incluso si está `SKIPPED`, `NOT_LOGGED` o tiene un snapshot stale.
+  Planes y versiones no vigentes quedan fuera.
 - Se suman comidas en toda la población del ambiente: `100 * C / N`; no se promedian
   tasas por usuario. `0/N` con `N > 0` es cero observado. `0/0` es unavailable con
   `NO_ELIGIBLE_MEALS`. Si falla la fuente, ambos conteos son desconocidos, no cero,
@@ -56,10 +58,18 @@ presentar el estado actual como si fuera una captura histórica.
 ## Consecuencias
 
 El KPI es una observación del estado disponible al recolectar, no una medición
-histórica del corte del reporte. El reporte puede tener una fecha distinta de
-`collection_date`; ambos significados se guardan por separado. La lectura de
+histórica del corte del reporte. `collection_date` identifica la fecha de reporte
+que delimitó la población, mientras `measured_at` identifica cuándo se observó la
+base. La lectura de
 `meal_plan_days.date` compara su fecha civil PostgreSQL (`TIMESTAMP WITHOUT TIME
-ZONE`) con una fecha ISO de Buenos Aires, sin conversión por la zona de sesión.
+ZONE`) con `context.date` (`YYYY-MM-DD` de Argentina), sin conversión por la zona
+de sesión. El corte valida qué fecha puede recolectarse, pero no reconstruye la
+completion exacta que existía a las 21:00. PostgreSQL devuelve sólo los dos
+agregados; cada query aplica `statement_timeout` local de 4 segundos y una
+transacción de hasta 4,5 segundos tras esperar conexión como máximo 0,25 segundos.
+Las dos transacciones secuenciales tienen un presupuesto conjunto de 9,5 segundos,
+por debajo del deadline de 15 segundos de la solicitud, y no dejan configuración
+en la conexión reutilizada.
 
 `KpiPublication.frozenBatch` ya usa JSONB, así que la evidencia agregada se persiste
 sin agregar columnas ni una migración. El payload externo mantiene su shape escalar.

@@ -213,17 +213,16 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
 
   });
 
-  it('queries real current plans and counts eligible today meals with only effective completions in the numerator', async () => {
-    const collectionDate = dateInBuenosAires(new Date());
-    const reportDateForCollection = addCivilDays(collectionDate, -1);
-    const priorDate = reportDateForCollection;
-    const futureDate = addCivilDays(collectionDate, 1);
+  it('queries current plans for report date D and counts only effective completions in the numerator', async () => {
+    const reportDateForCollection = reportDate;
+    const priorDate = addCivilDays(reportDateForCollection, -1);
+    const futureDate = addCivilDays(reportDateForCollection, 1);
     const userId = randomUUID();
     const oldPlanId = randomUUID();
     const currentPlanId = randomUUID();
     await seedPlan(userId, oldPlanId, {
       isCurrent: false, version: 1, startDate: priorDate,
-    }, [{ status: 'COMPLETED', date: collectionDate }]);
+    }, [{ status: 'COMPLETED', date: reportDateForCollection }]);
     await seedPlan(userId, currentPlanId, {
       isCurrent: true, version: 2, supersedesId: oldPlanId, startDate: priorDate,
     }, [
@@ -231,7 +230,11 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
       { status: 'SKIPPED', date: priorDate },
       { status: 'NOT_LOGGED', date: priorDate },
       { status: 'COMPLETED', stale: true, date: priorDate },
-      { status: 'COMPLETED', date: collectionDate },
+      { status: 'COMPLETED', date: reportDateForCollection },
+      { status: 'COMPLETED', date: reportDateForCollection },
+      { status: 'SKIPPED', date: reportDateForCollection },
+      { status: 'NOT_LOGGED', date: reportDateForCollection },
+      { status: 'COMPLETED', stale: true, date: reportDateForCollection },
       { status: 'COMPLETED', date: futureDate },
     ]);
     const window = windowForDate(reportDateForCollection);
@@ -245,21 +248,18 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
 
     expect(results).toHaveLength(11);
     expect(context.date).toBe(reportDateForCollection);
-    expect(context.date).not.toBe(collectionDate);
-    expect(collectionDate).toBe(addCivilDays(reportDateForCollection, 1));
     expect(adherence).toMatchObject({ kpi_id: 'adherence_rate', value: 40, quality: 'observed', sample_count: 5 });
     expect((adherence as typeof adherence & { evidence?: Record<string, unknown> })?.evidence).toMatchObject({
       numerator: 2,
       denominator: 5,
       quality: 'observed',
       reason: null,
-      collection_date: collectionDate,
+      collection_date: reportDateForCollection,
       environment: 'dev',
     });
   });
 
   it('aggregates different user meal counts by meals in PostgreSQL rather than averaging user percentages', async () => {
-    const collectionDate = dateInBuenosAires(new Date());
     const completedUser = randomUUID();
     const otherUser = randomUUID();
     await seedPlan(completedUser, randomUUID(), {}, [{ status: 'COMPLETED' }]);
@@ -275,11 +275,10 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
 
     expect(result).toMatchObject({ value: 10, quality: 'observed', sample_count: 10 });
     expect((result as typeof result & { evidence?: Record<string, unknown> })?.evidence)
-      .toMatchObject({ numerator: 1, denominator: 10, collection_date: collectionDate });
+      .toMatchObject({ numerator: 1, denominator: 10, collection_date: reportDate });
   });
 
   it('preserves an exact eighty-percent numerator and denominator from migrated PostgreSQL tables', async () => {
-    const collectionDate = dateInBuenosAires(new Date());
     await seedPlan(randomUUID(), randomUUID(), {}, Array.from({ length: 40 }, (_, index) => ({
       status: index < 32 ? 'COMPLETED' as const : 'SKIPPED' as const,
     })));
@@ -294,7 +293,7 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
 
     expect(result).toMatchObject({ value: 80, quality: 'observed', sample_count: 40 });
     expect((result as typeof result & { evidence?: Record<string, unknown> })?.evidence)
-      .toMatchObject({ numerator: 32, denominator: 40, collection_date: collectionDate, environment: 'dev' });
+      .toMatchObject({ numerator: 32, denominator: 40, collection_date: reportDate, environment: 'dev' });
   });
 
   it('round-trips the eleven-result frozen batch and evidence through real PostgreSQL while leaving a legacy ten-result batch unchanged', async () => {

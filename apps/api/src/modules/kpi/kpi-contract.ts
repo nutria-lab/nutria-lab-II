@@ -58,7 +58,9 @@ export function isAdherenceEvidence(value: unknown): value is AdherenceEvidence 
   if (evidence.quality === 'observed') {
     return evidence.reason === null && validCounts && (evidence.denominator as number) > 0;
   }
-  if (unknownCounts) return evidence.reason === 'SOURCE_UNAVAILABLE';
+  if (unknownCounts) {
+    return evidence.reason === 'SOURCE_UNAVAILABLE' || evidence.reason === 'REPORT_DATE_NOT_CURRENT';
+  }
   return evidence.reason === 'NO_ELIGIBLE_MEALS' && evidence.numerator === 0 && evidence.denominator === 0;
 }
 

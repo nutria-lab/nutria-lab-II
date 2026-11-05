@@ -7,8 +7,21 @@ import type {
   KpiResult,
   Measurement,
 } from './kpi-contract';
+import { isAdherenceEvidence } from './kpi-contract';
 
 describe('KPI contract v1', () => {
+  it('accepts an unavailable adherence result when the report date is not the current automatic cut', () => {
+    expect(isAdherenceEvidence({
+      numerator: null,
+      denominator: null,
+      quality: 'unavailable',
+      reason: 'REPORT_DATE_NOT_CURRENT',
+      collection_date: '2026-10-09',
+      measured_at: '2026-10-10T06:04:05.006Z',
+      environment: 'qa',
+    })).toBe(true);
+  });
+
   it('defines the closed shared contract used by every KPI collector and publisher boundary', async () => {
     const environment: KpiEnvironment = 'qa';
     const ids: readonly KpiId[] = [

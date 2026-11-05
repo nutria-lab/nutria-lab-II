@@ -75,9 +75,9 @@ export const KPI_CATALOG_DEFINITIONS: readonly KpiCatalogDefinition[] = [
   },
   {
     id: 'adherence_rate', kind: 'business', unit: '%',
-    description: 'Porcentaje global de comidas planificadas elegibles que están completadas efectivamente en la base al recolectar.',
-    source: 'meal_plans actuales y sus comidas con fecha civil UTC almacenada <= hoy en America/Argentina/Buenos_Aires; effectiveMealStatus determina completions válidas.',
-    justification: 'Agrega por comida sobre la población completa; una fuente vacía o caída queda unavailable y no se presenta como cero observado.',
+    description: 'Porcentaje global de comidas del día de reporte en planes vigentes que están completadas efectivamente al recolectar; sólo se calcula para el último corte automático cerrado de Argentina.',
+    source: 'Agregación PostgreSQL sobre meal_plans vigentes y comidas cuya fecha civil almacenada coincide con context.date; el estado efectivo requiere completion COMPLETED y snapshots vigentes.',
+    justification: 'Agrega por comida para la fecha de reporte sin reconstruir su estado histórico; fecha no vigente, fuente vacía o caída quedan unavailable y no se presentan como cero observado.',
   },
 ];
 
