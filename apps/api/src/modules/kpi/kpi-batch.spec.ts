@@ -31,13 +31,13 @@ describe('KPI batch freezing', () => {
     ]);
 
     expect(batch.measurements).toEqual([
-      { kpi_id: 'availability_rate', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
       { kpi_id: 'adherence_rate', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
+      { kpi_id: 'availability_rate', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
       { kpi_id: 'manual_recipes_count', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
     ]);
     expect(batch.diagnostics).toEqual([
-      { kpi_id: 'availability_rate', quality: 'observed', reason: null, sample_count: 0 },
       { kpi_id: 'adherence_rate', quality: 'observed', reason: null, sample_count: 0 },
+      { kpi_id: 'availability_rate', quality: 'observed', reason: null, sample_count: 0 },
       { kpi_id: 'manual_recipes_count', quality: 'defaulted', reason: 'SOURCE_UNAVAILABLE', sample_count: 0 },
     ]);
   });

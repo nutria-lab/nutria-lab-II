@@ -11,11 +11,11 @@ const CANON = windowForDate(DAY);
 const CLOCK_HOURS_LATER = new Date('2026-10-12T18:30:00.000Z'); // 15:30 local del día siguiente
 
 const ALL_KPI_IDS: readonly KpiId[] = [
+  'adherence_rate',
   'availability_rate',
   'dependency_error_rate',
   'error_rate',
   'health_status',
-  'adherence_rate',
   'last_success_age_seconds',
   'latency_p95_ms',
   'manual_recipes_count',
