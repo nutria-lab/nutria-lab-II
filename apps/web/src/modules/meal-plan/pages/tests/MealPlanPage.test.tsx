@@ -30,7 +30,7 @@ vi.mock('@/services/mealPlanService', async (importOriginal) => {
 vi.mock('@/services/adherenceService', () => ({
   adherenceService: { getForWeek: vi.fn(), setMealStatus: vi.fn() },
 }));
-vi.mock('@/features/auth/AuthProvider', () => ({
+vi.mock('../../../../features/auth/AuthProvider', () => ({
   useAuth: () => ({ status: 'authenticated', user: { id: 'user-1' } }),
 }));
 

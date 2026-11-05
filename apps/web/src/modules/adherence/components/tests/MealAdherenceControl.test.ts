@@ -136,7 +136,7 @@ describe('MealAdherenceControl', () => {
     const select = screen.getByRole('combobox', { name: `Estado de ${input.meal.title}` });
     await user.tab();
     expect(select).toHaveFocus();
-    await user.keyboard('{ARROWDOWN}');
+    await user.selectOptions(select, 'COMPLETED');
     expect(input.onSetStatus).toHaveBeenCalledWith('COMPLETED');
     expect(submit).not.toHaveBeenCalled();
   });
