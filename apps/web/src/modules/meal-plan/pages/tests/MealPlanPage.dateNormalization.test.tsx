@@ -20,6 +20,9 @@ import { apiClient } from '@/services/apiClient';
 vi.mock('@/services/apiClient', () => ({
   apiClient: { get: vi.fn(), post: vi.fn() },
 }));
+vi.mock('../../../../features/auth/AuthProvider', () => ({
+  useAuth: () => ({ status: 'authenticated', user: { id: 'user-1' } }),
+}));
 
 function buildIsoMeal(overrides: Record<string, unknown> = {}) {
   return {
