@@ -75,9 +75,16 @@ export function useShoppingList(
     if (!context.authenticated || !context.sessionIdentity) return;
     const generation = ++loadGeneration.current;
     activeRead.current?.abort();
-    setState("loading");
-    setResponse(undefined);
-    confirmed.current = undefined;
+    const hasSnapshot = Boolean(confirmed.current);
+    if (hasSnapshot) {
+      setState("success");
+      setStale(true);
+      staleRef.current = true;
+    } else {
+      setState("loading");
+      setResponse(undefined);
+      confirmed.current = undefined;
+    }
     if (waitForSameContextWrites) {
       const sameContextWrites = [...writes.current.values()]
         .filter(
@@ -100,8 +107,6 @@ export function useShoppingList(
     activeRead.current = controller;
     setItemErrors({});
     errorRef.current = {};
-    setStale(false);
-    staleRef.current = false;
     reconciliation.current = false;
     const isCurrent = () =>
       loadGeneration.current === generation &&
@@ -118,10 +123,16 @@ export function useShoppingList(
       setResponse(next);
       confirmed.current = next;
       setState("success");
+      setStale(false);
+      staleRef.current = false;
     } catch (error) {
       if (!isCurrent() || axios.isCancel(error) || controller.signal.aborted)
         return;
-      setState("error");
+      setState(hasSnapshot ? "success" : "error");
+      if (hasSnapshot) {
+        setStale(true);
+        staleRef.current = true;
+      }
     }
   }, []);
 
@@ -197,6 +208,7 @@ export function useShoppingList(
             isRequestCurrent: isCurrent,
           });
           if (!isCurrent() || staleRef.current) return;
+          setConflictNotice(false);
           setResponse((current) => {
             if (
               !current ||
@@ -286,7 +298,7 @@ export function useShoppingList(
     itemErrors,
     stale,
     conflictNotice,
-    reload: stale ? undefined : reload,
+    reload,
     setChecked: (key: string, checked: boolean) => sendCheck(key, checked),
     retryItem,
   };
