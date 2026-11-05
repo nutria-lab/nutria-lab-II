@@ -76,8 +76,8 @@ describe('KPI batch freezing', () => {
       denominator: 40,
       quality: 'observed' as const,
       reason: null,
-      collection_date: '2026-10-29',
-      measured_at: '2026-10-29T03:00:00.000Z',
+      collection_date: context.date,
+      measured_at: context.window_end,
       environment: 'prod' as const,
     };
     const results = currentIds.map((kpi_id) => kpi_id === 'adherence_rate'
@@ -95,6 +95,27 @@ describe('KPI batch freezing', () => {
     expect(batch.measurements.map(({ kpi_id }) => kpi_id)).toEqual([...currentIds].sort());
     expect(adherence).toMatchObject({ kpi_id: 'adherence_rate', sample_count: 40, evidence });
     expect(canonicalPayloadBytes(batch.measurements).toString('utf8')).not.toContain('numerator');
+  });
+
+  it('rejects unavailable adherence evidence for a different collection date than the frozen context', () => {
+    const evidence = {
+      numerator: null,
+      denominator: null,
+      quality: 'unavailable' as const,
+      reason: 'SOURCE_UNAVAILABLE',
+      collection_date: '2026-10-10',
+      measured_at: '2026-10-10T03:30:00.000Z',
+      environment: 'prod' as const,
+    };
+    const results = currentIds.map((kpi_id) => kpi_id === 'adherence_rate'
+      ? {
+          ...result(kpi_id, null, 'unavailable'),
+          measured_at: evidence.measured_at,
+          evidence,
+        }
+      : result(kpi_id, 0));
+
+    expect(() => freezeBatch(context, results)).toThrow(/collection_date|report date|context date/i);
   });
 
   it('does not enrich a previously frozen ten-result batch with the new KPI', () => {

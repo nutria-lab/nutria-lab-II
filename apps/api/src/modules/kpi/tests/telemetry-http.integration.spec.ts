@@ -297,7 +297,7 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
   });
 
   it('round-trips the eleven-result frozen batch and evidence through real PostgreSQL while leaving a legacy ten-result batch unchanged', async () => {
-    const measuredAt = new Date().toISOString();
+    const measuredAt = '2026-10-10T03:30:00.000Z';
     const collectionDate = dateInBuenosAires(new Date(measuredAt));
     const reportDateForBatch = addCivilDays(collectionDate, -1);
     const legacyIds = [
@@ -310,7 +310,7 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
       denominator: 40,
       quality: 'observed' as const,
       reason: null,
-      collection_date: collectionDate,
+      collection_date: reportDateForBatch,
       measured_at: measuredAt,
       environment: 'dev' as const,
     };
@@ -368,6 +368,8 @@ describeIfKpiDb('Telemetry CLI -> full Nest application -> local PostgreSQL', ()
 
     expect(currentContext.date).not.toBe(collectionDate);
     expect(collectionDate).toBe(addCivilDays(currentContext.date, 1));
+    expect(dateInBuenosAires(new Date(evidence.measured_at))).toBe(collectionDate);
+    expect(evidence.collection_date).toBe(currentContext.date);
     expect(adherenceDiagnostic).toMatchObject({ kpi_id: 'adherence_rate', sample_count: 40, evidence });
   });
 });

@@ -140,6 +140,25 @@ describe('CompositeKpiLogger', () => {
     });
   });
 
+  it('keeps the report date as adherence collection_date when an unavailable retry is measured after midnight in Argentina', async () => {
+    const telemetry = loggerFor(telemetryIds.map((id) => observed(id, 0)));
+    const data = { collect: jest.fn().mockRejectedValue({ code: 'SOURCE_UNAVAILABLE' }) };
+    const afterMidnightArgentina = new Date('2026-10-10T03:30:00.000Z');
+
+    const results = await new CompositeKpiLogger(telemetry, data, () => afterMidnightArgentina).collect(context);
+    const adherence = results.find(({ kpi_id }) => kpi_id === 'adherence_rate');
+
+    expect(adherence).toMatchObject({
+      kpi_id: 'adherence_rate',
+      quality: 'unavailable',
+      measured_at: afterMidnightArgentina.toISOString(),
+      evidence: {
+        collection_date: context.date,
+        measured_at: afterMidnightArgentina.toISOString(),
+      },
+    });
+  });
+
   it('preserves the other business results when only adherence is unavailable', async () => {
     const telemetry = loggerFor(telemetryIds.map((id) => observed(id, 0)));
     const data = loggerFor([

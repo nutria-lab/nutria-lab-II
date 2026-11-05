@@ -20,7 +20,7 @@ function result(kpi_id: KpiId): KpiResult {
     sample_count: kpi_id === 'adherence_rate' ? 40 : 0, measured_at: '2026-10-10T00:00:00.000Z',
     ...(kpi_id === 'adherence_rate' ? { evidence: {
       numerator: 32, denominator: 40, quality: 'observed', reason: null,
-      collection_date: '2026-10-10', measured_at: '2026-10-10T00:00:00.000Z', environment: 'prod',
+      collection_date: date, measured_at: '2026-10-10T00:00:00.000Z', environment: 'prod',
     } } : {}),
   };
 }
@@ -77,6 +77,37 @@ describe('KpiPublisher', () => {
     await expect(h.publisher.publish({ ...h.request, date: '2026-10-10' })).rejects.toThrow();
 
     expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it('rejects adherence evidence with a different collection date before freezing it in the repository', async () => {
+    const { publisher, repository, logger, remoteClient, request } = publisherHarness();
+    const measuredAt = '2026-10-10T03:30:00.000Z';
+    const malformedResults = ids.map((kpi_id) => kpi_id === 'adherence_rate'
+      ? {
+          ...result(kpi_id),
+          value: null,
+          quality: 'unavailable' as const,
+          reason: 'SOURCE_UNAVAILABLE',
+          sample_count: 0,
+          measured_at: measuredAt,
+          evidence: {
+            numerator: null,
+            denominator: null,
+            quality: 'unavailable' as const,
+            reason: 'SOURCE_UNAVAILABLE',
+            collection_date: '2026-10-10',
+            measured_at: measuredAt,
+            environment: 'prod' as const,
+          },
+        }
+      : result(kpi_id));
+    logger.collect.mockResolvedValueOnce(malformedResults);
+    const freezeBatch = jest.spyOn(repository, 'freezeBatchConditionally');
+
+    await expect(publisher.publish(request)).rejects.toThrow(/collection_date|report date|context date/i);
+
+    expect(freezeBatch).not.toHaveBeenCalled();
+    expect(remoteClient.post).not.toHaveBeenCalled();
   });
 
   it('freshly collects, freezes durably, posts the exact frozen bytes, accepts, verifies MATCH, and delivers', async () => {

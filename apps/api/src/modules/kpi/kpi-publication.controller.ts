@@ -184,7 +184,8 @@ function parseFrozenBatch(value: unknown): FrozenBatch {
     }
     if (raw.evidence !== undefined) {
       if (raw.kpi_id !== 'adherence_rate' || !isAdherenceEvidence(raw.evidence) ||
-        raw.evidence.environment !== environment || raw.sample_count !== (raw.evidence.denominator ?? 0) ||
+        raw.evidence.collection_date !== date || raw.evidence.environment !== environment ||
+        raw.sample_count !== (raw.evidence.denominator ?? 0) ||
         raw.quality !== (raw.evidence.quality === 'unavailable' ? 'defaulted' : 'observed') ||
         raw.reason !== raw.evidence.reason ||
         measurementValues.get('adherence_rate') !== (raw.evidence.quality === 'observed'

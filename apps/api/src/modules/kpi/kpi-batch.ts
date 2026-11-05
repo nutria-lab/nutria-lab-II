@@ -9,6 +9,12 @@ export function canonicalPayloadBytes(measurements: readonly Measurement[]): Buf
 
 /** Normalizes collector results into an immutable, reproducible publication batch. */
 export function freezeBatch(context: CollectionContext, results: readonly KpiResult[]): FrozenBatch {
+  for (const result of results) {
+    if (result.kpi_id === 'adherence_rate' && result.evidence && result.evidence.collection_date !== context.date) {
+      throw new TypeError('adherence evidence collection_date must match the batch report date');
+    }
+  }
+
   const ordered = [...results].sort((left, right) => compareKpiId(left.kpi_id, right.kpi_id));
   const measurements = ordered.map((result) => toMeasurement(context, result));
   const diagnostics = ordered.map((result) => ({

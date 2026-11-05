@@ -122,6 +122,23 @@ describe('KpiPublicationController', () => {
     expect(repository.freezeBatchConditionally).not.toHaveBeenCalled();
   });
 
+  it('rejects frozen adherence evidence whose collection date differs from the batch context before repository persistence', async () => {
+    const { repository, controller } = setup();
+    const malformed = {
+      ...batch,
+      diagnostics: batch.diagnostics.map((diagnostic) => diagnostic.kpi_id === 'adherence_rate'
+        ? {
+            ...diagnostic,
+            evidence: { ...diagnostic.evidence!, collection_date: '2026-10-10' },
+          }
+        : diagnostic),
+    };
+
+    await expect(controller.freeze({ run_id: context.run_id, batch: malformed })).rejects.toThrow(BadRequestException);
+
+    expect(repository.freezeBatchConditionally).not.toHaveBeenCalled();
+  });
+
   it('rejects malformed frozen payloads and non-technical failure details before touching the database', async () => {
     const { repository, controller } = setup();
 

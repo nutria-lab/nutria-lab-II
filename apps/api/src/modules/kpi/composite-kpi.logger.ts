@@ -1,6 +1,5 @@
 import { isAdherenceEvidence } from './kpi-contract';
 import type { CollectionContext, KpiId, KpiLogger, KpiResult } from './kpi-contract';
-import { dateInBuenosAires } from '@/modules/adherence/adherence.repository';
 
 const telemetryKpiIds = [
   'operations_count',
@@ -146,7 +145,7 @@ function unavailable(kpi_id: KpiId, measured_at: string, context: CollectionCont
         denominator: null,
         quality: 'unavailable',
         reason: 'SOURCE_UNAVAILABLE',
-        collection_date: dateInBuenosAires(new Date(measured_at)),
+        collection_date: context.date,
         measured_at,
         environment: context.environment,
       },
