@@ -168,47 +168,9 @@ export function TopBar({
               </span>
               <span>Nueva Receta</span>
             </button>
-            <div className="mx-1 h-6 w-px bg-outline-variant/40" />
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                notifications
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label="Configuración"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                settings
-              </span>
-            </button>
           </>
         ) : (
           <>
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                notifications
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label="Configuración"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                settings
-              </span>
-            </button>
-
             <div className="flex items-center gap-3 border-l border-outline-variant/40 pl-4">
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-bold text-on-surface">{displayName}</p>
