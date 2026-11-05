@@ -31,3 +31,20 @@ export type ShoppingListResponse = {
   summary: { totalItems: number; checkedItems: number };
   warnings: ShoppingListWarning[];
 };
+
+export type ShoppingListCheckRequest = {
+  planId: string;
+  planUpdatedAt: string;
+  checked: boolean;
+};
+
+export type ShoppingListCheckResponse = {
+  itemKey: string;
+  checked: boolean;
+};
+
+export type ShoppingListItemError = {
+  message: string;
+  checked: boolean;
+  action: "retry" | "reload";
+};

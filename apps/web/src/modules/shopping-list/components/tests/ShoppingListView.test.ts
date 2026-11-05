@@ -176,6 +176,21 @@ describe("ShoppingListView, Contract C fixtures", () => {
     expect(checkbox).toHaveFocus();
   });
 
+  it("keeps a pending checkbox focused and exposes its disabled state accessibly", () => {
+    renderView({ pending: { "opaque-onion-key": true } });
+    const checkbox = screen.getByRole("checkbox", { name: /cebolla/i });
+    checkbox.focus();
+
+    expect(checkbox).toHaveFocus();
+    expect(checkbox).not.toBeDisabled();
+    expect(checkbox).toHaveAttribute("aria-disabled", "true");
+    expect(checkbox).toHaveAttribute(
+      "aria-describedby",
+      "shopping-item-status-opaque-onion-key",
+    );
+    expect(screen.getByText(/guardando/i)).toBeInTheDocument();
+  });
+
   it("provides retry for an error state and a login destination for an expired session", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();

@@ -7,8 +7,17 @@ import { Pool } from 'pg';
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
     const connectionString = process.env.DATABASE_URL;
-    const pool = new Pool({ connectionString });
-    const adapter = new PrismaPg(pool);
+    const pool = new Pool({ connectionString, connectionTimeoutMillis: 10_000 });
+    const adapter = new PrismaPg(pool, {
+      // The adapter does not own an externally supplied pool unless requested.
+      // Dispose it on $disconnect so Nest lifecycle restarts don't leak pools.
+      disposeExternalPool: true,
+      onPoolError: (error) => {
+        // pg pool errors can include connection details; keep logs sanitized.
+        const code = (error as Error & { code?: string }).code;
+        console.error('PostgreSQL connection pool error:', error.name, code);
+      },
+    });
 
     super({ adapter });
   }

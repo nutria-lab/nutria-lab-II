@@ -1,9 +1,10 @@
-import axios, { type AxiosError } from 'axios';
+import axios, { type AxiosError } from "axios";
 
-declare module 'axios' {
+declare module "axios" {
   interface AxiosRequestConfig {
     skipAuthErrorHandling?: boolean;
     authErrorHandled?: boolean;
+    isRequestCurrent?: () => boolean;
   }
 }
 
@@ -12,19 +13,16 @@ type AuthFailureHandler = () => void | Promise<void>;
 let authFailureHandler: AuthFailureHandler | null = null;
 let authFailureInFlight: Promise<void> | null = null;
 
-const ACCESS_GATE_REQUIRED_CODE = 'ACCESS_GATE_REQUIRED';
+const ACCESS_GATE_REQUIRED_CODE = "ACCESS_GATE_REQUIRED";
 
-const EXCLUDED_AUTH_PATHS = new Set([
-  '/auth/login',
-  '/auth/logout',
-]);
+const EXCLUDED_AUTH_PATHS = new Set(["/auth/login", "/auth/logout"]);
 
-const backendUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : '/api';
+const backendUrl = import.meta.env.DEV ? import.meta.env.VITE_API_URL : "/api";
 
 if (!backendUrl) {
   // Falla rápido y explícito: sin esto, las requests saldrían con una base
   // URL vacía y los errores de red se verían como fallas genéricas.
-  throw new Error('VITE_API_URL no está configurada.');
+  throw new Error("VITE_API_URL no está configurada.");
 }
 
 export const apiClient = axios.create({
@@ -46,7 +44,10 @@ function isExcludedAuthPath(url?: string) {
   }
 
   try {
-    const pathname = new URL(url, 'http://localhost').pathname.replace(/\/+$/, '');
+    const pathname = new URL(url, "http://localhost").pathname.replace(
+      /\/+$/,
+      "",
+    );
     return EXCLUDED_AUTH_PATHS.has(pathname);
   } catch {
     return false;
@@ -55,7 +56,11 @@ function isExcludedAuthPath(url?: string) {
 
 function isAccessGateError(error: AxiosError) {
   const data = error.response?.data;
-  return Boolean(data && typeof data === 'object' && (data as { code?: unknown }).code === ACCESS_GATE_REQUIRED_CODE);
+  return Boolean(
+    data &&
+    typeof data === "object" &&
+    (data as { code?: unknown }).code === ACCESS_GATE_REQUIRED_CODE,
+  );
 }
 
 function shouldHandleAuthError(error: AxiosError) {
@@ -70,7 +75,11 @@ function shouldHandleAuthError(error: AxiosError) {
     return false;
   }
 
-  if (config.skipAuthErrorHandling || config.authErrorHandled || isAccessGateError(error)) {
+  if (
+    config.skipAuthErrorHandling ||
+    config.authErrorHandled ||
+    isAccessGateError(error)
+  ) {
     return false;
   }
 
@@ -80,7 +89,14 @@ function shouldHandleAuthError(error: AxiosError) {
 apiClient.interceptors.response.use(
   (response) => response,
   async (error: unknown) => {
-    if (!axios.isAxiosError(error) || !shouldHandleAuthError(error)) {
+    if (!axios.isAxiosError(error)) {
+      return Promise.reject(error);
+    }
+
+    if (
+      error.config?.isRequestCurrent?.() === false ||
+      !shouldHandleAuthError(error)
+    ) {
       return Promise.reject(error);
     }
 

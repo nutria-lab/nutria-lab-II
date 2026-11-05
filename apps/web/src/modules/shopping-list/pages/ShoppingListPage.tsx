@@ -1,78 +1,59 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  shoppingListFixturesByWeek,
-  noPlanShoppingListFixture,
-} from "../fixtures/shoppingList.fixture";
-import type { ShoppingListResponse } from "../types";
-import { isMondayDate } from "../utils";
-import {
-  ShoppingListView,
-  type ShoppingListViewState,
-} from "../components/ShoppingListView";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 
-const INITIAL_WEEK = "2026-10-19";
-const FALLBACK_RESPONSE = noPlanShoppingListFixture;
+import { useAuth } from "../../../features/auth/AuthProvider";
+import { ShoppingListView } from "../components/ShoppingListView";
+import { useShoppingList } from "../hooks/useShoppingList";
+import {
+  getBuenosAiresWeekStart,
+  isMondayDate,
+  shiftWeekStart,
+} from "../utils";
 
 export function ShoppingListPage() {
-  const [weekStart, setWeekStart] = useState(INITIAL_WEEK);
-  const [state, setState] = useState<ShoppingListViewState>("success");
-  const [response, setResponse] = useState<ShoppingListResponse>(
-    shoppingListFixturesByWeek[INITIAL_WEEK],
-  );
-  const timer = useRef<number | undefined>(undefined);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { status, user } = useAuth();
+  const requestedWeek = searchParams.get("weekStart");
+  const weekStart =
+    requestedWeek && isMondayDate(requestedWeek)
+      ? requestedWeek
+      : getBuenosAiresWeekStart();
 
-  useEffect(() => () => window.clearTimeout(timer.current), []);
-
-  const changeWeek = useCallback((nextWeekStart: string) => {
-    if (!isMondayDate(nextWeekStart)) return;
-    window.clearTimeout(timer.current);
-    setWeekStart(nextWeekStart);
-    setState("loading");
-    timer.current = window.setTimeout(() => {
-      const fixture = shoppingListFixturesByWeek[nextWeekStart] ?? {
-        ...FALLBACK_RESPONSE,
-        weekStart: nextWeekStart,
-      };
-      setResponse(fixture);
-      setState("success");
-    }, 120);
-  }, []);
-
-  const retry = useCallback(() => {
-    setState("loading");
-    timer.current = window.setTimeout(() => {
-      const fixture = shoppingListFixturesByWeek[weekStart] ?? {
-        ...FALLBACK_RESPONSE,
-        weekStart,
-      };
-      setResponse(fixture);
-      setState("success");
-    }, 120);
-  }, [weekStart]);
-
-  const setChecked = useCallback((key: string, checked: boolean) => {
-    setResponse((current) => {
-      const items = current.items.map((item) =>
-        item.key === key ? { ...item, checked } : item,
-      );
-      return {
-        ...current,
-        items,
-        summary: {
-          totalItems: items.length,
-          checkedItems: items.filter((item) => item.checked).length,
+  useEffect(() => {
+    if (requestedWeek !== weekStart) {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          next.set("weekStart", weekStart);
+          return next;
         },
-      };
-    });
-  }, []);
+        { replace: true },
+      );
+    }
+  }, [requestedWeek, setSearchParams, weekStart]);
+
+  const list = useShoppingList(weekStart, user, status === "authenticated");
 
   return (
     <ShoppingListView
-      onChangeWeek={changeWeek}
-      onRetry={retry}
-      onSetChecked={setChecked}
-      response={state === "loading" ? undefined : response}
-      state={state}
+      onChangeWeek={(next) => {
+        if (isMondayDate(next)) {
+          setSearchParams((current) => {
+            const params = new URLSearchParams(current);
+            params.set("weekStart", next);
+            return params;
+          });
+        }
+      }}
+      onRetry={list.reload ?? (() => undefined)}
+      onSetChecked={list.setChecked}
+      onRetryItem={list.retryItem}
+      pending={list.pending}
+      itemErrors={list.itemErrors}
+      stale={list.stale}
+      conflictNotice={list.conflictNotice}
+      response={list.response}
+      state={list.state}
       weekStart={weekStart}
     />
   );
