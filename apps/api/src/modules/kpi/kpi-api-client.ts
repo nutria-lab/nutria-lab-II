@@ -236,7 +236,7 @@ function isKpiResults(value: unknown): value is readonly KpiResult[] {
 const ALL_KPI_IDS = [
   'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
   'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-  'initial_plans_count', 'manual_recipes_count',
+  'adherence_rate', 'manual_recipes_count',
 ] as const;
 
 type PublicationRecordDto = Omit<PublicationRecord, 'frozenPayload'>;

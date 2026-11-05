@@ -17,12 +17,12 @@ function queryPrisma(row: Record<string, bigint | number>) {
 
 describe('DataKpiLogger', () => {
   it('uses one tagged, parameterized query over the UTC [start, end) bounds and maps successful counts as observed', async () => {
-    const prisma = queryPrisma({ initial_plans_count: 2n, manual_recipes_count: 3n });
+    const prisma = queryPrisma({ adherence_rate: 2n, manual_recipes_count: 3n });
     const logger = new DataKpiLogger(prisma as never);
 
     await expect(logger.collect(context)).resolves.toEqual([
       expect.objectContaining({
-        kpi_id: 'initial_plans_count', value: 2, quality: 'observed', reason: null,
+        kpi_id: 'adherence_rate', value: 2, quality: 'observed', reason: null,
       }),
       expect.objectContaining({
         kpi_id: 'manual_recipes_count', value: 3, quality: 'observed', reason: null,
@@ -44,10 +44,10 @@ describe('DataKpiLogger', () => {
   });
 
   it('preserves a successful zero as observed rather than unavailable', async () => {
-    const logger = new DataKpiLogger(queryPrisma({ initial_plans_count: 0n, manual_recipes_count: 0n }) as never);
+    const logger = new DataKpiLogger(queryPrisma({ adherence_rate: 0n, manual_recipes_count: 0n }) as never);
 
     await expect(logger.collect(context)).resolves.toEqual([
-      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', reason: null }),
+      expect.objectContaining({ kpi_id: 'adherence_rate', value: 0, quality: 'observed', reason: null }),
       expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 0, quality: 'observed', reason: null }),
     ]);
   });
@@ -57,7 +57,7 @@ describe('DataKpiLogger', () => {
     const logger = new DataKpiLogger(prisma as never, () => new Date('2026-10-10T00:04:05.006Z'));
 
     await expect(logger.collect(context)).resolves.toEqual([
-      expect.objectContaining({ kpi_id: 'initial_plans_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
+      expect.objectContaining({ kpi_id: 'adherence_rate', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
       expect.objectContaining({ kpi_id: 'manual_recipes_count', value: 0, quality: 'observed', measured_at: '2026-10-10T00:04:05.006Z' }),
     ]);
   });
@@ -68,7 +68,7 @@ describe('DataKpiLogger', () => {
 
     await expect(logger.collect(context)).resolves.toEqual([
       expect.objectContaining({
-        kpi_id: 'initial_plans_count', value: null, quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE',
+        kpi_id: 'adherence_rate', value: null, quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE',
       }),
       expect.objectContaining({
         kpi_id: 'manual_recipes_count', value: null, quality: 'unavailable', reason: 'SOURCE_UNAVAILABLE',
@@ -78,7 +78,7 @@ describe('DataKpiLogger', () => {
 
   it('converts bigint only while it remains a safe integer and fails structurally on overflow', async () => {
     const safe = new DataKpiLogger(queryPrisma({
-      initial_plans_count: BigInt(Number.MAX_SAFE_INTEGER), manual_recipes_count: 1n,
+      adherence_rate: BigInt(Number.MAX_SAFE_INTEGER), manual_recipes_count: 1n,
     }) as never);
     await expect(safe.collect(context)).resolves.toEqual([
       expect.objectContaining({ value: Number.MAX_SAFE_INTEGER }),
@@ -86,7 +86,7 @@ describe('DataKpiLogger', () => {
     ]);
 
     const overflow = new DataKpiLogger(queryPrisma({
-      initial_plans_count: BigInt(Number.MAX_SAFE_INTEGER) + 1n, manual_recipes_count: 1n,
+      adherence_rate: BigInt(Number.MAX_SAFE_INTEGER) + 1n, manual_recipes_count: 1n,
     }) as never);
     await expect(overflow.collect(context)).rejects.toThrow(/safe integer|overflow/i);
   });

@@ -15,7 +15,7 @@ const ALL_KPI_IDS: readonly KpiId[] = [
   'dependency_error_rate',
   'error_rate',
   'health_status',
-  'initial_plans_count',
+  'adherence_rate',
   'last_success_age_seconds',
   'latency_p95_ms',
   'manual_recipes_count',
@@ -61,7 +61,7 @@ class FakeComposite {
 
 const businessLogger: KpiLogger = {
   async collect(ctx) {
-    return (['initial_plans_count', 'manual_recipes_count'] as const).map(kpiId => ({
+    return (['adherence_rate', 'manual_recipes_count'] as const).map(kpiId => ({
       kpi_id: kpiId,
       value: 1,
       quality: 'observed' as const,
@@ -280,7 +280,7 @@ describe('TelemetryLogger.collect (G4)', () => {
     });
   });
 
-  it('Composite falso: ids disjuntos con initial_plans_count/manual_recipes_count y completo con ellos', async () => {
+  it('Composite falso: ids disjuntos con adherence_rate/manual_recipes_count y completo con ellos', async () => {
     const { logger } = makeLogger();
     const composite = new FakeComposite([logger, businessLogger]);
 
