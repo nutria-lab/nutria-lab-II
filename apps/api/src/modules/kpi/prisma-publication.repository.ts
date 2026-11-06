@@ -4,6 +4,7 @@ import { Prisma } from '../../generated/prisma/client';
 import type { PrismaService } from '../../prisma/prisma.service';
 
 import { canonicalPayloadBytes } from './kpi-batch';
+import { isAdherenceEvidence } from './kpi-contract';
 import type { FrozenBatch, Measurement } from './kpi-contract';
 import type { PublicationRecord, PublicationRepository, PublicationReservation, PublicationStatus } from './publication-repository.port';
 import { windowForDate } from './window/kpi-window';
@@ -216,9 +217,29 @@ function toFrozenBatch(value: Prisma.JsonValue | null): FrozenBatch | null {
     if (!isRecord(diagnostic) || typeof diagnostic.kpi_id !== 'string' ||
       (diagnostic.quality !== 'observed' && diagnostic.quality !== 'defaulted') ||
       (diagnostic.reason !== null && typeof diagnostic.reason !== 'string') || typeof diagnostic.sample_count !== 'number') return null;
+    if (diagnostic.evidence !== undefined) {
+      if (diagnostic.kpi_id !== 'adherence_rate' || !isAdherenceEvidence(diagnostic.evidence)) return null;
+      const evidence = diagnostic.evidence;
+      const adherenceValue = measurements.find(item => item.kpi_id === 'adherence_rate')?.value;
+      if (evidence.environment !== context.environment || diagnostic.sample_count !== (evidence.denominator ?? 0) ||
+        diagnostic.reason !== evidence.reason ||
+        diagnostic.quality !== (evidence.quality === 'unavailable' ? 'defaulted' : 'observed') ||
+        adherenceValue !== (evidence.quality === 'observed'
+          ? (100 * evidence.numerator!) / evidence.denominator!
+          : 0)) return null;
+    }
     diagnostics.push({
       kpi_id: diagnostic.kpi_id as Measurement['kpi_id'], quality: diagnostic.quality,
       reason: diagnostic.reason, sample_count: diagnostic.sample_count,
+      ...(diagnostic.evidence ? { evidence: {
+        numerator: diagnostic.evidence.numerator,
+        denominator: diagnostic.evidence.denominator,
+        quality: diagnostic.evidence.quality,
+        reason: diagnostic.evidence.reason,
+        collection_date: diagnostic.evidence.collection_date,
+        measured_at: diagnostic.evidence.measured_at,
+        environment: diagnostic.evidence.environment,
+      } } : {}),
     });
   }
 

@@ -1,4 +1,4 @@
-import type { KpiEnvironment } from './kpi-contract';
+import type { AdherenceEvidence, KpiEnvironment } from './kpi-contract';
 
 export interface PublicationArtifactInput {
   frozenPayload: Buffer;
@@ -8,7 +8,13 @@ export interface PublicationArtifactInput {
   windowStart: string;
   windowEnd: string;
   payloadSha256: string;
-  diagnostics: readonly { kpi_id: string; quality: string; sample_count: number; reason?: string | null }[];
+  diagnostics: readonly {
+    kpi_id: string;
+    quality: string;
+    sample_count: number;
+    reason?: string | null;
+    evidence?: Omit<AdherenceEvidence, 'quality' | 'environment'> & { quality: string; environment: string };
+  }[];
   postAccepted: boolean;
   status: string;
   failureCode: string | null;
@@ -31,7 +37,18 @@ export function buildPublicationArtifacts(input: PublicationArtifactInput & Reco
     window_start: input.windowStart,
     window_end: input.windowEnd,
     payload_sha256: input.payloadSha256,
-    diagnostics: input.diagnostics,
+    diagnostics: input.diagnostics.map(({ kpi_id, quality, sample_count, reason, evidence }) => ({
+      kpi_id, quality, sample_count, reason: reason ?? null,
+      ...(evidence ? { evidence: {
+        numerator: evidence.numerator,
+        denominator: evidence.denominator,
+        quality: evidence.quality,
+        reason: evidence.reason,
+        collection_date: evidence.collection_date,
+        measured_at: evidence.measured_at,
+        environment: evidence.environment,
+      } } : {}),
+    })),
     sample_count: input.diagnostics.reduce((total, diagnostic) => total + diagnostic.sample_count, 0),
     quality_counts: qualityCounts,
     post_accepted: input.postAccepted,
