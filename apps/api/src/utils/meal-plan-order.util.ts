@@ -1,3 +1,5 @@
+import type { MealType } from '../generated/prisma/client';
+
 interface MealOrderFields {
   id: string;
   mealType: string;
@@ -12,19 +14,39 @@ interface PlanDayWithMeals<TMeal extends MealOrderFields> extends PlanDayOrderFi
   meals?: TMeal[] | null;
 }
 
-const MEAL_TYPE_ORDER: Record<string, number> = {
+const MEAL_TYPE_ORDER = {
   BREAKFAST: 0,
   LUNCH: 1,
   SNACK: 2,
   DINNER: 3,
-};
+} satisfies Record<MealType, number>;
+
+function getMealTypeRank(mealType: string): number {
+  return Object.prototype.hasOwnProperty.call(MEAL_TYPE_ORDER, mealType)
+    ? (MEAL_TYPE_ORDER as Record<string, number>)[mealType]
+    : Number.MAX_SAFE_INTEGER;
+}
 
 export function compareIds(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function compareMealsByDomainOrder<T extends MealOrderFields>(left: T, right: T): number {
-  return (MEAL_TYPE_ORDER[left.mealType] - MEAL_TYPE_ORDER[right.mealType]) || compareIds(left.id, right.id);
+  const leftRank = getMealTypeRank(left.mealType);
+  const rightRank = getMealTypeRank(right.mealType);
+
+  if (leftRank < rightRank) return -1;
+  if (leftRank > rightRank) return 1;
+
+  const leftIsUnknown = !Object.prototype.hasOwnProperty.call(MEAL_TYPE_ORDER, left.mealType);
+  const rightIsUnknown = !Object.prototype.hasOwnProperty.call(MEAL_TYPE_ORDER, right.mealType);
+
+  if (leftIsUnknown && rightIsUnknown) {
+    const mealTypeComparison = compareIds(left.mealType, right.mealType);
+    if (mealTypeComparison !== 0) return mealTypeComparison;
+  }
+
+  return compareIds(left.id, right.id);
 }
 
 export function comparePlanDaysByDate<T extends PlanDayOrderFields>(left: T, right: T): number {
