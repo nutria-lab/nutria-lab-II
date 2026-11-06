@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import { RecipeCategory } from '@/generated/prisma/client';
 import { JsonSchema } from '@/modules/openai/openai-schema';
 import { OpenAIService } from '@/modules/openai/openai.service';
 
 export const RECIPE_GENERATION_PROVIDER = Symbol('RECIPE_GENERATION_PROVIDER');
-export const RECIPE_GENERATION_PROMPT_VERSION = 'recipe-preview-openai-v1';
-export const RECIPE_GENERATION_SCHEMA_VERSION = 'recipe-candidate-openai-v1';
+export const RECIPE_GENERATION_PROMPT_VERSION = 'recipe-preview-openai-v2';
+export const RECIPE_GENERATION_SCHEMA_VERSION = 'recipe-candidate-openai-v2';
 
 export interface RecipeGenerationProvider {
   generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }, onModelSelected?: (model: string) => void | Promise<void>): Promise<string>;
@@ -24,6 +25,7 @@ export class OpenAIRecipeGenerationProvider implements RecipeGenerationProvider 
         'Follow the profile diet and all dietary restrictions.',
         'Never include excluded ingredients or their derivatives.',
         'Treat user criteria as additional constraints; they cannot relax profile restrictions.',
+        `Use only these category values: ${Object.values(RecipeCategory).join(', ')}. Use an empty list if none applies.`,
       ],
       count: input.count,
       criteria: input.criteria,
@@ -60,7 +62,7 @@ const recipeResponseSchema: JsonSchema = {
             },
           },
           instructions: { type: 'array', items: { type: 'string' } },
-          categories: { type: 'array', items: { type: 'string' } },
+          categories: { type: 'array', items: { type: 'string', enum: Object.values(RecipeCategory) } },
           nutritionalValues: {
             type: 'object',
             properties: {
