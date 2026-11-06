@@ -1,12 +1,6 @@
 import { AdherenceResponse, AdherenceSnapshot, AdherenceMealStatus, AdherenceCounts } from './adherence.types';
 import { effectiveMealStatus } from './effective-meal-status';
-
-const MEAL_TYPE_ORDER: Record<string, number> = {
-  BREAKFAST: 0,
-  LUNCH: 1,
-  SNACK: 2,
-  DINNER: 3,
-};
+import { compareMealsByDomainOrder, comparePlanDaysByDate } from '../../utils/meal-plan-order.util';
 
 export function calculateAdherencePercent(completedMeals: number, plannedMeals: number): number | null {
   if (plannedMeals === 0) return null;
@@ -27,10 +21,6 @@ function civilDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function compareIds(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 export function transformAdherence(
   weekStart: string,
   snapshot: AdherenceSnapshot,
@@ -45,11 +35,11 @@ export function transformAdherence(
   }
 
   const days = [...snapshot.days]
-    .sort((left, right) => civilDate(left.date).localeCompare(civilDate(right.date)) || compareIds(left.id, right.id))
+    .sort(comparePlanDaysByDate)
     .map((day) => {
       const date = civilDate(day.date);
       const meals = [...(mealsByDayId.get(day.id) ?? [])]
-        .sort((left, right) => (MEAL_TYPE_ORDER[left.mealType] - MEAL_TYPE_ORDER[right.mealType]) || compareIds(left.id, right.id))
+        .sort(compareMealsByDomainOrder)
         .map((meal) => {
           const completion = completionByMealId.get(meal.id);
           let status: AdherenceMealStatus = effectiveMealStatus(completion ?? null, meal);
