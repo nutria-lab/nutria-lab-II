@@ -4,6 +4,7 @@ import { GoalSelector } from '../components/GoalSelector';
 import { DietPills } from '../components/DietPills';
 import { ExcludeIngredientsPills } from '../components/ExcludeIngredientsPills';
 import { CookTimeSelector } from '../components/CookTimeSelector';
+import { isCookTimePreference } from '../cookTimeOptions';
 import { Banner } from '../../../common/components/Banner';
 import type { NutritionProfile } from '../../../services/nutritionProfileService';
 
@@ -57,7 +58,9 @@ export function PreferencesPage() {
     );
   }
 
-  const isFormValid = Boolean(formState.goal && formState.diet && formState.cookTimePreference);
+  // Un valor fuera del enum no es una elección: no cuenta como completado ni se puede guardar.
+  const isCookTimeChosen = isCookTimePreference(formState.cookTimePreference);
+  const isFormValid = Boolean(formState.goal && formState.diet && isCookTimeChosen);
   const isSaving = status === 'saving';
 
   return (
@@ -120,8 +123,8 @@ export function PreferencesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-4">
-                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${formState.cookTimePreference ? 'bg-brand-green text-on-primary' : 'bg-surface-container-highest text-on-surface-variant'}`}>
-                  {formState.cookTimePreference
+                <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${isCookTimeChosen ? 'bg-brand-green text-on-primary' : 'bg-surface-container-highest text-on-surface-variant'}`}>
+                  {isCookTimeChosen
                     ? <span className="material-symbols-outlined text-base">check</span>
                     : '3'
                   }
@@ -129,7 +132,7 @@ export function PreferencesPage() {
                 <div>
                   <p className="text-sm font-bold text-on-surface">Tiempo de cocina</p>
                   <p className="text-xs text-on-surface-variant">
-                    {formState.cookTimePreference ? 'Completado' : 'Pendiente'}
+                    {isCookTimeChosen ? 'Completado' : 'Pendiente'}
                   </p>
                 </div>
               </div>
@@ -141,14 +144,14 @@ export function PreferencesPage() {
                   className="h-full rounded-full bg-brand-green transition-all duration-500"
                   style={{
                     width: `${
-                      ([formState.goal, formState.diet, formState.cookTimePreference].filter(Boolean).length / 3) * 100
+                      ([formState.goal, formState.diet, isCookTimeChosen].filter(Boolean).length / 3) * 100
                     }%`,
                   }}
                 />
               </div>
               <p className="mt-2 text-right text-xs text-on-surface-variant">
                 {Math.round(
-                  ([formState.goal, formState.diet, formState.cookTimePreference].filter(Boolean).length / 3) * 100,
+                  ([formState.goal, formState.diet, isCookTimeChosen].filter(Boolean).length / 3) * 100,
                 )}% completado
               </p>
             </div>
