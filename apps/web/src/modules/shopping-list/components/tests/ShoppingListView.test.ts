@@ -135,8 +135,69 @@ describe("ShoppingListView, Contract C fixtures", () => {
     expect(screen.getByText(/cantidad no disponible/i)).toBeInTheDocument();
     expect(screen.getByText(/1[,.]125\s*kg/i)).toBeInTheDocument();
     expect(screen.getByText(/receta/i)).toBeInTheDocument();
-    expect(screen.getByText(/ingrediente/i)).toBeInTheDocument();
+    expect(screen.getByText(/unidad o la cantidad incompleta/i)).toBeInTheDocument();
     expect(screen.getByText(/1 de 2/i)).toBeInTheDocument();
+  });
+
+  it("provides simple previous and next controls after each page of ingredients", async () => {
+    const user = userEvent.setup();
+    const manyIngredients: ShoppingListResponse = {
+      ...partialList,
+      items: Array.from({ length: 12 }, (_, index) => {
+        const quantity = index + 1;
+        const name = `Ingrediente ${quantity}`;
+        return {
+          key: `ingredient-${quantity}`,
+          name,
+          quantity,
+          unit: null,
+          checked: false,
+          sources: [
+            {
+              plannedMealId: `meal-${quantity}`,
+              recipeId: "recipe",
+              ingredientIndex: 0,
+              quantity,
+              unit: null,
+            },
+          ],
+        };
+      }),
+      summary: { totalItems: 12, checkedItems: 0 },
+      warnings: [],
+    };
+    renderView({ response: manyIngredients });
+
+    const previous = screen.getByRole("button", {
+      name: "Página anterior de ingredientes",
+    });
+    const next = screen.getByRole("button", {
+      name: "Página siguiente de ingredientes",
+    });
+    const list = screen.getByRole("list", { name: "Ingredientes" });
+    const navigation = screen.getByRole("navigation", {
+      name: "Paginación de ingredientes",
+    });
+
+    expect(list.nextElementSibling).toBe(navigation);
+    expect(screen.getByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /ingrediente 1,/i })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /ingrediente 10,/i })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /ingrediente 11,/i })).not.toBeInTheDocument();
+    expect(previous).toBeDisabled();
+
+    await user.click(next);
+
+    expect(screen.getByText("Página 2 de 2")).toBeInTheDocument();
+    expect(screen.getByText("11–12 de 12")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /ingrediente 11,/i })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /ingrediente 1,/i })).not.toBeInTheDocument();
+    expect(previous).toBeEnabled();
+    expect(next).toBeDisabled();
+
+    await user.click(previous);
+    expect(screen.getByText("Página 1 de 2")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /ingrediente 1,/i })).toBeInTheDocument();
   });
 
   it("keeps warnings visible when no products are available and never calls that list complete", () => {
