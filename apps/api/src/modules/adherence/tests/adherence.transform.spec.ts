@@ -107,6 +107,24 @@ describe('transformAdherence', () => {
     expect(result.days[0].date).toBe('2026-10-19');
   });
 
+  it('keeps the same adherence response when persisted days and meals arrive in a different order', () => {
+    const canonicalInput = baseSnapshot();
+    const shuffledInput = baseSnapshot();
+    shuffledInput.days.reverse();
+    shuffledInput.meals.reverse();
+
+    const canonicalResponse = transformAdherence(weekStart, canonicalInput as any, today);
+    const shuffledResponse = transformAdherence(weekStart, shuffledInput as any, today);
+
+    expect(shuffledResponse).toEqual(canonicalResponse);
+    expect(shuffledResponse.days.map((day: any) => day.date)).toEqual([
+      '2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25',
+    ]);
+    expect(shuffledResponse.days[0].meals.map((meal: any) => meal.plannedMealId)).toEqual([
+      id(1), id(2), id(3), id(4), id(5), id(6),
+    ]);
+  });
+
   it('derives counters and weekly percentage from persisted meals rather than averaging days', () => {
     const result = transformAdherence(weekStart, baseSnapshot() as any, today);
 
