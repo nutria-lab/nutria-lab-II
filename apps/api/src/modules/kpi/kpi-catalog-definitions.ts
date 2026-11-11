@@ -62,16 +62,22 @@ export const KPI_CATALOG_DEFINITIONS: readonly KpiCatalogDefinition[] = [
     justification: 'Es una proporción de muestras, no una duración continua de disponibilidad.',
   },
   {
-    id: 'adherence_rate', kind: 'business', unit: '%',
-    description: 'Promedio simple de la adherencia semanal individual de los planes actuales para la semana que contiene la fecha del reporte.',
-    source: 'Promedio por usuario de comidas con completion COMPLETED y snapshots vigentes dividido por comidas planificadas en planes actuales de la semana.',
-    justification: 'Cada usuario pesa igual, siguiendo el porcentaje semanal que presenta la experiencia de adherencia.',
+    id: 'initial_plans_count', kind: 'business', unit: '{plan}',
+    description: 'Conteo de MealPlan todavía existente, creado en la ventana parcial [00:00, 21:00) de Argentina, ligado a generación inicial exitosa.',
+    source: 'meal_plans JOIN generation_runs: kind=MEAL_PLAN_INITIAL, status=SUCCEEDED y createdAt en [start, end).',
+    justification: 'No cuenta regeneraciones, generaciones fallidas o pendientes; un plan luego supersedido sigue contando si existe.',
   },
   {
     id: 'manual_recipes_count', kind: 'business', unit: '{recipe}',
     description: 'Conteo de Recipe todavía existente, origin=MANUAL y creada en la ventana parcial [00:00, 21:00) de Argentina.',
     source: 'recipes: origin=MANUAL y createdAt en [start, end).',
     justification: 'Excluye recetas AI y ediciones de recetas previas; cuenta filas existentes al leer.',
+  },
+  {
+    id: 'adherence_rate', kind: 'business', unit: '%',
+    description: 'Porcentaje global de comidas del día de reporte en planes vigentes que están completadas efectivamente al recolectar; sólo se calcula para el último corte automático cerrado de Argentina.',
+    source: 'Agregación PostgreSQL sobre meal_plans vigentes y comidas cuya fecha civil almacenada coincide con context.date; el estado efectivo requiere completion COMPLETED y snapshots vigentes.',
+    justification: 'Agrega por comida para la fecha de reporte sin reconstruir su estado histórico; fecha no vigente, fuente vacía o caída quedan unavailable y no se presentan como cero observado.',
   },
 ];
 
@@ -84,5 +90,5 @@ export function validateKpiCatalogDefinitions(definitions: readonly KpiCatalogDe
     }
     ids.add(definition.id);
   }
-  if (ids.size !== 10) throw new TypeError('KPI_CATALOG_DEFINITIONS_INVALID');
+  if (ids.size !== 11) throw new TypeError('KPI_CATALOG_DEFINITIONS_INVALID');
 }

@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -75,10 +74,10 @@ export class MealReplacementService {
     idempotencyKey: string,
     dto: ReplaceMealDto,
   ): Promise<MealReplacementResponse> {
-    // 1. El plan existe (404), es del usuario (403), contiene la comida (404) y es el actual (409).
+    // 1. Los planes inexistentes o ajenos comparten el mismo 404; la comida ausente también da 404.
     const plan = await this.repository.findPlanWithMeals(planId);
     if (!plan) throw new NotFoundException('Meal plan not found');
-    if (plan.userId !== userId) throw new ForbiddenException('This meal plan belongs to another user');
+    if (plan.userId !== userId) throw new NotFoundException('Meal plan not found');
 
     const day = plan.days.find(candidate => candidate.meals.some(meal => meal.id === plannedMealId));
     const meal = day?.meals.find(candidate => candidate.id === plannedMealId);

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { freezeBatch } from './kpi-batch';
 import { PrismaPublicationRepository } from './prisma-publication.repository';
+import type { KpiId, KpiResult } from './kpi-contract';
 
 const batch = freezeBatch({
   contract_version: '1', date: '2026-10-09', environment: 'dev',
@@ -11,6 +12,40 @@ const batch = freezeBatch({
 ]);
 
 const payload = Buffer.from(JSON.stringify(batch.measurements), 'utf8');
+
+const currentIds: readonly KpiId[] = [
+  'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
+  'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
+  'initial_plans_count', 'manual_recipes_count', 'adherence_rate',
+];
+const adherenceEvidence = {
+  numerator: 32,
+  denominator: 40,
+  quality: 'observed' as const,
+  reason: null,
+  collection_date: '2026-10-29',
+  measured_at: '2026-10-29T03:00:00.000Z',
+  environment: 'dev' as const,
+};
+
+function currentBatch(includeAdherence = true) {
+  const ids = includeAdherence ? currentIds : currentIds.filter(id => id !== 'adherence_rate');
+  const results: KpiResult[] = ids.map(kpi_id => ({
+    kpi_id,
+    value: kpi_id === 'adherence_rate' ? 80 : 0,
+    quality: 'observed',
+    reason: null,
+    sample_count: kpi_id === 'adherence_rate' ? 40 : 0,
+    measured_at: '2026-10-29T03:00:00.000Z',
+    ...(kpi_id === 'adherence_rate' ? { evidence: adherenceEvidence } : {}),
+  }));
+  return freezeBatch({
+    ...batch.context,
+    date: '2026-10-29',
+    window_start: '2026-10-29T03:00:00.000Z',
+    window_end: '2026-10-30T00:00:00.000Z',
+  }, results);
+}
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -60,6 +95,43 @@ describe('PrismaPublicationRepository (NUT-85 adapter)', () => {
       where: expect.objectContaining({ runId: 'cbd79c1e-0f46-4e5a-b86b-02d354277791' }),
       data: expect.objectContaining({ status: 'frozen', payloadSha256: batch.payload_sha256 }),
     }));
+  });
+
+  it('round-trips eleven measurements and adherence evidence through the JSONB reader', async () => {
+    const complete = currentBatch();
+    const prisma = prismaMock({ findFirst: jest.fn().mockResolvedValue(row({
+      reportDate: new Date('2026-10-29T00:00:00.000Z'),
+      frozenBatch: JSON.parse(JSON.stringify(complete)),
+      payloadSha256: complete.payload_sha256,
+    })) });
+    const repository = new PrismaPublicationRepository(prisma as never);
+
+    const publication = await repository.getPublication('dev', '2026-10-29');
+
+    expect(publication.frozenBatch?.measurements).toHaveLength(11);
+    expect(publication.frozenBatch?.diagnostics).toHaveLength(11);
+    expect(publication.frozenBatch?.diagnostics.find(item => item.kpi_id === 'adherence_rate'))
+      .toMatchObject({ evidence: adherenceEvidence, sample_count: 40 });
+    expect(publication.frozenPayload).toEqual(Buffer.from(JSON.stringify(complete.measurements), 'utf8'));
+    expect(publication.payloadSha256).toBe(complete.payload_sha256);
+  });
+
+  it('reads a legacy frozen ten-result batch without enriching or recalculating it', async () => {
+    const legacy = currentBatch(false);
+    const prisma = prismaMock({ findFirst: jest.fn().mockResolvedValue(row({
+      reportDate: new Date('2026-10-29T00:00:00.000Z'),
+      frozenBatch: JSON.parse(JSON.stringify(legacy)),
+      payloadSha256: legacy.payload_sha256,
+    })) });
+    const repository = new PrismaPublicationRepository(prisma as never);
+
+    const publication = await repository.getPublication('dev', '2026-10-29');
+
+    expect(publication.frozenBatch?.measurements).toHaveLength(10);
+    expect(publication.frozenBatch?.measurements.some(item => item.kpi_id === 'adherence_rate')).toBe(false);
+    expect(publication.frozenBatch?.diagnostics.some(item => item.kpi_id === 'adherence_rate')).toBe(false);
+    expect(publication.frozenPayload).toEqual(Buffer.from(JSON.stringify(legacy.measurements), 'utf8'));
+    expect(publication.payloadSha256).toBe(legacy.payload_sha256);
   });
 
   it('claims retries through one compare-and-set update over retry_chain_id and attempt_count', async () => {

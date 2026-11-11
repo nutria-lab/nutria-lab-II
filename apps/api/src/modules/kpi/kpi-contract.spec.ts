@@ -7,8 +7,21 @@ import type {
   KpiResult,
   Measurement,
 } from './kpi-contract';
+import { isAdherenceEvidence } from './kpi-contract';
 
 describe('KPI contract v1', () => {
+  it('accepts an unavailable adherence result when the report date is not the current automatic cut', () => {
+    expect(isAdherenceEvidence({
+      numerator: null,
+      denominator: null,
+      quality: 'unavailable',
+      reason: 'REPORT_DATE_NOT_CURRENT',
+      collection_date: '2026-10-09',
+      measured_at: '2026-10-10T06:04:05.006Z',
+      environment: 'qa',
+    })).toBe(true);
+  });
+
   it('defines the closed shared contract used by every KPI collector and publisher boundary', async () => {
     const environment: KpiEnvironment = 'qa';
     const ids: readonly KpiId[] = [
@@ -20,8 +33,9 @@ describe('KPI contract v1', () => {
       'timeout_rate',
       'dependency_error_rate',
       'availability_rate',
-      'adherence_rate',
+      'initial_plans_count',
       'manual_recipes_count',
+      'adherence_rate',
     ];
     const context: CollectionContext = {
       contract_version: '1',
@@ -33,11 +47,20 @@ describe('KPI contract v1', () => {
     };
     const result: KpiResult = {
       kpi_id: 'adherence_rate',
-      value: 0,
+      value: 80,
       quality: 'observed',
       reason: null,
-      sample_count: 0,
+      sample_count: 40,
       measured_at: '2026-10-10T00:00:00.000Z',
+      evidence: {
+        numerator: 32,
+        denominator: 40,
+        quality: 'observed',
+        reason: null,
+        collection_date: '2026-10-10',
+        measured_at: '2026-10-10T00:00:00.000Z',
+        environment,
+      },
     };
     const logger: KpiLogger = { collect: async () => [result] };
     const measurement: Measurement = {
@@ -51,12 +74,13 @@ describe('KPI contract v1', () => {
       contract_version: '1',
       context,
       measurements: [measurement],
-      diagnostics: [{ kpi_id: result.kpi_id, quality: 'observed', reason: null, sample_count: 0 }],
+      diagnostics: [{ kpi_id: result.kpi_id, quality: 'observed', reason: null, sample_count: 40, evidence: result.evidence }],
       payload_sha256: 'a'.repeat(64),
     };
 
-    expect(ids).toHaveLength(10);
+    expect(ids).toHaveLength(11);
     await expect(logger.collect(context)).resolves.toEqual([result]);
     expect(batch.measurements[0]).toEqual(measurement);
+    expect(batch.diagnostics[0]).toMatchObject({ evidence: expect.objectContaining({ numerator: 32, denominator: 40 }) });
   });
 });

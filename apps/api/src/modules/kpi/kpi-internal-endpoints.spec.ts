@@ -19,7 +19,7 @@ const context: CollectionContext = {
 
 const ALL_IDS: readonly KpiId[] = [
   ...TELEMETRY_KPI_IDS,
-  'adherence_rate',
+  'initial_plans_count',
   'manual_recipes_count',
 ];
 

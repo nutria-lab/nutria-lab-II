@@ -23,7 +23,7 @@ describe('kpi:catalog CLI', () => {
       expect(fetch.mock.calls[1][0]).toBe('https://project.example/rest/v1/kpi_catalog?select=*');
       expect(fetch.mock.calls[2][1]).toMatchObject({ method: 'POST' });
       expect(JSON.parse(String(fetch.mock.calls[2][1]?.body))).toEqual(KPI_CATALOG_DEFINITIONS);
-      expect(log).toHaveBeenCalledWith('KPI_CATALOG_RESULT {"environment":"dev","added_count":10,"active_count":10}');
+      expect(log).toHaveBeenCalledWith('KPI_CATALOG_RESULT {"environment":"dev","added_count":11,"active_count":11}');
       expect(error).not.toHaveBeenCalled();
       expect(log.mock.calls.flat().join(' ')).not.toMatch(/publishable-secret|project-secret|project\.example/);
     } finally {
