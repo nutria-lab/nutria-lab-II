@@ -11,6 +11,7 @@ import { KpiPublisherModule } from '@/modules/kpi/kpi-publisher.module';
 import { RecipeGenerationModule } from '@/modules/recipe-generation/recipe-generation.module';
 import { AccessModule } from '@/modules/access/access.module';
 import { ShoppingListModule } from '@/modules/shopping-list/shopping-list.module';
+import { AdherenceModule } from '@/modules/adherence/adherence.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { ShoppingListModule } from '@/modules/shopping-list/shopping-list.module
     RecipeGenerationModule,
     AccessModule,
     ShoppingListModule,
+    AdherenceModule,
   ],
   controllers: [],
   providers: [],

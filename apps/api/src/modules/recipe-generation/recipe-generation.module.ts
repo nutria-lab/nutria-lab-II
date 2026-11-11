@@ -19,5 +19,6 @@ import { OpenAIModule } from '@/modules/openai/openai.module';
     RecipeGenerationService,
     { provide: RECIPE_GENERATION_PROVIDER, useClass: OpenAIRecipeGenerationProvider },
   ],
+  exports: [RECIPE_GENERATION_PROVIDER],
 })
 export class RecipeGenerationModule {}

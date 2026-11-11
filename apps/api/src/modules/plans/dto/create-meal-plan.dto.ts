@@ -1,10 +1,11 @@
-import { IsNotEmpty, IsDateString, IsArray, ValidateNested, ArrayMinSize, ArrayMaxSize } from 'class-validator';
+import { IsNotEmpty, IsArray, ValidateNested, ArrayMinSize, ArrayMaxSize } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsCalendarMonday } from '../../../utils/calendar-monday.validator';
 import { MealPlanDayDto } from './meal-plan-day.dto';
 
 export class CreateMealPlanDto {
   @IsNotEmpty()
-  @IsDateString()
+  @IsCalendarMonday()
   weekStart!: string;
 
   @IsNotEmpty()

@@ -470,6 +470,89 @@ describe('App recipes routes', () => {
   });
 });
 
+describe('App public landing', () => {
+  it('renders the landing at / for an anonymous visitor without any HTTP request, even when the backend is down', async () => {
+    const requestedUrls: Array<string | undefined> = [];
+    apiClient.defaults.adapter = async (config) => {
+      requestedUrls.push(config.url);
+      throw new AxiosError('Network Error', AxiosError.ERR_NETWORK, config);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/));
+    expect(screen.queryByRole('status', { name: /comprobando/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(requestedUrls).toEqual([]);
+  });
+
+  it('shows the landing at / to a person with an active session instead of redirecting into the app', async () => {
+    const requestedUrls: Array<string | undefined> = [];
+    apiClient.defaults.adapter = async (config) => {
+      requestedUrls.push(config.url);
+      return response(config, authenticatedUser);
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/$/);
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(requestedUrls).toEqual([]);
+  });
+
+  it('shows the landing at / even when the access gate would be required for the app', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw failedResponse(config, 401);
+    };
+
+    renderApp('/', { required: true, unlocked: false });
+
+    expect(await screen.findByRole('heading', { level: 1, name: /planificá tus comidas/i })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: /acceso/i })).not.toBeInTheDocument();
+  });
+
+  it('keeps the access gate in front of non-public routes', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      throw failedResponse(config, 401);
+    };
+
+    renderApp('/dashboard', { required: true, unlocked: false });
+
+    expect(await screen.findByRole('heading', { level: 1 })).toHaveAttribute('id', 'access-gate-title');
+    expect(screen.queryByRole('heading', { name: /planificá tus comidas/i })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['Crear cuenta', '/register', /creá tu cuenta/i],
+    ['Iniciar sesión', '/login', /iniciá sesión/i],
+    ['Iniciá sesión', '/login', /iniciá sesión/i],
+  ])('navigates from the landing CTA "%s" to the existing %s flow', async (name, path, heading) => {
+    const user = userEvent.setup();
+    apiClient.defaults.adapter = async (config) => {
+      throw failedResponse(config, 401);
+    };
+
+    renderApp('/');
+    const links = await screen.findAllByRole('link', { name });
+    await user.click(links[0]);
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent(path));
+    expect(await screen.findByRole('heading', { name: heading })).toBeVisible();
+  });
+});
+
 describe('App logout', () => {
   it('offers an accessible logout control, clears local access first, and redirects even when remote logout fails', async () => {
     const user = userEvent.setup();

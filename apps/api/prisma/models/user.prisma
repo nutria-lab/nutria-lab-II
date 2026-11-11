@@ -9,6 +9,7 @@ model User {
   mealPlans        MealPlan[]
   generationRuns   GenerationRun[]
   shoppingItemChecks ShoppingItemCheck[]
+  mealCompletions  MealCompletion[]
 
   @@map("users")
 }

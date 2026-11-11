@@ -1,50 +1,21 @@
 import 'reflect-metadata';
-import { Logger, NotFoundException, ConflictException, BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { NotFoundException, ConflictException, BadRequestException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PlansService } from '../plans.service';
-import { AiProviderUnavailableError } from '../../openai/openai.service';
-import { RecipeValidationService } from '../recipe-validation.service';
 import { RecipeImagesService } from '../recipe-images.service';
-import { OpenAIWeeklyProposalComposer } from '../weekly-proposal.composer';
 import { DayOfWeek, MealType } from '../../../generated/prisma/client';
 import { UnsplashService } from '../../unsplash/unsplash.service';
 import { pendingPersistedImage, unsplashPhoto, unsplashResponse, unsplashSearchBody } from '../../unsplash/unsplash-search.fixture';
 
 /**
- * Unit tests de PlansService con PlansRepository y OpenAIService mockeados (mismo patrón de
- * mock plano usado en `plans.repository.spec.ts`/`plans.integration.spec.ts`, pero acá el
- * mock es del repositorio completo, no de Prisma).
- *
- * Cubre, según plan.md secciones 6 y 10:
- *  - AC3: misma solicitud (mismo `idempotencyKeyHash` resultante) no vuelve a invocar al
- *    proveedor de IA ni crea un segundo `GenerationRun`.
- *  - AC9: `repository.createOrRecoverGenerationRun` se resuelve ANTES de invocar
- *    `openai.generateMealPlan` (Flujo A paso 5 antes que paso 6, design.md sección 3).
- *  - AC8 (complemento): `generation-run-snapshot.spec.ts` (etapa 1) ya cubre exhaustivamente
- *    la lista blanca de `profileSnapshot` vía `buildProfileSnapshot`, así que NO se duplica
- *    acá. Lo que ese archivo no cubre es `requestSnapshot` (no existe todavía ningún
- *    `buildRequestSnapshot` ni equivalente en el código), así que este archivo agrega un
- *    test de que `generateAndPersistPlan` arma `requestSnapshot` por lista blanca exacta
- *    (`kind`, `weekStart`, `promptVersion`, `schemaVersion` — design.md sección 6) antes de
- *    pasarlo al repositorio.
- *
- * SUPUESTO DE INTERFAZ documentado (no cerrado explícitamente por design.md/plan.md): se
- * asume que `generateAndPersistPlan` llama a
- * `repository.createOrRecoverGenerationRun(userId, kind, provider, model, promptVersion,
- * schemaVersion, requestSnapshot, profileSnapshot, idempotencyKeyHash)` (firma posicional de
- * plan.md sección 5) ANTES de decidir si invoca a `openai.generateMealPlan`, y que cuando el
- * resultado trae `wasCreated:false` el servicio corta el flujo sin volver a llamar al
- * proveedor (AC3, Flujo A paso 5 de design.md). Hoy `PlansService` no llama a este método en
- * absoluto (usa sólo `checkPlanExists`, una noción de idempotencia distinta y más gruesa —
- * ver plan.md sección 6, nota de solape), así que todas las aserciones de esta suite
- * deberían fallar en rojo contra la implementación actual.
+ * Unit tests de PlansService con repositorio, imágenes y frontera de composición mockeados.
+ * La validación/proveedor del composer se cubren en weekly-proposal.composer.spec.ts.
  */
 describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', () => {
   let service: PlansService;
   let mockRepository: any;
-  let mockOpenAI: any;
+  let mockComposer: any;
   let mockUnsplash: any;
-  let mockRecipes: any;
   let mockConfig: any;
 
   const userId = 'user-1';
@@ -106,11 +77,20 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
   const existingRun = { id: 'run-existing-1', userId, kind: 'MEAL_PLAN_INITIAL', status: 'SUCCEEDED' };
 
   const persistedPlan = { id: 'plan-1', userId, days: [] };
+  const defaultWeeklyProposal = {
+    dto: { weekStart: weekStartStr, days: generatedDays },
+    comparableDays: generatedDays,
+    summary: { stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] },
+    compositionSnapshot: {
+      compositionVersion: 'weekly-catalog-composition-v1',
+      aiInvoked: true,
+      batches: [{ mealType: MealType.BREAKFAST, count: 1, model: 'test-model', promptVersion: 'test-prompt', schemaVersion: 'test-schema' }],
+    },
+  };
 
   beforeEach(() => {
-    mockOpenAI = {
-      // OpenAI devuelve texto crudo (NUT-74).
-      generateMealPlan: jest.fn().mockResolvedValue(JSON.stringify({ days: generatedDays })),
+    mockComposer = {
+      composeWeeklyProposal: jest.fn().mockResolvedValue(defaultWeeklyProposal),
     };
 
     mockRepository = {
@@ -133,22 +113,18 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       })),
     };
 
-    // Validador real de NUT-74; sólo la búsqueda de duplicados en el catálogo está mockeada.
-    mockRecipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
     mockConfig = { get: jest.fn().mockReturnValue(undefined) };
-    const validation = new RecipeValidationService(mockRecipes, mockRepository);
-    service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, mockUnsplash), mockConfig, new OpenAIWeeklyProposalComposer(mockRepository, mockOpenAI, validation));
+    service = new PlansService(mockRepository, new RecipeImagesService(mockRepository, mockUnsplash), mockConfig, mockComposer);
   });
 
   describe('AC3 - misma solicitud no duplica ejecución', () => {
-    it('llama a OpenAI una sola vez y no crea un segundo GenerationRun al repetir la misma solicitud', async () => {
+    it('compone una sola propuesta y no crea un segundo GenerationRun al repetir la misma solicitud', async () => {
       await service.generateAndPersistPlan(userId, weekStartStr);
       await service.generateAndPersistPlan(userId, weekStartStr);
 
       expect(mockRepository.createOrRecoverGenerationRun).toHaveBeenCalledTimes(2);
-      // La segunda vez debe recuperar el run existente (wasCreated:false) y NO volver a
-      // invocar al proveedor de IA.
-      expect(mockOpenAI.generateMealPlan).toHaveBeenCalledTimes(1);
+      // La segunda vez recupera el plan exitoso y no vuelve a componer una propuesta.
+      expect(mockComposer.composeWeeklyProposal).toHaveBeenCalledTimes(1);
     });
 
     it('la segunda llamada devuelve el mismo plan persistido sin crear una fila de dominio nueva', async () => {
@@ -161,223 +137,85 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  describe('AC9 - GenerationRun se crea/recupera antes de invocar al proveedor de IA', () => {
-    it('resuelve createOrRecoverGenerationRun antes de invocar openai.generateMealPlan', async () => {
+  describe('AC9 - GenerationRun se crea/recupera antes de componer la propuesta', () => {
+    it('resuelve createOrRecoverGenerationRun antes de invocar composeWeeklyProposal', async () => {
       const callOrder: string[] = [];
 
       mockRepository.createOrRecoverGenerationRun = jest.fn().mockImplementation(async () => {
         callOrder.push('createOrRecoverGenerationRun');
         return { run: newRun, wasCreated: true };
       });
-      mockOpenAI.generateMealPlan = jest.fn().mockImplementation(async () => {
-        callOrder.push('generateMealPlan');
-        return JSON.stringify({ days: generatedDays });
+      mockComposer.composeWeeklyProposal = jest.fn().mockImplementation(async () => {
+        callOrder.push('composeWeeklyProposal');
+        return defaultWeeklyProposal;
       });
 
       await service.generateAndPersistPlan(userId, weekStartStr);
 
-      expect(callOrder).toEqual(['createOrRecoverGenerationRun', 'generateMealPlan']);
+      expect(callOrder).toEqual(['createOrRecoverGenerationRun', 'composeWeeklyProposal']);
     });
   });
 
-  describe('NUT-74 - validación determinística del plan generado', () => {
-    const baseMeal = () => generatedDays[0].meals[0];
-    const meal = (recipeOverrides: Record<string, unknown> = {}) => ({ ...baseMeal(), recipe: { ...baseMeal().recipe, ...recipeOverrides } });
-    const weekWith = (mondayMeal: unknown) =>
-      JSON.stringify({ days: generatedDays.map((day, index) => (index === 0 ? { ...day, meals: [mondayMeal, ...day.meals.slice(1)] } : day)) });
-    const expectNoDomainWrites = () => {
-      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
-      expect(mockUnsplash.searchAndSelectImages).not.toHaveBeenCalled();
-      expect(mockUnsplash.trackDownload).not.toHaveBeenCalled();
-    };
-
-    it.each([
-      ['una respuesta vacía', '', 'EMPTY_OUTPUT'],
-      ['una respuesta que no es JSON', 'no es json', 'INVALID_JSON'],
-      ['JSON sin "days"', JSON.stringify({ semana: [] }), 'MISSING_FIELD'],
-      ['"days" que no es una lista', JSON.stringify({ days: { MONDAY: [] } }), 'MISSING_FIELD'],
-      ['una comida con texto como cantidad', weekWith(meal({ ingredients: [{ name: 'Quinoa', quantity: 'mucha', unit: 'g' }] })), 'INVALID_RANGE'],
-      ['una comida sin pasos', weekWith(meal({ instructions: [] })), 'MISSING_FIELD'],
-      ['una comida sin receta', weekWith({ ...baseMeal(), recipe: undefined }), 'MISSING_FIELD'],
-    ])('%s: 422, el run queda REJECTED con el código y no se escribe ningún plan', async (_label, raw, errorCode) => {
-      mockOpenAI.generateMealPlan.mockResolvedValue(raw);
-
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
-        errorCode,
-        validationSnapshot: expect.objectContaining({ codes: [errorCode] }),
-      });
-      expectNoDomainWrites();
-    });
-
-    it.each([6, 8])('%p días en vez de 7: COUNT_MISMATCH (422, REJECTED, snapshot y log), no AI_INVALID_SCHEMA', async (count) => {
-      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-      const days = Array.from({ length: count }, (_, index) => generatedDays[index % 7]);
-      mockOpenAI.generateMealPlan.mockResolvedValue(JSON.stringify({ days }));
-
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
-        errorCode: 'COUNT_MISMATCH',
-        validationSnapshot: { stage: 'parse', codes: ['COUNT_MISMATCH'], warnings: [] },
-      });
-      expect(warn).toHaveBeenCalledWith(expect.objectContaining({ event: 'recipe_validation_rejected', code: 'COUNT_MISMATCH' }));
-      expectNoDomainWrites();
-      warn.mockRestore();
-    });
-
-    it('initial generation bypasses both exclusion gates while OpenAI receives the original restrictions', async () => {
+  describe('NUT-76 - PlansService consume la propuesta semanal ya compuesta', () => {
+    it('forwardea el perfil original al composer y persiste la propuesta completa con sus snapshots', async () => {
       const restrictedProfile = { ...mockNutritionProfile, excludedIngredients: ['NUTS'] };
       const originalProfile = structuredClone(restrictedProfile);
       mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: restrictedProfile });
-      mockOpenAI.generateMealPlan.mockResolvedValue(weekWith(meal({ ingredients: [{ name: 'Almendras tostadas', quantity: 30, unit: 'g' }] })));
 
       await expect(service.generateAndPersistPlan(userId, weekStartStr)).resolves.toEqual(persistedPlan);
 
-      expect(mockOpenAI.generateMealPlan.mock.calls[0][0]).toBe(restrictedProfile);
-      expect(restrictedProfile).toEqual(originalProfile);
-      expect(mockRepository.createPlanTransaction).toHaveBeenCalledTimes(1);
-      expect(mockRepository.createPlanTransaction.mock.calls[0][2][0].meals[0].recipe.ingredients)
-        .toEqual([{ name: 'Almendras tostadas', quantity: 30, unit: 'g' }]);
-      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.anything());
-    });
-
-    it('manual editing accepts excluded ingredients after structural validation', async () => {
-      mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
-      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
-      const days = generatedDays.map((day, index) => index === 0
-        ? { ...day, meals: [meal({ ingredients: [{ name: 'Almendras', quantity: 30, unit: 'g' }] }), ...day.meals.slice(1)] }
-        : day);
-
-      await service.updatePlan(userId, { weekStart: weekStartStr, days } as any);
-      expect(mockRepository.updatePlanTransaction).toHaveBeenCalled();
-      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.anything());
-      expect(mockOpenAI.generateMealPlan).not.toHaveBeenCalled();
-    });
-
-    it('envoltorio del plan inválido (día fuera del enum): 422 AI_INVALID_SCHEMA, sin escribir', async () => {
-      mockOpenAI.generateMealPlan.mockResolvedValue(JSON.stringify({
-        days: generatedDays.map((day, index) => (index === 0 ? { ...day, day: 'FUNDAY' } : day)),
+      expect(mockComposer.composeWeeklyProposal).toHaveBeenCalledWith(expect.objectContaining({
+        userId,
+        runId: newRun.id,
+        profile: restrictedProfile,
+        weekStartStr,
+        weekStart: expect.any(Date),
       }));
-
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', {
-        errorCode: 'AI_INVALID_SCHEMA',
-        validationSnapshot: { stage: 'schema', codes: ['AI_INVALID_SCHEMA'], warnings: [] },
-      });
-      expectNoDomainWrites();
-    });
-
-    it('un plan limpio se persiste exactamente igual que antes de NUT-74, con el resumen de validación en el run', async () => {
-      await service.generateAndPersistPlan(userId, weekStartStr);
-
-      const [, , days, runId, origin, validationSnapshot] = mockRepository.createPlanTransaction.mock.calls[0];
+      expect(restrictedProfile).toEqual(originalProfile);
+      const [, , days, runId, origin, validationSnapshot, compositionSnapshot] = mockRepository.createPlanTransaction.mock.calls[0];
       expect(days).toEqual(generatedDays);
       expect(runId).toBe(newRun.id);
       expect(origin).toBeUndefined();
-      expect(validationSnapshot).toEqual({ stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] });
+      expect(validationSnapshot).toEqual(defaultWeeklyProposal.summary);
+      expect(compositionSnapshot).toEqual(defaultWeeklyProposal.compositionSnapshot);
     });
 
-    it('persiste las recetas normalizadas (unidades, fracciones y "al gusto")', async () => {
-      mockOpenAI.generateMealPlan.mockResolvedValue(weekWith(meal({
-        title: '  Ensalada de   Quinoa ',
-        ingredients: [{ name: 'Quinoa', quantity: '1/2', unit: 'gr' }, { name: 'Sal', quantity: 'al gusto', unit: '' }],
-      })));
-
-      await service.generateAndPersistPlan(userId, weekStartStr);
-
-      const [, , days, , , validationSnapshot] = mockRepository.createPlanTransaction.mock.calls[0];
-      expect(days[0].meals[0].recipe).toEqual(expect.objectContaining({
-        title: 'Ensalada de Quinoa',
-        ingredients: [{ name: 'Quinoa', quantity: 0.5, unit: 'g' }, { name: 'Sal', quantity: null, unit: 'al gusto' }],
-      }));
-      expect(validationSnapshot.warnings).toEqual(['NON_NUMERIC_QUANTITY', 'CALORIE_CHECK_SKIPPED']);
-    });
-
-    it('una comida idéntica a una receta del catálogo la reutiliza: no crea otra ni busca su foto', async () => {
-      mockRecipes.findByNormalizedTitles.mockResolvedValue([
-        { id: 'recipe-cat', title: 'ENSALADA DE QUINOA', description: 'Del catálogo', ingredients: [{ name: 'quinoa' }] },
-      ]);
-
-      await service.generateAndPersistPlan(userId, weekStartStr);
-
-      expect(mockRecipes.findByNormalizedTitles).toHaveBeenCalledWith([
-        'ensalada de quinoa', 'receta de breakfast', 'receta de snack', 'receta de dinner',
-      ]);
-      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
-      for (const day of days) {
-        expect(day.meals[0].reuseRecipeId).toBe('recipe-cat');
-        expect(day.meals[0].recipe).toBeUndefined();
-        expect(day.meals[0]).toEqual(expect.objectContaining({ title: 'Ensalada de Quinoa', nutritionalValues: baseMeal().nutritionalValues }));
-      }
-      const searched = mockUnsplash.searchAndSelectImages.mock.calls[0][0];
-      expect(searched.flatMap((day: any) => day.meals).filter((plannedMeal: any) => plannedMeal.reuseRecipeId))
-        .toHaveLength(7);
-      expect(searched.flatMap((day: any) => day.meals).filter((plannedMeal: any) => !plannedMeal.reuseRecipeId))
-        .toHaveLength(21);
-    });
-
-    it('reutiliza un duplicado aunque la receta cruda no pase el DTO ("al gusto" sin unidad): se valida la normalizada', async () => {
-      mockRecipes.findByNormalizedTitles.mockResolvedValue([
-        { id: 'recipe-cat', title: 'Ensalada de Quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }, { name: 'Sal' }] },
-      ]);
-      mockOpenAI.generateMealPlan.mockResolvedValue(weekWith(meal({
-        ingredients: [{ name: 'Quinoa', quantity: 150, unit: 'g' }, { name: 'Sal', quantity: 'al gusto', unit: '' }],
-      })));
-
-      await service.generateAndPersistPlan(userId, weekStartStr);
-
-      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
-      expect(days[0].meals[0].reuseRecipeId).toBe('recipe-cat');
-    });
-
-    it('sólo la comida duplicada reutiliza la receta: los índices de resultados y comidas coinciden', async () => {
-      const wok = { ...baseMeal(), mealType: MealType.DINNER, title: 'Wok de verduras', recipe: { ...baseMeal().recipe, title: 'Wok de verduras', ingredients: [{ name: 'Brócoli', quantity: 200, unit: 'g' }] } };
-      mockRecipes.findByNormalizedTitles.mockResolvedValue([
-        { id: 'recipe-wok', title: 'Wok de verduras', description: 'x', ingredients: [{ name: 'Brócoli' }] },
-      ]);
-      mockOpenAI.generateMealPlan.mockResolvedValue(JSON.stringify({
-        days: generatedDays.map((day, index) => (index === 2 ? { ...day, meals: [...day.meals.slice(0, 3), wok] } : day)),
-      }));
-
-      await service.generateAndPersistPlan(userId, weekStartStr);
-
-      const [, , days] = mockRepository.createPlanTransaction.mock.calls[0];
-      const reused = days.flatMap((day: any, dayIndex: number) =>
-        day.meals.map((plannedMeal: any, mealIndex: number) => (plannedMeal.reuseRecipeId ? `${dayIndex}.${mealIndex}` : null))).filter(Boolean);
-      expect(reused).toEqual(['2.3']);
-      expect(days[2].meals[0].recipe).toEqual(expect.objectContaining({ title: 'Ensalada de Quinoa' }));
-    });
-
-    it('con un duplicado reutilizable y una comida inválida, el errorCode es el de la inválida (nunca DUPLICATE_RECIPE)', async () => {
+    it('manual editing accepts excluded ingredients after structural validation without invoking the composer', async () => {
       mockRepository.getUserWithProfile.mockResolvedValue({ ...mockUser, nutritionProfile: { ...mockNutritionProfile, excludedIngredients: ['NUTS'] } });
-      mockRecipes.findByNormalizedTitles.mockResolvedValue([
-        { id: 'recipe-cat', title: 'Ensalada de Quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }] },
-      ]);
-      const invalidMeal = { ...baseMeal(), title: 'Arroz integral', nutritionalValues: { Protein: 20, Fiber: 8, Calories: -1, Description: 'Almuerzo' }, recipe: { ...baseMeal().recipe, title: 'Arroz integral' } };
-      mockOpenAI.generateMealPlan.mockResolvedValue(JSON.stringify({
-        days: generatedDays.map((day, index) => (index === 6 ? { ...day, meals: [invalidMeal, ...day.meals.slice(1)] } : day)),
-      }));
+      mockRepository.updatePlanTransaction = jest.fn().mockResolvedValue({ planId: 'plan-1', recipesForTracking: [] });
+      const mondayMeal = generatedDays[0].meals[0];
+      const days = generatedDays.map((day, index) => index === 0
+        ? { ...day, meals: [{ ...mondayMeal, recipe: { ...mondayMeal.recipe, ingredients: [{ name: 'Almendras', quantity: 30, unit: 'g' }] } }, ...day.meals.slice(1)] }
+        : day);
 
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.objectContaining({
-        errorCode: 'INVALID_RANGE',
-      }));
-      expectNoDomainWrites();
+      await service.updatePlan(userId, { weekStart: weekStartStr, days } as any);
+
+      expect(mockRepository.updatePlanTransaction).toHaveBeenCalled();
+      expect(mockComposer.composeWeeklyProposal).not.toHaveBeenCalled();
+      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', expect.anything());
     });
 
-    it('si la búsqueda de duplicados falla, el run queda FAILED (nunca PENDING) y el error sigue de largo', async () => {
-      mockRecipes.findByNormalizedTitles.mockRejectedValue(new Error('db down'));
+    it('rechaza una propuesta estructuralmente incompleta antes de buscar imágenes o persistir', async () => {
+      mockComposer.composeWeeklyProposal.mockResolvedValue({
+        ...defaultWeeklyProposal,
+        dto: { ...defaultWeeklyProposal.dto, days: generatedDays.slice(0, 6) },
+      });
 
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toThrow('db down');
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });
-      expectNoDomainWrites();
+      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'REJECTED', { errorCode: 'INVALID_PLAN_STRUCTURE' });
+      expect(mockUnsplash.searchAndSelectImages).not.toHaveBeenCalled();
+      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
     });
 
-    it('nunca le pide a la IA que juzgue su propio output (una sola llamada)', async () => {
-      mockOpenAI.generateMealPlan.mockResolvedValue('no es json');
+    it('propaga el 422 del composer sin hacer una escritura parcial ni sobrescribir su resultado', async () => {
+      mockComposer.composeWeeklyProposal.mockRejectedValue(new UnprocessableEntityException('proposal rejected'));
 
       await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(UnprocessableEntityException);
-      expect(mockOpenAI.generateMealPlan).toHaveBeenCalledTimes(1);
+
+      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalled();
+      expect(mockUnsplash.searchAndSelectImages).not.toHaveBeenCalled();
+      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -392,7 +230,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
       await service.generateAndPersistPlan(userId, weekStartStr);
 
       expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith('run-stale', userId, ['PENDING'], 'EXPIRED', { errorCode: 'PENDING_TIMEOUT' });
-      expect(mockOpenAI.generateMealPlan).toHaveBeenCalledTimes(1);
+      expect(mockComposer.composeWeeklyProposal).toHaveBeenCalledTimes(1);
       expect(mockRepository.createPlanTransaction.mock.calls[0][3]).toBe(newRun.id);
     });
 
@@ -416,27 +254,21 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
     });
   });
 
-  describe('NUT-74 - proveedor de IA caído: 503, nunca un 500 genérico', () => {
-    it.each(['AI_TIMEOUT', 'AI_PROVIDER_ERROR'] as const)('%s: el run queda FAILED con ese código y no se escribe ningún plan', async (reason) => {
-      mockOpenAI.generateMealPlan.mockRejectedValue(new AiProviderUnavailableError(reason));
+  describe('NUT-76 - errores del composer conservan status y limpieza del servicio', () => {
+    it.each(['AI_TIMEOUT', 'AI_PROVIDER_ERROR'] as const)('%s: el 503 del composer se propaga y no se persiste un plan', async (reason) => {
+      mockComposer.composeWeeklyProposal.mockRejectedValue(new ServiceUnavailableException(reason));
 
       await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(ServiceUnavailableException);
-      expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: reason });
+      expect(mockRepository.transitionGenerationRun).not.toHaveBeenCalled();
       expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
     });
 
-    it('si además falla marcar el run, el cliente igual recibe 503 (no un 500)', async () => {
-      mockOpenAI.generateMealPlan.mockRejectedValue(new AiProviderUnavailableError('AI_TIMEOUT'));
-      mockRepository.transitionGenerationRun.mockRejectedValue(new Error('db down'));
-
-      await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toBeInstanceOf(ServiceUnavailableException);
-    });
-
-    it('un error inesperado (que no es del proveedor) deja el run FAILED y sigue de largo', async () => {
-      mockOpenAI.generateMealPlan.mockRejectedValue(new TypeError('bug'));
+    it('un error inesperado del composer deja el run FAILED y sigue de largo', async () => {
+      mockComposer.composeWeeklyProposal.mockRejectedValue(new TypeError('bug'));
 
       await expect(service.generateAndPersistPlan(userId, weekStartStr)).rejects.toThrow('bug');
       expect(mockRepository.transitionGenerationRun).toHaveBeenCalledWith(newRun.id, userId, ['PENDING'], 'FAILED', { errorCode: 'UNEXPECTED_ERROR' });
+      expect(mockRepository.createPlanTransaction).not.toHaveBeenCalled();
     });
   });
 
@@ -757,6 +589,7 @@ describe('PlansService - Idempotencia y trazabilidad de GenerationRun (unit)', (
         userId,
         expect.any(Date),
         dto.days,
+        undefined,
         undefined,
         undefined,
         undefined,

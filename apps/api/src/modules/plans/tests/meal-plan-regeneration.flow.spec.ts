@@ -186,6 +186,129 @@ describe('Regenerar la semana - flujo completo (NUT-78)', () => {
     expect(db.state.runs.find(run => run.id === 'run-new').status).toBe('SUCCEEDED');
   });
 
+  it('acumula la auditoría de ambos intentos y persiste provider/model efectivos en el run SUCCEEDED', async () => {
+    const { db, regeneration, composer } = setup();
+    const v1 = await seedVersionOne(db);
+    const lunchRecipeId = db.state.meals.find(meal => meal.mealType === 'LUNCH').recipeId;
+    const dinnerRecipeId = db.state.meals.find(meal => meal.mealType === 'DINNER').recipeId;
+    const firstDinnerBatch = {
+      mealType: 'DINNER',
+      count: 2,
+      model: 'generation-first-model',
+      promptVersion: 'recipe-generation-v1',
+      schemaVersion: 'recipe-generation-v1',
+    };
+    const firstCompositionSnapshot = {
+      compositionVersion: 'weekly-catalog-composition-v2',
+      aiInvoked: true,
+      classificationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'classifier-first-model',
+        models: ['classifier-first-model'],
+        promptVersion: 'recipe-mealtype-classification-v1',
+        schemaVersion: 'recipe-mealtype-classification-v1',
+        pagesClassified: 2,
+        classifiedCount: 20,
+      },
+      generationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'generation-first-model',
+        generatedCount: 2,
+        batches: [firstDinnerBatch],
+      },
+      batches: [firstDinnerBatch],
+    };
+    const dinnerBatch = {
+      mealType: 'DINNER',
+      count: 1,
+      model: 'generation-second-model',
+      promptVersion: 'recipe-generation-v1',
+      schemaVersion: 'recipe-generation-v1',
+    };
+    const secondCompositionSnapshot = {
+      compositionVersion: 'weekly-catalog-composition-v2',
+      aiInvoked: true,
+      classificationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'classifier-second-model',
+        models: ['classifier-second-model'],
+        promptVersion: 'recipe-mealtype-classification-v1',
+        schemaVersion: 'recipe-mealtype-classification-v1',
+        pagesClassified: 3,
+        classifiedCount: 12,
+      },
+      generationAi: {
+        invoked: true,
+        provider: 'openai',
+        model: 'generation-second-model',
+        generatedCount: 1,
+        batches: [dinnerBatch],
+      },
+      batches: [dinnerBatch],
+    };
+    const unchangedProposal = {
+      dto: {
+        weekStart: '2026-09-14',
+        days: [{
+          day: 'MONDAY',
+          date: '2026-09-14',
+          meals: [
+            { mealType: 'LUNCH', title: 'Ensalada de quinoa', nutritionalValues, reuseRecipeId: lunchRecipeId },
+            { mealType: 'DINNER', title: 'Sopa de calabaza', nutritionalValues, reuseRecipeId: dinnerRecipeId },
+          ],
+        }],
+      },
+      comparableDays: [{
+        day: 'MONDAY',
+        date: '2026-09-14',
+        meals: [
+          { mealType: 'LUNCH', title: 'Ensalada de quinoa', nutritionalValues, recipe: recipe('Ensalada de quinoa') },
+          { mealType: 'DINNER', title: 'Sopa de calabaza', nutritionalValues, recipe: recipe('Sopa de calabaza') },
+        ],
+      }],
+      summary: { stage: 'passed', codes: [], warnings: [] },
+      compositionSnapshot: firstCompositionSnapshot,
+    };
+    composer.composeWeeklyProposal
+      .mockResolvedValueOnce(unchangedProposal)
+      .mockResolvedValueOnce({
+        ...proposalReusing(lunchRecipeId),
+        compositionSnapshot: secondCompositionSnapshot,
+      });
+
+    await regeneration.regenerate(USER, v1.id, KEY, { reason: 'USER_REQUESTED' } as any);
+
+    expect(composer.composeWeeklyProposal).toHaveBeenCalledTimes(2);
+    expect(db.state.runs.find(run => run.id === 'run-new')).toMatchObject({
+      status: 'SUCCEEDED',
+      provider: 'openai',
+      model: 'generation-second-model',
+      outputSnapshot: expect.objectContaining({
+        compositionVersion: 'weekly-catalog-composition-v2',
+        aiInvoked: true,
+        classificationAi: expect.objectContaining({
+          invoked: true,
+          provider: 'openai',
+          model: 'classifier-second-model',
+          models: ['classifier-first-model', 'classifier-second-model'],
+          pagesClassified: 5,
+          classifiedCount: 32,
+        }),
+        generationAi: expect.objectContaining({
+          invoked: true,
+          provider: 'openai',
+          model: 'generation-second-model',
+          generatedCount: 3,
+          batches: [firstDinnerBatch, dinnerBatch],
+        }),
+        batches: [firstDinnerBatch, dinnerBatch],
+      }),
+    });
+  });
+
   it('si falla un paso de la transacción, se revierte todo: la anterior sigue current y no quedan planes ni recetas parciales', async () => {
     const { db, regeneration, composer, plansService } = setup();
     const v1 = await seedVersionOne(db);

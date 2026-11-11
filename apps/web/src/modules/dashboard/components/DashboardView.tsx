@@ -1,7 +1,7 @@
 import { PageHeader } from '../../../common/components/PageHeader';
 import type { DashboardViewModel } from '../types';
 import { buildGreeting, hasNextMealColumn } from '../utils';
-import { AdherenceWidgetSlot } from './AdherenceWidgetSlot';
+import { AdherenceWidget } from '../adherence-widget/AdherenceWidget';
 import { NextMealHighlight } from './NextMealHighlight';
 import { QuickAccessLinks } from './QuickAccessLinks';
 import { TodayMealsCard } from './TodayMealsCard';
@@ -25,7 +25,7 @@ export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) 
         </header>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          <AdherenceWidgetSlot
+          <AdherenceWidget
             {...viewModel.adherence}
             className={withNextMeal ? 'lg:col-span-5 lg:col-start-8 lg:row-start-1' : 'lg:col-span-12'}
           />

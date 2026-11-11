@@ -1,9 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DashboardPage } from '@/modules/dashboard/pages/DashboardPage';
 import type { AuthenticatedUser } from '@/services/authService';
+import { adherenceService } from '@/services/adherenceService';
+import { adherenceFixture, noPlanAdherenceFixture } from '@/modules/adherence/fixtures/adherence.fixture';
 
 const mockAuth = vi.hoisted(() => ({
   user: null as AuthenticatedUser | null,
@@ -16,6 +18,9 @@ vi.mock('@/features/auth/AuthProvider', () => ({
     login: vi.fn(),
     logout: vi.fn(),
   }),
+}));
+vi.mock('@/services/adherenceService', () => ({
+  adherenceService: { getForWeek: vi.fn(), setMealStatus: vi.fn() },
 }));
 
 const SESSION_USER: AuthenticatedUser = {
@@ -63,6 +68,10 @@ function expectUnavailable(container: HTMLElement) {
 
 beforeEach(() => {
   mockAuth.user = { ...SESSION_USER };
+  vi.mocked(adherenceService.getForWeek).mockReset().mockImplementation(async (weekStart) => ({
+    ...noPlanAdherenceFixture,
+    weekStart,
+  }));
 });
 
 afterEach(() => {
@@ -78,7 +87,7 @@ describe('DashboardPage in development (fixtures via ?estado)', () => {
   it('?estado=sin-plan shows the no-plan copy', () => {
     renderPage('/dashboard?estado=sin-plan');
 
-    expect(screen.getByText(NO_PLAN)).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Comidas de hoy' })).getByText(NO_PLAN)).toBeVisible();
     expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
   });
 
@@ -121,18 +130,19 @@ describe('DashboardPage outside development', () => {
     vi.stubEnv('DEV', false);
   });
 
-  it('ignores ?estado=comidas and shows the unavailable state with the real name', () => {
-    const { container } = renderPage('/dashboard?estado=comidas');
+  it('ignores ?estado=comidas and shows the live state with the real name', async () => {
+    renderPage('/dashboard?estado=comidas');
 
-    expectUnavailable(container);
+    expect(await screen.findByText(NO_PLAN)).toBeVisible();
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
   });
 
-  it('without ?estado, both "Progreso semanal" and "Comidas de hoy" say "No disponible todavía" and nothing is busy (§16)', () => {
+  it('without ?estado, loads live progress while the meals card remains unavailable', async () => {
     renderPage('/dashboard');
 
-    const progress = screen.getByRole('region', { name: 'Progreso semanal' });
-    expect(within(progress).getByText(UNAVAILABLE)).toBeVisible();
+    expect(await screen.findByText(NO_PLAN)).toBeVisible();
+    const progress = screen.getByRole('region', { name: 'Progreso de la semana' });
+    expect(within(progress).getByText(NO_PLAN)).toBeVisible();
     expect(progress.querySelector('[aria-busy="true"]')).toBeNull();
     const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
     expect(within(meals).getByText(UNAVAILABLE)).toBeVisible();
@@ -176,6 +186,25 @@ describe('DashboardPage dev retry flow (§16)', () => {
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
   });
 
+  it.each(['error', 'progreso-error-actualizacion', 'progreso-desactualizado', 'progreso-inconsistente'])(
+    '?estado=%s → progress "Reintentar" goes through loading and ends showing the weekly progress',
+    (key) => {
+      renderPageWithProbe(`/dashboard?estado=${key}`);
+      const progress = () => screen.getByRole('region', { name: 'Progreso de la semana' });
+
+      fireEvent.click(within(progress()).getByRole('button', { name: 'Reintentar' }));
+      expect(progress().querySelector('[aria-busy="true"]')).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(RETRY_DELAY_MS);
+      });
+
+      expect(new URLSearchParams(screen.getByTestId('location-search').textContent ?? '').get('estado')).toBe('comidas');
+      expect(within(progress()).getByRole('progressbar')).toBeInTheDocument();
+      expect(within(progress()).queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument();
+    },
+  );
+
   it('unmounting before the delay clears the timer without throwing or warning', () => {
     const errorSpy = vi.spyOn(console, 'error');
     const warnSpy = vi.spyOn(console, 'warn');
@@ -206,5 +235,58 @@ describe('DashboardPage greeting without a name', () => {
     renderPage('/dashboard?estado=comidas');
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Hola$/);
+  });
+});
+
+function DashboardNavigation() {
+  const navigate = useNavigate();
+  return (
+    <div>
+      <button type="button" onClick={() => navigate('/other')}>Ir a otra página</button>
+      <button type="button" onClick={() => navigate('/dashboard')}>Volver al dashboard</button>
+    </div>
+  );
+}
+
+describe('DashboardPage live adherence', () => {
+  beforeEach(() => {
+    vi.stubEnv('DEV', false);
+  });
+
+  it('loads current adherence from the API instead of the production unavailable fixture', async () => {
+    renderPage('/dashboard');
+
+    expect(await screen.findByText(NO_PLAN)).toBeVisible();
+    expect(adherenceService.getForWeek).toHaveBeenCalledWith(
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('renders the API summary from the current adherence response', async () => {
+    vi.mocked(adherenceService.getForWeek).mockImplementation(async (weekStart) => ({
+      ...adherenceFixture,
+      weekStart,
+    }));
+
+    renderPage('/dashboard');
+
+    expect(await screen.findByText('1 de 4 comidas completadas')).toBeVisible();
+  });
+
+  it('fetches a fresh summary when the dashboard route becomes active again', async () => {
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <DashboardPage />
+        <DashboardNavigation />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText(NO_PLAN)).toBeVisible();
+    expect(adherenceService.getForWeek).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Ir a otra página' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Volver al dashboard' }));
+
+    await waitFor(() => expect(adherenceService.getForWeek).toHaveBeenCalledTimes(2));
   });
 });

@@ -177,7 +177,7 @@ const INVALID_CASES: InvalidCase[] = [
   // ----- kpi_snapshot -----
   { rule: 'snapshot: environment inválido', table: 'kpi_snapshot', overrides: { environment: 'test' }, constraint: 'kpi_snapshot_environment_check' },
   { rule: 'snapshot: snapshot_kind desconocido', table: 'kpi_snapshot', overrides: { snapshot_kind: 'draft' }, constraint: 'kpi_snapshot_snapshot_kind_check' },
-  { rule: 'snapshot: kpi_id de negocio (no Telemetry)', table: 'kpi_snapshot', overrides: { kpi_id: 'initial_plans_count' }, constraint: 'kpi_snapshot_kpi_id_check' },
+  { rule: 'snapshot: kpi_id de negocio (no Telemetry)', table: 'kpi_snapshot', overrides: { kpi_id: 'adherence_rate' }, constraint: 'kpi_snapshot_kpi_id_check' },
   { rule: 'snapshot: kpi_id desconocido', table: 'kpi_snapshot', overrides: { kpi_id: 'uptime' }, constraint: 'kpi_snapshot_kpi_id_check' },
   { rule: 'snapshot: quality desconocida', table: 'kpi_snapshot', overrides: { quality: 'estimated' }, constraint: 'kpi_snapshot_quality_check' },
   { rule: 'snapshot: sample_count negativo', table: 'kpi_snapshot', overrides: { sample_count: -1 }, constraint: 'kpi_snapshot_sample_count_check' },

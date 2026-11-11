@@ -13,4 +13,6 @@ Path restrictions are mandatory agent instructions; Codex does not provide per-a
 
 ## Inventory and context
 
+All agents and workflows read project resource URLs from `management/links.md`, including Google Sheets and Stitch. Add new user-authorized project links there and reference that file instead of duplicating URLs in instructions. If a required link is missing, ask for it and register it there. Never store credentials in this file.
+
 Read `.ai/index.md` first. Load `.ai/architecture.md` and `.ai/quality-and-testing.md` for every change; load `.ai/database-and-migrations.md` for backend/schema work, `.ai/frontend-and-stitch.md` for frontend, and `.ai/release-and-evidence.md` for review/release. Agent inventory and minimum MCP libraries are in `bundles/agent-libraries.json`.

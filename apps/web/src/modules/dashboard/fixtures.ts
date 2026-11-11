@@ -1,4 +1,9 @@
-import type { AdherenceWidgetProps } from './adherence-widget/types';
+import {
+  ADHERENCE_WIDGET_ERROR_MESSAGE,
+  createAdherenceWidgetProps,
+} from './adherence-widget/fixtures';
+import { createAdherenceWidgetStateProps } from './adherence-widget/stateFixtures';
+import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
 import type { AdherenceResponse, DashboardViewModel, TodayMeal } from './types';
 
 // Solo desarrollo. La cadena centinela va dentro de los datos para poder
@@ -14,7 +19,13 @@ export type DashboardFixtureKey =
   | 'error'
   | 'error-parcial'
   | 'no-disponible'
-  | 'sin-nombre';
+  | 'sin-nombre'
+  | 'progreso-sin-registros'
+  | 'progreso-sin-comidas'
+  | 'progreso-actualizando'
+  | 'progreso-error-actualizacion'
+  | 'progreso-desactualizado'
+  | 'progreso-inconsistente';
 
 type DashboardFixture = Omit<DashboardViewModel, 'userName'> & { userName?: null };
 
@@ -40,19 +51,20 @@ const UNKNOWN_STATUS_MEALS: TodayMeal[] = MIXED_MEALS.map((meal) => ({ ...meal, 
 // El retry se inyecta al seleccionar el fixture para que la página controle el flujo de recuperación.
 type FixtureBuilder = (onRetry: () => void) => DashboardFixture;
 
-const readyAdherence = (onRetry: () => void): AdherenceWidgetProps => ({
-  data: adherenceResponseFixture,
+// El progreso usa los fixtures del widget (NUT-103 y NUT-94); el camino de recuperación de los errores
+// termina en `comidas`, que muestra el progreso parcial.
+const readyAdherence = (onRetry: () => void): AdherenceWidgetViewProps => createAdherenceWidgetProps('partial', onRetry);
+
+const failedAdherence = (onRetry: () => void): AdherenceWidgetViewProps => ({
+  data: null,
   loading: false,
-  error: null,
+  error: ADHERENCE_WIDGET_ERROR_MESSAGE,
   onRetry,
 });
 
-// Texto interno de ejemplo: el slot nunca lo muestra (copy fijo) y no lleva dígitos ni "%".
-const failedAdherence = (onRetry: () => void): AdherenceWidgetProps => ({
-  data: null,
-  loading: false,
-  error: 'No se pudo obtener el progreso.',
-  onRetry,
+const mealsWithProgress = (adherence: AdherenceWidgetViewProps): DashboardFixture => ({
+  todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
+  adherence,
 });
 
 export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, FixtureBuilder> = {
@@ -62,7 +74,7 @@ export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, FixtureBuilder> = {
   }),
   'sin-plan': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'noPlan' } },
-    adherence: readyAdherence(onRetry),
+    adherence: createAdherenceWidgetProps('noPlan', onRetry),
   }),
   'sin-comidas': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'noMealsToday' } },
@@ -93,6 +105,12 @@ export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, FixtureBuilder> = {
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
     adherence: readyAdherence(onRetry),
   }),
+  'progreso-sin-registros': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('noRecords', onRetry)),
+  'progreso-sin-comidas': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('planWithoutMeals', onRetry)),
+  'progreso-actualizando': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('refreshing', onRetry)),
+  'progreso-error-actualizacion': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('staleWithError', onRetry)),
+  'progreso-desactualizado': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('stalePlan', onRetry)),
+  'progreso-inconsistente': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('inconsistent', onRetry)),
 };
 
 // Valida el contrato de adherencia; nunca se renderiza.
@@ -108,7 +126,7 @@ export const adherenceResponseFixture: AdherenceResponse = {
       completedMeals: 1,
       skippedMeals: 1,
       notLoggedMeals: 2,
-      adherencePercent: null,
+      adherencePercent: 25,
       meals: MIXED_MEALS.map((meal) => ({
         plannedMealId: meal.plannedMealId,
         mealUpdatedAt: '2026-10-19T09:00:00.000Z',
@@ -120,7 +138,7 @@ export const adherenceResponseFixture: AdherenceResponse = {
       })),
     },
   ],
-  summary: { plannedMeals: 4, completedMeals: 1, skippedMeals: 1, notLoggedMeals: 2, adherencePercent: null },
+  summary: { plannedMeals: 4, completedMeals: 1, skippedMeals: 1, notLoggedMeals: 2, adherencePercent: 25 },
 };
 
 function isFixtureKey(key: string | null): key is DashboardFixtureKey {

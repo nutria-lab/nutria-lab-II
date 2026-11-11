@@ -2,11 +2,25 @@
   "artifacts": {
     "codex:skills": [
       ".codex\\skills\\architecture-adr\\SKILL.md",
+      ".codex\\skills\\audit\\agents\\openai.yaml",
+      ".codex\\skills\\audit\\references\\design-audit-framework.md",
+      ".codex\\skills\\audit\\SKILL.md",
       ".codex\\skills\\codegraph-guidance\\SKILL.md",
+      ".codex\\skills\\design-qa\\agents\\openai.yaml",
+      ".codex\\skills\\design-qa\\references\\qa-rubric.md",
+      ".codex\\skills\\design-qa\\SKILL.md",
       ".codex\\skills\\documentation-evidence\\SKILL.md",
       ".codex\\skills\\engram-memory-protocol\\SKILL.md",
       ".codex\\skills\\gentle-ai-engram\\SKILL.md",
+      ".codex\\skills\\get-context\\agents\\openai.yaml",
+      ".codex\\skills\\get-context\\SKILL.md",
       ".codex\\skills\\google-modern-web-guidance\\SKILL.md",
+      ".codex\\skills\\ideate\\agents\\openai.yaml",
+      ".codex\\skills\\ideate\\SKILL.md",
+      ".codex\\skills\\image-to-code\\agents\\openai.yaml",
+      ".codex\\skills\\image-to-code\\SKILL.md",
+      ".codex\\skills\\index\\agents\\openai.yaml",
+      ".codex\\skills\\index\\SKILL.md",
       ".codex\\skills\\INDEX.md",
       ".codex\\skills\\linear-delivery-ops\\SKILL.md",
       ".codex\\skills\\meal-plan-ai-safety\\SKILL.md",
@@ -15,9 +29,21 @@
       ".codex\\skills\\pr-release-guardrails\\SKILL.md",
       ".codex\\skills\\product-backlog\\SKILL.md",
       ".codex\\skills\\qa-playwright-evidence\\SKILL.md",
+      ".codex\\skills\\research\\agents\\openai.yaml",
+      ".codex\\skills\\research\\SKILL.md",
       ".codex\\skills\\review\\SKILL.md",
+      ".codex\\skills\\share\\agents\\openai.yaml",
+      ".codex\\skills\\share\\SKILL.md",
       ".codex\\skills\\stitch-ui-workflow\\SKILL.md",
-      ".codex\\skills\\time-reporting\\SKILL.md"
+      ".codex\\skills\\time-reporting\\SKILL.md",
+      ".codex\\skills\\url-to-code\\agents\\openai.yaml",
+      ".codex\\skills\\url-to-code\\SKILL.md",
+      ".codex\\skills\\user-context\\agents\\openai.yaml",
+      ".codex\\skills\\user-context\\plugin-author-config\\user-context-template.md",
+      ".codex\\skills\\user-context\\references\\onboarding.md",
+      ".codex\\skills\\user-context\\scripts\\init_user_context.py",
+      ".codex\\skills\\user-context\\scripts\\user_context_preflight.py",
+      ".codex\\skills\\user-context\\SKILL.md"
     ],
     "codex:ai": [
       ".ai\\adherence.md",
@@ -131,6 +157,24 @@
     "claude:instructions:management": [],
     "claude:mcp-catalog:development": [
       ".nutria\\mcp\\servers.json"
+    ],
+    "codex:references": [
+      ".codex\\references\\communication-protocol.md",
+      ".codex\\references\\critical-overrides.md",
+      ".codex\\references\\existing-codebase-edits.md",
+      ".codex\\references\\local-prototype-preflight.md"
+    ],
+    "codex:product-design": [
+      ".codex\\product-design\\assets\\composerIcon.svg",
+      ".codex\\product-design\\assets\\logo.png",
+      ".codex\\product-design\\scripts\\bootstrap-prototype.mjs",
+      ".codex\\product-design\\templates\\prototype\\AGENTS.md",
+      ".codex\\product-design\\templates\\prototype\\index.html",
+      ".codex\\product-design\\templates\\prototype\\package.json",
+      ".codex\\product-design\\templates\\prototype\\src\\App.jsx",
+      ".codex\\product-design\\templates\\prototype\\src\\main.jsx",
+      ".codex\\product-design\\templates\\prototype\\src\\styles.css",
+      ".codex\\product-design\\templates\\prototype\\vite.config.mjs"
     ]
   },
   "mcp": {

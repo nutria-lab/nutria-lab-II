@@ -5,150 +5,347 @@ import { AiProviderUnavailableError } from '../../openai/openai.service';
 import { RecipeValidationService } from '../recipe-validation.service';
 import { OpenAIWeeklyProposalComposer } from '../weekly-proposal.composer';
 
-const DAYS = [
-  DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, DayOfWeek.THURSDAY,
-  DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY,
-];
-const profile: any = { goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'QUICK' };
+type Slot = { key: string; date: string; day: DayOfWeek; mealType: MealType };
+const weeklyProposalAssignment = require('../weekly-proposal-assignment') as {
+  buildWeeklySlots: (weekStart: Date) => Slot[];
+};
+const { buildWeeklySlots } = weeklyProposalAssignment;
 
-function week(title = 'Ensalada de quinoa') {
-  return DAYS.map((day, index) => ({
-    day,
-    date: `2026-09-${14 + index}`,
-    meals: [MealType.LUNCH, MealType.BREAKFAST, MealType.SNACK, MealType.DINNER].map((mealType) => {
-      const mealTitle = mealType === MealType.LUNCH ? title : `${title} ${mealType}`;
+const weekStart = new Date('2026-09-14T00:00:00.000Z');
+const profile: any = {
+  goal: 'MAINTAIN',
+  diet: 'ALL',
+  excludedIngredients: [],
+  cookTimePreference: 'QUICK',
+};
+
+function recipe(id: string, title = `Recipe ${id}`) {
+  return {
+    id,
+    title,
+    description: `Description ${title}`,
+    prepMinutes: 10,
+    cookMinutes: 15,
+    ingredients: [{ name: `Ingredient ${id}`, quantity: 1, unit: 'g' }],
+    instructions: ['Prepare'],
+    categories: [],
+    properties: [],
+    nutritionalValues: { calories: 350, protein: 20, fiber: 8 },
+  };
+}
+
+function generatedRecipe(index: number) {
+  return {
+    title: `Generated recipe ${index}`,
+    description: `Generated description ${index}`,
+    prepMinutes: 10,
+    cookMinutes: 15,
+    ingredients: [{ name: `Generated ingredient ${index}`, quantity: 1, unit: 'g' }],
+    instructions: ['Prepare'],
+    categories: [],
+    properties: [],
+    nutritionalValues: { calories: 350, protein: 20, fiber: 8 },
+  };
+}
+
+function setup(options: {
+  catalog?: any[];
+  eligibleSlotByRecipeId?: Map<string, string>;
+  eligibilityPolicy?: (candidate: any, slot: any) => boolean;
+  providerResponse?: (count: number, callIndex: number) => string;
+  providerError?: Error;
+  profile?: any;
+  recipeRepository?: any;
+  classifier?: any;
+} = {}) {
+  const plans = { transitionGenerationRun: jest.fn().mockResolvedValue(1) };
+  const recipeRepository = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
+  const validation = new RecipeValidationService(recipeRepository as any, plans as any);
+  const catalog = options.catalog ?? [];
+  const coverage = {
+    evaluate: jest.fn(async (request: any) => {
+      const excluded = new Set(request.excludeRecipeIds ?? []);
+      const page = catalog.filter(item => !excluded.has(item.id)).slice(0, request.desiredTotal);
       return {
-        mealType,
-        title: mealTitle,
-        nutritionalValues: { Protein: 20, Fiber: 8, Calories: 350, Description: mealType },
-        recipe: {
-          title: mealTitle,
-          description: 'Receta de prueba',
-          prepMinutes: 10,
-          cookMinutes: 15,
-          ingredients: [{ name: 'Quinoa', quantity: 150, unit: 'gr' }],
-          instructions: ['Cocinar'],
+        result: {
+          compatibleRecipes: page.map(recipe => ({ recipe, score: 0, matchReasons: [] })),
+          desiredTotal: request.desiredTotal,
+          compatibleCount: page.length,
+          missingCount: Math.max(0, request.desiredTotal - page.length),
+          normalizedCriteria: { categories: [], properties: [] },
         },
+        warnings: [],
       };
     }),
-  }));
-}
-
-function setup(raw: string | Error = JSON.stringify({ days: week() }), inputProfile: any = profile) {
-  const repository = { transitionGenerationRun: jest.fn().mockResolvedValue(1) };
-  const recipes = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
-  const openai = { generateMealPlan: raw instanceof Error ? jest.fn().mockRejectedValue(raw) : jest.fn().mockResolvedValue(raw) };
-  const validation = new RecipeValidationService(recipes as any, repository as any);
-  const composer = new OpenAIWeeklyProposalComposer(repository as any, openai as any, validation);
+  };
+  let nextGeneratedIndex = 0;
+  let callIndex = 0;
+  const provider = {
+    generate: jest.fn(async (input: any) => {
+      const currentCall = callIndex++;
+      if (options.providerError) throw options.providerError;
+      if (options.providerResponse) return options.providerResponse(input.count, currentCall);
+      const candidates = Array.from({ length: input.count }, () => generatedRecipe(nextGeneratedIndex++));
+      return JSON.stringify({ recipes: candidates });
+    }),
+  };
+  const eligible = options.eligibilityPolicy ?? (
+    options.eligibleSlotByRecipeId
+      ? (candidate: any, slot: any) => options.eligibleSlotByRecipeId?.get(candidate.id) === slot.key
+      : undefined
+  );
+  const Composer = OpenAIWeeklyProposalComposer as any;
+  const composer = new Composer(
+    plans as any,
+    coverage as any,
+    provider as any,
+    validation,
+    eligible as any,
+    options.recipeRepository as any,
+    options.classifier as any,
+  );
   const compose = () => composer.composeWeeklyProposal({
-    userId: 'user-1', runId: 'run-1', profile: inputProfile, weekStart: new Date('2026-09-14T00:00:00Z'), weekStartStr: '2026-09-14',
+    userId: 'user-1',
+    runId: 'run-1',
+    profile: options.profile ?? profile,
+    weekStart,
+    weekStartStr: '2026-09-14',
   } as any);
-  return { repository, recipes, openai, compose };
+
+  return { plans, recipeRepository, validation, coverage, provider, compose };
 }
 
-describe('OpenAIWeeklyProposalComposer.composeWeeklyProposal (NUT-78, generación semanal de NUT-74)', () => {
-  it('passes the original profile to the model and accepts its dietary choice', async () => {
-    const inputProfile = { ...profile, excludedIngredients: ['DAIRY'] };
-    const originalProfile = structuredClone(inputProfile);
-    const raw = JSON.stringify({ days: week('Crema de cacahuate') });
-    const { openai, compose } = setup(raw, inputProfile);
+function candidateCatalogForSlots(limit = 28, missingSlotIndices: number[] = []) {
+  const slots = buildWeeklySlots(weekStart);
+  const coveredIndices = slots.map((_, index) => index).filter(index => !missingSlotIndices.includes(index)).slice(0, limit);
+  const catalog = coveredIndices.map(index => recipe(`catalog-${index}`));
+  const eligibleSlotByRecipeId = new Map<string, string>(
+    catalog.map((item, index) => [item.id, slots[coveredIndices[index]].key] as [string, string]),
+  );
+  return { slots, catalog, eligibleSlotByRecipeId };
+}
 
-    const proposal = await compose();
+function mealsOf(proposal: any) {
+  return proposal.dto.days.flatMap((day: any) => day.meals);
+}
 
-    expect(proposal.dto.days).toHaveLength(7);
-    expect(openai.generateMealPlan).toHaveBeenCalledWith(inputProfile, new Date('2026-09-14T00:00:00Z'), expect.any(Function));
-    expect(openai.generateMealPlan.mock.calls[0][0]).toBe(inputProfile);
-    expect(inputProfile).toEqual(originalProfile);
-  });
+describe('OpenAIWeeklyProposalComposer catalog-first composition (NUT-76)', () => {
+  it('stops catalog orchestration immediately when the matcher reports full coverage (controlled matcher only)', async () => {
+    const catalog = Array.from({ length: 10 }, (_, index) => recipe(`catalog-${index}`));
+    const recipeRepository = {
+      findMealTypeCatalogPage: jest.fn().mockResolvedValue(catalog),
+    };
+    const classifier = {
+      classify: jest.fn(async (
+        inputs: Array<{ title: string; ingredients: unknown[] }>,
+        onModelSelected?: (model: string) => void | Promise<void>,
+      ) => {
+        await onModelSelected?.('classification-test-model');
+        return inputs.map(() => [MealType.BREAKFAST]);
+      }),
+    };
+    const { provider, compose } = setup({ recipeRepository, classifier });
+    const matcherSpy = jest.spyOn(weeklyProposalAssignment as any, 'matchRecipesToSlots')
+      .mockImplementation((...args: unknown[]) => {
+        const [slots, candidates] = args as [Slot[], any[]];
+        return new Map(slots.map((slot, index) => [slot.key, candidates[index % candidates.length]]));
+      });
 
-  it.each([undefined, true])('accepts the generated recipe with excluded dairy (%p)', async () => {
-    const inputProfile = { ...profile, excludedIngredients: ['DAIRY'] };
-    const { repository, openai, compose } = setup(JSON.stringify({ days: week('Queso parmesano') }), inputProfile);
+    try {
+      const proposal = await compose();
 
-    const proposal = await compose();
-    expect(proposal.dto.days[0].meals[0].title).toBe('Queso parmesano');
-    expect(openai.generateMealPlan).toHaveBeenCalledWith(inputProfile, expect.any(Date), expect.any(Function));
-    expect(repository.transitionGenerationRun).not.toHaveBeenCalledWith('run-1', 'user-1', ['PENDING'], 'REJECTED', expect.anything());
-  });
-
-  it('devuelve el plan validado y normalizado, las comidas para comparar y el resumen de validación', async () => {
-    const { compose } = setup();
-
-    const proposal = await compose();
-
-    expect(proposal.dto.weekStart).toBe('2026-09-14');
-    expect(proposal.dto.days).toHaveLength(7);
-    expect(proposal.dto.days[0].meals[0].recipe.ingredients).toEqual([{ name: 'Quinoa', quantity: 150, unit: 'g' }]);
-    expect(proposal.comparableDays[0].meals[0].recipe).toEqual(expect.objectContaining({ title: 'Ensalada de quinoa' }));
-    expect(proposal.summary).toEqual({ stage: 'passed', codes: [], warnings: ['CALORIE_CHECK_SKIPPED'] });
-  });
-
-  it('acepta los cuatro tipos una sola vez aunque vengan en otro orden', async () => {
-    const shuffled = week().map((day) => ({ ...day, meals: [...day.meals].reverse() }));
-    const { compose } = setup(JSON.stringify({ days: shuffled }));
-
-    const proposal = await compose();
-
-    expect(proposal.dto.days).toHaveLength(7);
-    expect(proposal.dto.days.every(({ meals }) => meals.length === 4)).toBe(true);
-    for (const day of proposal.dto.days) {
-      expect(day.meals.map(({ mealType }) => mealType).sort()).toEqual([
-        MealType.BREAKFAST, MealType.DINNER, MealType.LUNCH, MealType.SNACK,
-      ].sort());
+      expect(recipeRepository.findMealTypeCatalogPage).toHaveBeenCalledTimes(1);
+      expect(classifier.classify).toHaveBeenCalledTimes(1);
+      expect(provider.generate).not.toHaveBeenCalled();
+      expect(mealsOf(proposal)).toHaveLength(28);
+    } finally {
+      matcherSpy.mockRestore();
     }
   });
 
-  describe('rechaza semanas que no tengan cada tipo de comida exactamente una vez', () => {
-    const invalidMealDays = [
-      ...Object.values(MealType).map((missingType) => [
-        `falta ${missingType}`,
-        (validMeals: any[]) => validMeals.filter((meal) => meal.mealType !== missingType),
-      ] as const),
-      ['duplicado que deja otro tipo ausente', (validMeals: any[]) => [...validMeals.filter((meal) => meal.mealType !== MealType.SNACK), { ...validMeals[0] }]] as const,
-      ['duplicado además de los cuatro tipos', (validMeals: any[]) => [...validMeals, { ...validMeals[0] }]] as const,
-      ['tipo desconocido', (validMeals: any[]) => validMeals.map((meal, index) => index === 0 ? { ...meal, mealType: 'BRUNCH' } : meal)] as const,
-    ];
-
-    it.each(invalidMealDays)('%s → rechaza antes de validar recetas', async (_label, makeMeals) => {
-      const invalid = week().map((day, index) => index === 0 ? { ...day, meals: makeMeals(day.meals) } : day);
-      const { repository, recipes, compose } = setup(JSON.stringify({ days: invalid }));
-
-      await expect(compose()).rejects.toBeInstanceOf(UnprocessableEntityException);
-
-      expect(recipes.findByNormalizedTitles).not.toHaveBeenCalled();
-      expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', 'user-1', ['PENDING'], 'REJECTED', {
-        errorCode: 'AI_INVALID_SCHEMA',
-        validationSnapshot: { stage: 'schema', codes: ['AI_INVALID_SCHEMA'], warnings: [] },
-      });
-    });
-  });
-
-  it('una comida duplicada del catálogo se persiste con reuseRecipeId, pero se compara con su receta', async () => {
-    const { recipes, compose } = setup();
-    recipes.findByNormalizedTitles.mockResolvedValue([
-      { id: 'recipe-v1', title: 'Ensalada de quinoa', description: 'x', ingredients: [{ name: 'Quinoa' }], instructions: [] },
-    ]);
+  it('uses a fully covered catalog without calling the provider and preserves each existing Recipe ID', async () => {
+    const { catalog, eligibleSlotByRecipeId } = candidateCatalogForSlots();
+    const { coverage, provider, compose } = setup({ catalog, eligibleSlotByRecipeId });
 
     const proposal = await compose();
 
-    expect((proposal.dto.days[0].meals[0] as any).reuseRecipeId).toBe('recipe-v1');
-    expect(proposal.dto.days[0].meals[0].recipe).toBeUndefined();
-    expect(proposal.comparableDays[0].meals[0].recipe).toEqual(expect.objectContaining({ title: 'Ensalada de quinoa' }));
+    expect(mealsOf(proposal)).toHaveLength(28);
+    expect(provider.generate).not.toHaveBeenCalled();
+    expect(mealsOf(proposal).map((meal: any) => meal.reuseRecipeId)).toEqual(catalog.map(({ id }) => id));
+    expect(mealsOf(proposal).every((meal: any) => meal.recipe === undefined)).toBe(true);
+    expect(coverage.evaluate.mock.calls.every(([request]) => request.desiredTotal <= 10)).toBe(true);
+    expect(coverage.evaluate.mock.calls.length).toBeGreaterThan(1);
+    for (const [request] of coverage.evaluate.mock.calls) {
+      const excludedIds = request.excludeRecipeIds ?? [];
+      expect(new Set(excludedIds).size).toBe(excludedIds.length);
+    }
   });
 
-  it('proveedor caído → 503 y run FAILED con el motivo', async () => {
-    const { repository, compose } = setup(new AiProviderUnavailableError('AI_TIMEOUT'));
+  it('requests exactly the partial catalog deficit from the provider', async () => {
+    const { catalog, eligibleSlotByRecipeId } = candidateCatalogForSlots(28, [1, 5, 9]);
+    const { provider, compose } = setup({ catalog, eligibleSlotByRecipeId });
+
+    const proposal = await compose();
+
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate.mock.calls.map(([input]) => input.count)).toEqual([3]);
+    expect(provider.generate.mock.calls[0][0].criteria.mealType).toBe(MealType.LUNCH);
+    expect(mealsOf(proposal)).toHaveLength(28);
+    expect(mealsOf(proposal).filter((meal: any) => meal.reuseRecipeId)).toHaveLength(25);
+    expect(mealsOf(proposal).filter((meal: any) => meal.recipe)).toHaveLength(3);
+  });
+
+  it('requests an empty catalog deficit in homogeneous meal-type batches', async () => {
+    const { provider, compose } = setup();
+
+    const proposal = await compose();
+
+    expect(provider.generate.mock.calls.map(([input]) => input.count)).toEqual([7, 7, 7, 7]);
+    expect(provider.generate.mock.calls.every(([input]) => input.count <= 10)).toBe(true);
+    expect(new Set(provider.generate.mock.calls.map(([input]) => input.criteria.mealType)).size).toBe(4);
+    expect(mealsOf(proposal)).toHaveLength(28);
+    expect(mealsOf(proposal).every((meal: any) => meal.reuseRecipeId === undefined)).toBe(true);
+  });
+
+  it('keeps catalog paging IDs scoped to one query and excludes prior pages without duplicate discovery', async () => {
+    const { catalog, eligibleSlotByRecipeId } = candidateCatalogForSlots();
+    const { coverage, compose } = setup({ catalog, eligibleSlotByRecipeId });
+
+    await compose();
+
+    const calls = coverage.evaluate.mock.calls.map(([request]) => request);
+    expect(calls.length).toBe(3);
+    expect(calls.map(request => request.desiredTotal)).toEqual([10, 10, 10]);
+    expect(calls[0].excludeRecipeIds ?? []).toEqual([]);
+    expect(calls[1].excludeRecipeIds).toHaveLength(10);
+    expect(calls[2].excludeRecipeIds).toHaveLength(20);
+    expect(calls[2].excludeRecipeIds).toEqual(catalog.slice(0, 20).map(({ id }) => id));
+  });
+
+  it('fails closed when titles, categories, or properties merely suggest a meal type', async () => {
+    const suggestiveCatalog = Array.from({ length: 28 }, (_, index) => ({
+      ...recipe(`suggestive-${index}`, `Breakfast ${index}`),
+      categories: ['HIGH_PROTEIN'],
+      properties: ['BREAKFAST'],
+    }));
+    const { provider, compose } = setup({ catalog: suggestiveCatalog });
+
+    const proposal = await compose();
+
+    expect(provider.generate.mock.calls.map(([input]) => input.count)).toEqual([7, 7, 7, 7]);
+    expect(mealsOf(proposal).every((meal: any) => meal.reuseRecipeId === undefined)).toBe(true);
+  });
+
+  it('keeps NUT-74 legacy profile behavior when an excluded ingredient appears in an AI draft', async () => {
+    const dairyProfile = { ...profile, excludedIngredients: ['DAIRY'] };
+    const dairyDraft = {
+      ...generatedRecipe(0),
+      ingredients: [{ name: 'Milk', quantity: 1, unit: 'g' }],
+    };
+    const { provider, compose } = setup({
+      catalog: candidateCatalogForSlots(27).catalog,
+      eligibleSlotByRecipeId: candidateCatalogForSlots(27).eligibleSlotByRecipeId,
+      profile: dairyProfile,
+      providerResponse: () => JSON.stringify({ recipes: [dairyDraft] }),
+    });
+
+    const proposal = await compose();
+
+    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ profile: dairyProfile }), expect.any(Function));
+    expect(mealsOf(proposal)).toHaveLength(28);
+  });
+
+  it('does not treat a technical coverage failure as an empty catalog', async () => {
+    const { coverage, provider, compose } = setup();
+    coverage.evaluate.mockRejectedValueOnce(new Error('catalog database unavailable'));
 
     await expect(compose()).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', 'user-1', ['PENDING'], 'FAILED', { errorCode: 'AI_TIMEOUT' });
+    expect(provider.generate).not.toHaveBeenCalled();
   });
 
-  it('contenido inválido → 422 y run REJECTED con el código de NUT-74', async () => {
-    const { repository, compose } = setup('no es json');
+  it.each([
+    ['catalog repository without classifier', { recipeRepository: { findMealTypeCatalogPage: jest.fn() } }],
+    ['classifier without catalog repository', { classifier: { classify: jest.fn() } }],
+  ])('fails fast for partial production classifier wiring: %s', async (_description, partialWiring) => {
+    const { catalog } = candidateCatalogForSlots();
+    const { compose } = setup({
+      catalog,
+      eligibilityPolicy: () => true,
+      ...partialWiring,
+    });
+
+    await expect(compose()).rejects.toThrow();
+  });
+
+  it('maps provider unavailability to 503 and records the failed run', async () => {
+    const { plans, compose } = setup({ providerError: new AiProviderUnavailableError('AI_TIMEOUT') });
+
+    await expect(compose()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(plans.transitionGenerationRun).toHaveBeenCalledWith(
+      'run-1', 'user-1', ['PENDING'], 'FAILED', { errorCode: 'AI_TIMEOUT' },
+    );
+  });
+
+  it('rejects invalid provider JSON through the existing validation run path', async () => {
+    const { plans, compose } = setup({ providerResponse: () => 'not json' });
 
     await expect(compose()).rejects.toBeInstanceOf(UnprocessableEntityException);
-    expect(repository.transitionGenerationRun).toHaveBeenCalledWith('run-1', 'user-1', ['PENDING'], 'REJECTED', expect.objectContaining({
-      errorCode: 'INVALID_JSON',
-    }));
+    expect(plans.transitionGenerationRun).toHaveBeenCalledWith(
+      'run-1', 'user-1', ['PENDING'], 'REJECTED', expect.objectContaining({ errorCode: 'INVALID_JSON' }),
+    );
+  });
+
+  it('rejects provider count mismatch rather than silently retrying or filling by repetition', async () => {
+    const { plans, provider, compose } = setup({
+      providerResponse: count => JSON.stringify({ recipes: Array.from({ length: count - 1 }, (_, index) => generatedRecipe(index)) }),
+    });
+
+    await expect(compose()).rejects.toBeInstanceOf(UnprocessableEntityException);
+    expect(provider.generate).toHaveBeenCalledTimes(1);
+    expect(provider.generate.mock.calls[0][0].count).toBe(7);
+    expect(plans.transitionGenerationRun).toHaveBeenCalledWith(
+      'run-1', 'user-1', ['PENDING'], 'REJECTED', expect.objectContaining({ errorCode: 'COUNT_MISMATCH' }),
+    );
+  });
+
+  it('sends all provider batches through the real NUT-74 service and rejects if too few drafts are valid', async () => {
+    const invalidDraft = { ...generatedRecipe(0), categories: ['UNSUPPORTED_CATEGORY'] };
+    const { plans, validation, provider, compose } = setup({
+      providerResponse: count => JSON.stringify({ recipes: Array.from({ length: count }, () => invalidDraft) }),
+    });
+    const validateDrafts = jest.spyOn(validation, 'validateDrafts');
+
+    await expect(compose()).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    expect(provider.generate.mock.calls.map(([input]) => input.count)).toEqual([7, 7, 7, 7]);
+    expect(validateDrafts).toHaveBeenCalledTimes(1);
+    expect(validateDrafts.mock.calls[0][0]).toHaveLength(28);
+    expect(plans.transitionGenerationRun).toHaveBeenCalledWith(
+      'run-1', 'user-1', ['PENDING'], 'REJECTED', expect.objectContaining({ errorCode: 'UNSUPPORTED_CATEGORY' }),
+    );
+  });
+
+  it('rejects an exact duplicate that appears across separate provider batches', async () => {
+    const plans = { transitionGenerationRun: jest.fn().mockResolvedValue(1) };
+    const recipeRepository = { findByNormalizedTitles: jest.fn().mockResolvedValue([]) };
+    const validation = new RecipeValidationService(recipeRepository as any, plans as any);
+    let next = 0;
+    const duplicate = generatedRecipe(0);
+    const provider = {
+      generate: jest.fn(async ({ count }: any) => {
+        const batch = Array.from({ length: count }, () => {
+          const current = next++;
+          return current === 7 ? duplicate : generatedRecipe(current);
+        });
+        return JSON.stringify({ recipes: batch });
+      }),
+    };
+    const coverage = { evaluate: jest.fn().mockResolvedValue({ result: { compatibleRecipes: [] }, warnings: [] }) };
+    const Composer = OpenAIWeeklyProposalComposer as any;
+    const composer = new Composer(plans as any, coverage as any, provider as any, validation, undefined as any);
+
+    await expect(composer.composeWeeklyProposal({
+      userId: 'user-1', runId: 'run-1', profile, weekStart, weekStartStr: '2026-09-14',
+    } as any)).rejects.toBeInstanceOf(UnprocessableEntityException);
   });
 });

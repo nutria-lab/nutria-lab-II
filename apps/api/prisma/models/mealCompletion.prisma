@@ -1,0 +1,21 @@
+enum MealCompletionStatus {
+  NOT_LOGGED
+  COMPLETED
+  SKIPPED
+}
+
+model MealCompletion {
+  id                    String               @id @default(uuid())
+  userId                String
+  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plannedMealId         String               @unique
+  plannedMeal           PlannedMeal          @relation(fields: [plannedMealId], references: [id], onDelete: Cascade)
+  recipeIdSnapshot      String?
+  mealUpdatedAtSnapshot DateTime
+  status                MealCompletionStatus
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  @@index([userId])
+  @@map("meal_completions")
+}

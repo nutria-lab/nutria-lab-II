@@ -46,10 +46,10 @@ describe('NUT-73 PR #52 review regressions', () => {
     const openai = { generateJson: jest.fn().mockResolvedValue(rawRecipes([generatedRecipe()])) };
     const { OpenAIRecipeGenerationProvider } = require('../recipe-generation.ports');
     const adapter = new OpenAIRecipeGenerationProvider(openai);
-    const input = { profile: { diet: 'VEGAN' }, criteria: { topic: 'cena' }, count: 1, promptVersion: 'recipe-preview-openai-v1', schemaVersion: 'recipe-candidate-openai-v1' };
+    const input = { profile: { diet: 'VEGAN' }, criteria: { topic: 'cena' }, count: 1, promptVersion: 'recipe-preview-openai-v2', schemaVersion: 'recipe-candidate-openai-v2' };
 
     await expect(adapter.generate(input)).resolves.toBe(rawRecipes([generatedRecipe()]));
-    expect(openai.generateJson).toHaveBeenCalledWith(expect.stringContaining('recipe-preview-openai-v1'), expect.objectContaining({ type: 'object' }), 'recipe_candidates', undefined);
+    expect(openai.generateJson).toHaveBeenCalledWith(expect.stringContaining('recipe-preview-openai-v2'), expect.objectContaining({ type: 'object' }), 'recipe_candidates', undefined);
   });
 
   it('reuses catalog coverage without filtering it by excluded ingredients', async () => {

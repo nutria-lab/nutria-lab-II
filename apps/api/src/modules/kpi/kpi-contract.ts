@@ -11,7 +11,7 @@ export type KpiId =
   | 'timeout_rate'
   | 'dependency_error_rate'
   | 'availability_rate'
-  | 'initial_plans_count'
+  | 'adherence_rate'
   | 'manual_recipes_count';
 
 export interface CollectionContext {
