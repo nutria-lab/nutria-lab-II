@@ -142,8 +142,12 @@ export function useShoppingList(
     if (!authenticated || !sessionIdentity) {
       setState("loading");
       setResponse(undefined);
+      confirmed.current = undefined;
       return undefined;
     }
+    setState("loading");
+    setResponse(undefined);
+    confirmed.current = undefined;
     setPending({});
     lockedItems.current.clear();
     setItemErrors({});
