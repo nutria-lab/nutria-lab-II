@@ -114,12 +114,12 @@ export function TopBar({
     <header
       className="
         fixed top-0 right-0 z-40 hidden h-16 items-center justify-between
-        border-b border-outline-variant/40 bg-brand-cream px-8 shadow-sm backdrop-blur-md
+        gap-4 border-b border-outline-variant/40 bg-brand-cream px-4 shadow-sm backdrop-blur-md md:px-5 xl:px-8
         md:flex w-full md:w-[calc(100%-15rem)]
       "
     >
       {/* Search bar */}
-      <form onSubmit={handleSearchSubmit} className="flex flex-1 items-center gap-4">
+      <form onSubmit={handleSearchSubmit} className="flex min-w-0 flex-1 items-center gap-4">
         <SearchInput
           id={isRecipes ? 'desktop-search' : 'topbar-search'}
           value={query}
@@ -135,7 +135,7 @@ export function TopBar({
       </form>
 
       {/* Right section: adapts smoothly according to section */}
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         {isRecipes ? (
           <>
             <button
@@ -168,51 +168,14 @@ export function TopBar({
               </span>
               <span>Nueva Receta</span>
             </button>
-            <div className="mx-1 h-6 w-px bg-outline-variant/40" />
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                notifications
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label="Configuración"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                settings
-              </span>
-            </button>
           </>
         ) : (
           <>
-            <button
-              type="button"
-              aria-label="Notificaciones"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                notifications
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label="Configuración"
-              className="p-1.5 text-on-surface-variant transition-colors hover:text-brand-green focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-green"
-            >
-              <span className="material-symbols-outlined" aria-hidden="true">
-                settings
-              </span>
-            </button>
-
-            <div className="flex items-center gap-3 border-l border-outline-variant/40 pl-4">
-              <div className="hidden text-right sm:block">
-                <p className="text-sm font-bold text-on-surface">{displayName}</p>
-                <p className="text-xs text-on-surface-variant">Miembro Premium</p>
+            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+              <div className="hidden min-w-0 text-right sm:block">
+                <p className="max-w-[clamp(6rem,18vw,14rem)] truncate whitespace-nowrap text-sm font-bold text-on-surface" title={displayName}>
+                  {displayName}
+                </p>
               </div>
               <div
                 aria-label={`Avatar de ${displayName}`}
