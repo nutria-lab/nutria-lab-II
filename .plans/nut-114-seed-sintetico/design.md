@@ -32,7 +32,7 @@ Generado: 2026-11-11 (designer backend). Fuente de verdad: el plan aprobado por 
 
 **D1 — Ampliar el seeder base, no crear otro.** La parte base (usuarios `usuario.prueba1–3@nutria.com`, receta base de pollo con ID fijo, 2 ingredientes base) queda igual. La parte sintética es opcional y corre después.
 
-**D2 — Aislamiento de KPIs (NUT-105).** Los 5000 planes sintéticos van en **semanas pasadas fijas** y las recetas tienen `createdAt` **pasado y fijo**. Los planes masivos no tienen ningún día en la fecha de reporte, así que aportan 0 comidas a `adherence_rate`. Las recetas tienen `createdAt` fuera de la ventana, así que no suman a `manual_recipes_count`, y como no hay GenerationRun tampoco suman a `initial_plans_count`. La cuenta de recorrido 00001 recibe además un plan en la semana actual: en la base donde se cargue, `adherence_rate` refleja **solo sus 4 comidas del día de reporte** y no es un valor real. Por eso la carga se ejecuta en una **base aislada, distinta de la de NUT-105**.
+**D2 — Aislamiento de KPIs (NUT-105).** Los 5000 planes sintéticos van en **semanas pasadas fijas** y las recetas tienen `createdAt` **pasado y fijo**. Los planes masivos no tienen ningún día en la fecha de reporte, así que aportan 0 comidas a `adherence_rate`. Las recetas tienen `createdAt` fuera de la ventana, así que no suman a `manual_recipes_count`, y como no hay GenerationRun tampoco suman a `initial_plans_count`. La cuenta de recorrido 00001 recibe además un plan en la semana actual, y el seeder base mantiene el plan de la semana de `usuario.prueba1–3` (2 comidas por día, sin marcas). En la base donde se cargue, `adherence_rate` refleja **solo las comidas del día de reporte de 00001 (4) y de `usuario.prueba1–3` (6)** y no es un valor real. Por eso la carga se ejecuta en una **base aislada, distinta de la de NUT-105**.
 
 **D3 — Ingredient: 5000 sintéticos más los 2 base.** Catálogo curado real (~60, con etiquetas de dieta y alérgenos) más nombres combinatorios únicos y determinísticos (base × presentación × tamaño, por ejemplo "Tomate perita en lata 400 g"). La cuenta 00001 usa solo el catálogo curado; las recetas masivas usan los combinatorios. Los 2 base no cuentan para la cuota.
 
@@ -70,7 +70,7 @@ Componentes (conceptuales):
 | **Guard de destino** | `assertSeedTarget(env)`: valida destinos y flags, enmascara logs; se llama al inicio, antes de crear `Pool` y `PrismaClient` | pura |
 | **Loader por fases** | escribe por lotes con `createMany skipDuplicates`, verifica cada fase, lanza `SeedPhaseError(phase, batch\|code, muestra?)`, ejecuta verify masiva, current-week y su verify, imprime conteos y duración | I/O |
 | **Integración en el seeder base** | guard → base → (si `SEED_SYNTHETIC=true`) loader; mapea errores a exit code 1 | I/O |
-| **Documentación del seeder sintético** | variables, comando, conteos esperados por fórmula, comportamiento al reejecutar, base aislada, visibilidad global de recetas, aclaración de que `adherence_rate` en la base demo refleja solo a 00001 y no es un valor real, commit base probado, evidencia de corridas | doc |
+| **Documentación del seeder sintético** | variables, comando, conteos esperados por fórmula, comportamiento al reejecutar, base aislada, visibilidad global de recetas, aclaración de que `adherence_rate` en la base demo refleja solo a 00001 y a `usuario.prueba1–3` y no es un valor real, commit base probado, evidencia de corridas | doc |
 
 Parámetros de volumen: `SEED_SYNTHETIC_USERS` (por defecto 5000, máximo 5000; escala todo lo demás) y `SEED_BATCH_SIZE` (por defecto 1000).
 
@@ -244,7 +244,7 @@ El índice único parcial `meal_plans_user_week_current_key` sobre `("userId","s
 ### 9.4 Aislamiento de KPIs
 - Planes masivos en semanas pasadas fijas (la última termina el domingo 2026-10-11) → ningún día coincide con la fecha de reporte → aportan 0 comidas a `adherence_rate`.
 - Recetas con `createdAt` pasado y fijo → no afectan `manual_recipes_count`. Sin GenerationRun → no afectan `initial_plans_count`.
-- Solo 00001 tiene plan en la semana actual → aporta sus 4 comidas del día de reporte. Con fecha de reporte = hoy quedan sin marcar, porque nunca se marca hoy. Con fecha de reporte = ayer llevan las marcas del seed. En la base demo, `adherence_rate` refleja solo a 00001 y no es un valor real; la documentación lo aclara. La carga va en una base aislada distinta de la de NUT-105.
+- Solo 00001 tiene plan en la semana actual → aporta sus 4 comidas del día de reporte. Con fecha de reporte = hoy quedan sin marcar, porque nunca se marca hoy. Con fecha de reporte = ayer llevan las marcas del seed. El seeder base suma además las 2 comidas por día, sin marcas, de cada `usuario.prueba1–3`. En la base demo, `adherence_rate` refleja solo a 00001 y a esos 3 usuarios y no es un valor real; la documentación lo aclara. El test de integración carga solo la parte sintética, por eso ahí N = 4. La carga va en una base aislada distinta de la de NUT-105.
 
 ### 9.5 Snapshots de adherencia
 `recipeIdSnapshot` y `mealUpdatedAtSnapshot` se arman con `id`, `recipeId` y `updatedAt` releídos de la base después de insertar las comidas; nunca se heredan entre recetas. Como no se actualizan comidas, las marcas siguen siendo válidas en corridas posteriores.
@@ -362,7 +362,7 @@ Reglas: sin `git add`, commit ni push por parte de agentes. Al terminar cada blo
 ## 12. Riesgos
 
 - **Alcance horario** (6–8 h vs 2 h): requiere confirmación del PM.
-- **KPI en la base demo:** `adherence_rate` de esa base refleja solo las 4 comidas de 00001 del día de reporte. No representa uso real y no debe publicarse como tal.
+- **KPI en la base demo:** `adherence_rate` de esa base refleja solo las comidas del día de reporte de 00001 (4) y de `usuario.prueba1–3` (6, del seeder base). No representa uso real y no debe publicarse como tal.
 - **Recetas globales:** en la base demo, los planes nuevos de cualquier usuario (incluidos `usuario.prueba1–3`) pueden usar recetas sintéticas. Mitigación: base aislada y documentación.
 - **Guardado de planes desde la app:** el PUT de planes reemplaza `image` solo si es truthy, así que guardar un plan con recetas del seed busca imagen (una llamada por título único). Sin `UNSPLASH_ACCESS_KEY` la búsqueda se saltea. No se cambia (fuera de alcance).
 - **Constantes en el build:** el módulo de datos base ya se compila; las constantes de convención también llegarán al build, aunque el generador no.
