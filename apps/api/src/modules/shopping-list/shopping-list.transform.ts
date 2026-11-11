@@ -120,7 +120,7 @@ export function transformShoppingList(weekStart: string, plan: ShoppingListPlan)
 
   const planId = plan.id;
   const warnings: ShoppingListWarning[] = [];
-  const groups = new Map<string, { name: string; unit: string; contributions: Contribution[] }>();
+  const groups = new Map<string, { name: string; unit: string | null; contributions: Contribution[] }>();
   const isolated: ShoppingListItem[] = [];
   const meals = plan.days.flatMap((day) => day.meals).slice().sort((left, right) => compareText(left.id, right.id));
 
@@ -157,7 +157,10 @@ export function transformShoppingList(weekStart: string, plan: ShoppingListPlan)
         unit: normalizedUnit,
       };
 
-      if (invalid) {
+      // Entries with the same normalized name and the same displayable unit
+      // can be combined. A null unit is still a shared group when quantities
+      // are usable; quantities that cannot be summed remain source-specific.
+      if (quantity === null) {
         isolated.push(createItem(planId, normalizedName, normalizedUnit, [{ source, decimal: quantity === null ? { coefficient: 0n, scale: 0 } : decimalFromNumber(quantity) }], quantity));
         return;
       }
