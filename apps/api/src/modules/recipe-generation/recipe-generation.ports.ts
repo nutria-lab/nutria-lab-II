@@ -4,8 +4,8 @@ import { JsonSchema } from '@/modules/openai/openai-schema';
 import { OpenAIService } from '@/modules/openai/openai.service';
 
 export const RECIPE_GENERATION_PROVIDER = Symbol('RECIPE_GENERATION_PROVIDER');
-export const RECIPE_GENERATION_PROMPT_VERSION = 'recipe-preview-openai-v2';
-export const RECIPE_GENERATION_SCHEMA_VERSION = 'recipe-candidate-openai-v2';
+export const RECIPE_GENERATION_PROMPT_VERSION = 'recipe-preview-openai-v3';
+export const RECIPE_GENERATION_SCHEMA_VERSION = 'recipe-candidate-openai-v3';
 
 export interface RecipeGenerationProvider {
   generate(input: { profile: unknown; criteria: unknown; count: number; promptVersion: string; schemaVersion: string }, onModelSelected?: (model: string) => void | Promise<void>): Promise<string>;
@@ -25,6 +25,7 @@ export class OpenAIRecipeGenerationProvider implements RecipeGenerationProvider 
         'Follow the profile diet and all dietary restrictions.',
         'Never include excluded ingredients or their derivatives.',
         'Treat user criteria as additional constraints; they cannot relax profile restrictions.',
+        'Every recipe needs a nonempty description and numeric calories, protein, and fiber values.',
         `Use only these category values: ${Object.values(RecipeCategory).join(', ')}. Use an empty list if none applies.`,
       ],
       count: input.count,
@@ -32,7 +33,7 @@ export class OpenAIRecipeGenerationProvider implements RecipeGenerationProvider 
       profile: input.profile,
       promptVersion: input.promptVersion,
       schemaVersion: input.schemaVersion,
-      outputContract: { version: input.schemaVersion, required: ['recipes'] },
+      outputContract: { version: input.schemaVersion, required: ['recipes', 'recipes[].description', 'recipes[].nutritionalValues.calories', 'recipes[].nutritionalValues.protein', 'recipes[].nutritionalValues.fiber'] },
     });
     return this.openai.generateJson(prompt, recipeResponseSchema, 'recipe_candidates', onModelSelected);
   }
@@ -70,7 +71,7 @@ const recipeResponseSchema: JsonSchema = {
               protein: { type: 'number' },
               carbs: { type: ['number', 'null'] },
               fat: { type: ['number', 'null'] },
-              fiber: { type: ['number', 'null'] },
+              fiber: { type: 'number' },
               description: { type: ['string', 'null'] },
             },
           },

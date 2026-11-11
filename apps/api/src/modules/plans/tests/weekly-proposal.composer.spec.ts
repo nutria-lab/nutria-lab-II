@@ -295,6 +295,29 @@ describe('OpenAIWeeklyProposalComposer catalog-first composition (NUT-76)', () =
     );
   });
 
+  it('regenerates one incomplete recipe before accepting the weekly proposal', async () => {
+    const { catalog, eligibleSlotByRecipeId } = candidateCatalogForSlots(28, [27]);
+    const { plans, provider, compose } = setup({
+      catalog,
+      eligibleSlotByRecipeId,
+      providerResponse: (_count, callIndex) => JSON.stringify({
+        recipes: [{
+          ...generatedRecipe(callIndex),
+          nutritionalValues: { calories: 350, protein: 20, fiber: callIndex === 0 ? null : 8 },
+        }],
+      }),
+    });
+
+    const proposal = await compose();
+
+    expect(provider.generate).toHaveBeenCalledTimes(2);
+    expect(provider.generate.mock.calls.map(([input]) => input.count)).toEqual([1, 1]);
+    expect(mealsOf(proposal)).toHaveLength(28);
+    expect(plans.transitionGenerationRun).not.toHaveBeenCalledWith(
+      'run-1', 'user-1', ['PENDING'], 'REJECTED', expect.anything(),
+    );
+  });
+
   it('rejects provider count mismatch rather than silently retrying or filling by repetition', async () => {
     const { plans, provider, compose } = setup({
       providerResponse: count => JSON.stringify({ recipes: Array.from({ length: count - 1 }, (_, index) => generatedRecipe(index)) }),

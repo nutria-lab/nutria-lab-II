@@ -454,31 +454,63 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
     for (const batch of chunkHomogeneous(missingSlots, slot => slot.mealType, 10)) {
       const mealType = batch[0].mealType;
       let selectedModel: string = OPENAI_MODEL_NAME;
-      let raw: string;
-      try {
-        raw = await this.provider.generate({
+      const generate = async (count: number): Promise<string> => {
+        try {
+          return await this.provider.generate({
           profile: input.profile,
           criteria: { mealType },
-          count: batch.length,
+          count,
           promptVersion: RECIPE_GENERATION_PROMPT_VERSION,
           schemaVersion: RECIPE_GENERATION_SCHEMA_VERSION,
         }, async model => {
           selectedModel = model;
           await this.recordSelectedModel(input, model);
         });
-      } catch (error) {
-        if (error instanceof AiProviderUnavailableError) {
-          await this.failRun(input.runId, input.userId, error.reason);
-          throw new ServiceUnavailableException('The AI provider is not available; retry later');
+        } catch (error) {
+          if (error instanceof AiProviderUnavailableError) {
+            await this.failRun(input.runId, input.userId, error.reason);
+            throw new ServiceUnavailableException('The AI provider is not available; retry later');
+          }
+          throw error;
         }
-        throw error;
-      }
+      };
+      const raw = await generate(batch.length);
 
       const parsed = parseGeneratedOutput(raw, batch.length);
       const run = this.run(input, selectedModel);
       if (!parsed.ok) {
         await this.validation.reject(run, summarizeParseFailure(parsed.errors));
         throw new UnprocessableEntityException(`The generated meal plan did not pass validation (${parsed.errors[0].code})`);
+      }
+
+      // One local regeneration for an incomplete candidate; never fill nutrition with invented values.
+      const candidates = [...parsed.value];
+      const incompleteIndex = candidates.findIndex(candidate => {
+        try {
+          mapRecipeNutritionToMeal(candidate);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      if (incompleteIndex >= 0) {
+        const candidate = candidates[incompleteIndex] as Record<string, unknown>;
+        const nutrition = candidate?.nutritionalValues as Record<string, unknown> | undefined;
+        const field = !nutrition || typeof nutrition.calories !== 'number' || !Number.isFinite(nutrition.calories)
+          ? 'nutritionalValues.calories'
+          : typeof nutrition.protein !== 'number' || !Number.isFinite(nutrition.protein)
+            ? 'nutritionalValues.protein'
+            : typeof nutrition.fiber !== 'number' || !Number.isFinite(nutrition.fiber)
+              ? 'nutritionalValues.fiber'
+              : 'description';
+        this.logger.warn({ event: 'recipe_generation_missing_field', code: 'MISSING_FIELD', field,
+          provider: OPENAI_PROVIDER, model: selectedModel, generationRunId: input.runId });
+        const retried = parseGeneratedOutput(await generate(1), 1);
+        if (!retried.ok) {
+          await this.validation.reject(this.run(input, selectedModel), summarizeParseFailure(retried.errors));
+          throw new UnprocessableEntityException(`The generated meal plan did not pass validation (${retried.errors[0].code})`);
+        }
+        candidates[incompleteIndex] = retried.value[0];
       }
 
       batches.push({
@@ -489,7 +521,7 @@ export class OpenAIWeeklyProposalComposer extends WeeklyProposalComposer {
         schemaVersion: RECIPE_GENERATION_SCHEMA_VERSION,
       });
       slotOrder.push(...batch);
-      drafts.push(...parsed.value);
+      drafts.push(...candidates);
     }
 
     const validationResults = drafts.length > 0
