@@ -11,7 +11,7 @@ const telemetryKpiIds = [
   'availability_rate',
 ] as const satisfies readonly KpiId[];
 
-const dataKpiIds = ['initial_plans_count', 'manual_recipes_count'] as const satisfies readonly KpiId[];
+const dataKpiIds = ['adherence_rate', 'manual_recipes_count'] as const satisfies readonly KpiId[];
 
 type Source = 'telemetry' | 'data';
 

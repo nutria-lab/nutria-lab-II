@@ -1,3 +1,4 @@
+// TODO: unificar con services/adherenceService.ts de NUT-93, que también lee GET /adherence.
 import { apiClient } from '../../../services/apiClient';
 import { PRODUCT_TIME_ZONE, getWeekEnd, isCalendarDate } from '../dates';
 import type { AdherenceResponse } from '../types';

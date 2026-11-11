@@ -1,5 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AdherenceResponse } from '@/modules/adherence/types';
@@ -356,6 +356,48 @@ describe('DashboardPage dev retry flow (§16)', () => {
 
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+function NavigationButtons() {
+  const navigate = useNavigate();
+  return (
+    <div>
+      <button type="button" onClick={() => navigate('/other')}>Ir a otra página</button>
+      <button type="button" onClick={() => navigate('/dashboard')}>Volver al dashboard</button>
+    </div>
+  );
+}
+
+describe('DashboardPage returning to the route', () => {
+  beforeEach(() => {
+    vi.stubEnv('DEV', false);
+  });
+
+  it('fetches a fresh summary each time the dashboard route becomes active again', async () => {
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/other" element={<p>Otra página</p>} />
+        </Routes>
+        <NavigationButtons />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('32,1 %')).toBeVisible();
+    expect(getAdherence).toHaveBeenCalledTimes(1);
+
+    getAdherence.mockResolvedValue({
+      ...liveAdherence(),
+      summary: { plannedMeals: 28, completedMeals: 10, skippedMeals: 2, notLoggedMeals: 16, adherencePercent: 35.7 },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Ir a otra página' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Volver al dashboard' }));
+
+    await waitFor(() => expect(getAdherence).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('35,7 %')).toBeVisible();
+    expect(getPlan).toHaveBeenCalledTimes(2);
+    expect(getShopping).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { mealPlanService, type MealPlan, type PlannedMeal } from '../../../services/mealPlanService';
-import { formatLocalDateKey } from '../utils';
+import { getCurrentWeekStartInBuenosAires } from '../../../common/utils/calendar';
 
 type Status = 'loading' | 'empty' | 'error' | 'success';
 type RegenerationStatus = 'idle' | 'confirming' | 'submitting' | 'error' | 'success';
@@ -10,6 +10,7 @@ type UseMealPlanResult = {
   status: Status;
   errorMessage: string | null;
   retry: () => void;
+  reload: () => Promise<MealPlan | null>;
   generate: () => Promise<void>;
   updateMeal: (newMeal: PlannedMeal) => void;
   regenerationStatus: RegenerationStatus;
@@ -22,12 +23,7 @@ type UseMealPlanResult = {
 
 
 function getCurrentWeekStart(): string {
-  const now = new Date();
-  const dayOfWeek = now.getDay();
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday);
-  return formatLocalDateKey(monday);
+  return getCurrentWeekStartInBuenosAires();
 }
 
 export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealPlanResult {
@@ -45,7 +41,7 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
   // (`load` o `generate`), no siempre `load`.
   const lastActionRef = useRef<'load' | 'generate'>('load');
 
-  const load = useCallback(() => {
+  const load = useCallback(async (): Promise<MealPlan | null> => {
     lastActionRef.current = 'load';
 
     abortControllerRef.current?.abort();
@@ -56,28 +52,24 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     setStatus('loading');
     setErrorMessage(null);
 
-    mealPlanService
-      .getCurrentMealPlan(weekStart, controller.signal)
-      .then((data) => {
-        if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        if (data) {
-          setMealPlan(data);
-          setStatus('success');
-        } else {
-          setMealPlan(null);
-          setStatus('empty');
-        }
-      })
-      .catch(() => {
-        if (latestRequestIdRef.current !== requestId) {
-          return;
-        }
-        // No se borra el último `mealPlan` válido: si ya había uno cargado, sigue disponible.
-        setStatus('error');
-        setErrorMessage('No pudimos cargar tu plan semanal. Intentá de nuevo.');
-      });
+    try {
+      const data = await mealPlanService.getCurrentMealPlan(weekStart, controller.signal);
+      if (latestRequestIdRef.current !== requestId) return null;
+      if (data) {
+        setMealPlan(data);
+        setStatus('success');
+      } else {
+        setMealPlan(null);
+        setStatus('empty');
+      }
+      return data;
+    } catch {
+      if (latestRequestIdRef.current !== requestId) return null;
+      // No se borra el último `mealPlan` válido: si ya había uno cargado, sigue disponible.
+      setStatus('error');
+      setErrorMessage('No pudimos cargar tu plan semanal. Intentá de nuevo.');
+      return null;
+    }
   }, [weekStart]);
 
   // NUT-10 (sexta iteración) — Observación 4 del revisor externo: abortar la petición del
@@ -222,6 +214,8 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     load();
   }, [generate, load]);
 
+  const reload = useCallback(() => load(), [load]);
+
   const updateMeal = useCallback((newMeal: PlannedMeal) => {
     setMealPlan((prevPlan) => {
       if (!prevPlan) return null;
@@ -242,5 +236,5 @@ export function useMealPlan(weekStart: string = getCurrentWeekStart()): UseMealP
     };
   }, [load]);
 
-  return { mealPlan, status, errorMessage, retry, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration };
+  return { mealPlan, status, errorMessage, retry, reload, generate, updateMeal, regenerationStatus, regenerationError, openRegeneration, cancelRegeneration, confirmRegeneration, retryRegeneration };
 }

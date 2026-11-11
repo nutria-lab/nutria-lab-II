@@ -122,3 +122,4 @@ Ninguna: sin cambios de schema, migraciones ni endpoints.
 | # | Pendiente | Efecto actual | Dónde se resuelve |
 |---|---|---|---|
 | P1 | Access gate requerido a mitad de sesión. La verificación del access gate ocurre una sola vez al montar la app; un 403 `ACCESS_GATE_REQUIRED` posterior no vuelve a mostrar la pantalla del access gate. | El Inicio deja las tarjetas afectadas en "No disponible todavía", sin Reintentar, hasta que se recarga la página. | Componente de access gate (app shell), en un ticket aparte con su responsable. NUT-96 no lo modifica. |
+| P2 | Dos adaptadores de `GET /adherence`: `services/adherenceService.ts` (NUT-93) y el del Inicio (NUT-96, que además valida enums, timezone y `today`). | Mismo endpoint leído por dos adaptadores; el planificador usa el de NUT-93 y el Inicio el propio. | Unificar con Fer en un ticket aparte; el adaptador del Inicio lleva el TODO. |

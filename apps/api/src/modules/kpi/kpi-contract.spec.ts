@@ -20,7 +20,7 @@ describe('KPI contract v1', () => {
       'timeout_rate',
       'dependency_error_rate',
       'availability_rate',
-      'initial_plans_count',
+      'adherence_rate',
       'manual_recipes_count',
     ];
     const context: CollectionContext = {
@@ -32,7 +32,7 @@ describe('KPI contract v1', () => {
       run_id: 'run-86',
     };
     const result: KpiResult = {
-      kpi_id: 'initial_plans_count',
+      kpi_id: 'adherence_rate',
       value: 0,
       quality: 'observed',
       reason: null,

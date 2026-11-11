@@ -27,17 +27,17 @@ describe('KPI batch freezing', () => {
     const batch = freezeBatch(context, [
       result('manual_recipes_count', null, 'unavailable'),
       result('availability_rate', 0),
-      result('initial_plans_count', 0),
+      result('adherence_rate', 0),
     ]);
 
     expect(batch.measurements).toEqual([
+      { kpi_id: 'adherence_rate', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
       { kpi_id: 'availability_rate', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
-      { kpi_id: 'initial_plans_count', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
       { kpi_id: 'manual_recipes_count', date: context.date, env: context.environment, value: 0, run_id: context.run_id },
     ]);
     expect(batch.diagnostics).toEqual([
+      { kpi_id: 'adherence_rate', quality: 'observed', reason: null, sample_count: 0 },
       { kpi_id: 'availability_rate', quality: 'observed', reason: null, sample_count: 0 },
-      { kpi_id: 'initial_plans_count', quality: 'observed', reason: null, sample_count: 0 },
       { kpi_id: 'manual_recipes_count', quality: 'defaulted', reason: 'SOURCE_UNAVAILABLE', sample_count: 0 },
     ]);
   });
@@ -57,7 +57,7 @@ describe('KPI batch freezing', () => {
     const ids: readonly KpiId[] = [
       'operations_count', 'error_rate', 'latency_p95_ms', 'health_status',
       'last_success_age_seconds', 'timeout_rate', 'dependency_error_rate', 'availability_rate',
-      'initial_plans_count', 'manual_recipes_count',
+      'adherence_rate', 'manual_recipes_count',
     ];
     const batch = freezeBatch(context, [...ids].reverse().map(id => result(id, 0)));
 

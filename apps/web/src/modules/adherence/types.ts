@@ -33,3 +33,16 @@ export type AdherenceResponse = {
 };
 
 export type AdherenceMeal = AdherenceResponse['days'][number]['meals'][number];
+export type AdherenceDay = AdherenceResponse['days'][number];
+
+export type UpdateMealCompletionRequest = {
+  planId: string;
+  mealUpdatedAt: string;
+  status: MealCompletionStatus;
+};
+
+export type UpdateMealCompletionResponse = {
+  plannedMealId: string;
+  status: MealCompletionStatus;
+  updatedAt: string;
+};
