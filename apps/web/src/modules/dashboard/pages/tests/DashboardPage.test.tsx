@@ -1,11 +1,83 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AdherenceResponse } from '@/modules/adherence/types';
 import { DashboardPage } from '@/modules/dashboard/pages/DashboardPage';
+import { dashboardAdherenceService } from '@/modules/dashboard/services/dashboardAdherenceService';
+import { dashboardShoppingService } from '@/modules/dashboard/services/dashboardShoppingService';
 import type { AuthenticatedUser } from '@/services/authService';
-import { adherenceService } from '@/services/adherenceService';
-import { adherenceFixture, noPlanAdherenceFixture } from '@/modules/adherence/fixtures/adherence.fixture';
+import { mealPlanService, type MealPlan } from '@/services/mealPlanService';
+
+vi.mock('@/services/mealPlanService', () => ({
+  mealPlanService: { getCurrentMealPlan: vi.fn() },
+}));
+vi.mock('@/modules/dashboard/services/dashboardAdherenceService', () => ({
+  dashboardAdherenceService: { getForWeek: vi.fn() },
+}));
+vi.mock('@/modules/dashboard/services/dashboardShoppingService', () => ({
+  dashboardShoppingService: { getForWeek: vi.fn() },
+}));
+
+const getPlan = vi.mocked(mealPlanService.getCurrentMealPlan);
+const getAdherence = vi.mocked(dashboardAdherenceService.getForWeek);
+const getShopping = vi.mocked(dashboardShoppingService.getForWeek);
+
+// Miércoles 21/10/2026 en Buenos Aires.
+const NOW = new Date('2026-10-21T15:00:00.000Z');
+const WEEK = '2026-10-19';
+const TODAY = '2026-10-21';
+const LIVE_PLAN = { id: 'live-plan', version: 3, updatedAt: '2026-10-18T00:00:00.000Z' };
+
+const liveMealPlan: MealPlan = {
+  id: LIVE_PLAN.id,
+  userId: 'u1',
+  startDate: `${WEEK}T00:00:00.000Z`,
+  endDate: '2026-10-25T00:00:00.000Z',
+  createdAt: '2026-10-18T00:00:00.000Z',
+  updatedAt: '2026-10-18T00:00:00.000Z',
+  days: [],
+};
+
+type LiveStatus = AdherenceResponse['days'][number]['meals'][number]['status'];
+
+// 32,1 tiene decimal para comprobar que se muestra el valor del contrato A sin recalcular.
+function liveAdherence(status: string = 'NOT_LOGGED'): AdherenceResponse {
+  return {
+    weekStart: WEEK,
+    timezone: 'America/Argentina/Buenos_Aires',
+    today: TODAY,
+    plan: LIVE_PLAN,
+    days: [
+      {
+        date: TODAY,
+        plannedMeals: 1,
+        completedMeals: 0,
+        skippedMeals: 0,
+        notLoggedMeals: 1,
+        adherencePercent: 0,
+        meals: [
+          {
+            plannedMealId: 'live-lunch',
+            mealUpdatedAt: '2026-10-18T00:00:00.000Z',
+            recipeId: null,
+            mealType: 'LUNCH',
+            title: 'Comida real del plan',
+            status: status as LiveStatus,
+            canEdit: true,
+          },
+        ],
+      },
+    ],
+    summary: { plannedMeals: 28, completedMeals: 9, skippedMeals: 2, notLoggedMeals: 17, adherencePercent: 32.1 },
+  };
+}
+
+function mockLiveData(status?: string) {
+  getPlan.mockResolvedValue(liveMealPlan);
+  getAdherence.mockResolvedValue(liveAdherence(status));
+  getShopping.mockResolvedValue({ weekStart: WEEK, plan: LIVE_PLAN, summary: { totalItems: 10, checkedItems: 3 } });
+}
 
 const mockAuth = vi.hoisted(() => ({
   user: null as AuthenticatedUser | null,
@@ -18,9 +90,6 @@ vi.mock('@/features/auth/AuthProvider', () => ({
     login: vi.fn(),
     logout: vi.fn(),
   }),
-}));
-vi.mock('@/services/adherenceService', () => ({
-  adherenceService: { getForWeek: vi.fn(), setMealStatus: vi.fn() },
 }));
 
 const SESSION_USER: AuthenticatedUser = {
@@ -59,23 +128,27 @@ function renderPageWithProbe(entry: string) {
   );
 }
 
-function expectUnavailable(container: HTMLElement) {
-  expect(screen.getAllByText(UNAVAILABLE)).toHaveLength(2);
-  expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+async function expectLiveData() {
+  const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+  expect(await within(meals).findByText('Comida real del plan')).toBeVisible();
   expect(screen.queryByText(FIXTURE_TITLES)).not.toBeInTheDocument();
-  expect(screen.queryByRole('region', { name: NEXT_MEAL_TITLE })).not.toBeInTheDocument();
+  expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
+  expect(getPlan).toHaveBeenCalledWith(WEEK, expect.any(AbortSignal));
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   mockAuth.user = { ...SESSION_USER };
-  vi.mocked(adherenceService.getForWeek).mockReset().mockImplementation(async (weekStart) => ({
-    ...noPlanAdherenceFixture,
-    weekStart,
-  }));
+  getPlan.mockReset();
+  getAdherence.mockReset();
+  getShopping.mockReset();
+  mockLiveData();
 });
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllEnvs();
 });
 
@@ -113,14 +186,22 @@ describe('DashboardPage in development (fixtures via ?estado)', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
   });
 
+  it('a valid ?estado shows the fixture and requests no real data', () => {
+    renderPage('/dashboard?estado=comidas');
+
+    expect(getPlan).not.toHaveBeenCalled();
+    expect(getAdherence).not.toHaveBeenCalled();
+    expect(getShopping).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['unknown', '/dashboard?estado=no-existe'],
     ['empty', '/dashboard?estado='],
     ['missing', '/dashboard'],
-  ])('a %s ?estado shows the unavailable state, same as production', (_label, entry) => {
-    const { container } = renderPage(entry);
+  ])('a %s ?estado uses the real data, same as production', async (_label, entry) => {
+    renderPage(entry);
 
-    expectUnavailable(container);
+    await expectLiveData();
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
   });
 });
@@ -130,23 +211,60 @@ describe('DashboardPage outside development', () => {
     vi.stubEnv('DEV', false);
   });
 
-  it('ignores ?estado=comidas and shows the live state with the real name', async () => {
+  it('ignores ?estado=comidas and shows the real data with the real name', async () => {
     renderPage('/dashboard?estado=comidas');
 
-    expect(await screen.findByText(NO_PLAN)).toBeVisible();
+    await expectLiveData();
     expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
   });
 
-  it('without ?estado, loads live progress while the meals card remains unavailable', async () => {
+  it('CA1: progress shows exactly the contract A percentage and counters', async () => {
     renderPage('/dashboard');
 
-    expect(await screen.findByText(NO_PLAN)).toBeVisible();
     const progress = screen.getByRole('region', { name: 'Progreso de la semana' });
-    expect(within(progress).getByText(NO_PLAN)).toBeVisible();
-    expect(progress.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(await within(progress).findByText('32,1 %')).toBeVisible();
+    expect(within(progress).getByText('9 de 28 comidas completadas')).toBeVisible();
+  });
+
+  it('CA1: the shopping access shows exactly the contract C counters', async () => {
+    renderPage('/dashboard');
+
+    const link = await screen.findByRole('link', { name: /3 de 10 marcados/ });
+    expect(link).toHaveAttribute('href', '/shopping-list');
+  });
+
+  it('while the first load is in flight every card is loading, never "No disponible todavía"', () => {
+    getPlan.mockReturnValue(new Promise(() => {}));
+    getAdherence.mockReturnValue(new Promise(() => {}));
+    getShopping.mockReturnValue(new Promise(() => {}));
+    renderPage('/dashboard');
+
+    const progress = screen.getByRole('region', { name: 'Progreso de la semana' });
+    expect(progress.querySelector('[aria-busy="true"]')).not.toBeNull();
     const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
-    expect(within(meals).getByText(UNAVAILABLE)).toBeVisible();
-    expect(meals.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(meals.querySelector('[aria-busy="true"]')).not.toBeNull();
+    expect(screen.queryByText(UNAVAILABLE)).not.toBeInTheDocument();
+  });
+
+  it('a single unknown meal status hides the chips, shows the fixed note and claims nothing about logging', async () => {
+    mockLiveData('PARTIAL');
+    renderPage('/dashboard');
+
+    const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+    expect(await within(meals).findByText('Comida real del plan')).toBeVisible();
+    expect(within(meals).getByText('El estado de registro no está disponible por ahora.')).toBeVisible();
+    expect(within(meals).queryByText(/Sin registrar|Completada|Omitida/)).not.toBeInTheDocument();
+    expect(screen.queryByText(ALL_LOGGED)).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: NEXT_MEAL_TITLE })).not.toBeInTheDocument();
+  });
+
+  it('without a session user nothing is requested and the cards say "No disponible todavía"', () => {
+    mockAuth.user = null;
+    const { container } = renderPage('/dashboard');
+
+    expect(getPlan).not.toHaveBeenCalled();
+    expect(screen.getAllByText(UNAVAILABLE)).toHaveLength(2);
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
   });
 });
 
@@ -205,6 +323,20 @@ describe('DashboardPage dev retry flow (§16)', () => {
     },
   );
 
+  it('?estado=compras-error → shopping "Reintentar" goes through loading and ends showing the counters', () => {
+    renderPageWithProbe('/dashboard?estado=compras-error');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }));
+    expect(new URLSearchParams(screen.getByTestId('location-search').textContent ?? '').get('estado')).toBe('loading');
+
+    act(() => {
+      vi.advanceTimersByTime(RETRY_DELAY_MS);
+    });
+
+    expect(screen.getByRole('link', { name: /de \d+ marcados/ })).toBeInTheDocument();
+    expect(screen.queryByText('No pudimos cargar el avance de tus compras.')).not.toBeInTheDocument();
+  });
+
   it('unmounting before the delay clears the timer without throwing or warning', () => {
     const errorSpy = vi.spyOn(console, 'error');
     const warnSpy = vi.spyOn(console, 'warn');
@@ -227,18 +359,7 @@ describe('DashboardPage dev retry flow (§16)', () => {
   });
 });
 
-describe('DashboardPage greeting without a name', () => {
-  it.each([true, false])('renders h1 "Hola" when the session name is null (DEV=%s)', (dev) => {
-    vi.stubEnv('DEV', dev);
-    mockAuth.user = { ...SESSION_USER, name: null };
-
-    renderPage('/dashboard?estado=comidas');
-
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Hola$/);
-  });
-});
-
-function DashboardNavigation() {
+function NavigationButtons() {
   const navigate = useNavigate();
   return (
     <div>
@@ -248,45 +369,45 @@ function DashboardNavigation() {
   );
 }
 
-describe('DashboardPage live adherence', () => {
+describe('DashboardPage returning to the route', () => {
   beforeEach(() => {
     vi.stubEnv('DEV', false);
   });
 
-  it('loads current adherence from the API instead of the production unavailable fixture', async () => {
-    renderPage('/dashboard');
-
-    expect(await screen.findByText(NO_PLAN)).toBeVisible();
-    expect(adherenceService.getForWeek).toHaveBeenCalledWith(
-      expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-      expect.any(AbortSignal),
-    );
-  });
-
-  it('renders the API summary from the current adherence response', async () => {
-    vi.mocked(adherenceService.getForWeek).mockImplementation(async (weekStart) => ({
-      ...adherenceFixture,
-      weekStart,
-    }));
-
-    renderPage('/dashboard');
-
-    expect(await screen.findByText('1 de 4 comidas completadas')).toBeVisible();
-  });
-
-  it('fetches a fresh summary when the dashboard route becomes active again', async () => {
+  it('fetches a fresh summary each time the dashboard route becomes active again', async () => {
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
-        <DashboardPage />
-        <DashboardNavigation />
+        <Routes>
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/other" element={<p>Otra página</p>} />
+        </Routes>
+        <NavigationButtons />
       </MemoryRouter>,
     );
-    expect(await screen.findByText(NO_PLAN)).toBeVisible();
-    expect(adherenceService.getForWeek).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('32,1 %')).toBeVisible();
+    expect(getAdherence).toHaveBeenCalledTimes(1);
 
+    getAdherence.mockResolvedValue({
+      ...liveAdherence(),
+      summary: { plannedMeals: 28, completedMeals: 10, skippedMeals: 2, notLoggedMeals: 16, adherencePercent: 35.7 },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Ir a otra página' }));
     fireEvent.click(screen.getByRole('button', { name: 'Volver al dashboard' }));
 
-    await waitFor(() => expect(adherenceService.getForWeek).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getAdherence).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('35,7 %')).toBeVisible();
+    expect(getPlan).toHaveBeenCalledTimes(2);
+    expect(getShopping).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('DashboardPage greeting without a name', () => {
+  it.each([true, false])('renders h1 "Hola" when the session name is null (DEV=%s)', (dev) => {
+    vi.stubEnv('DEV', dev);
+    mockAuth.user = { ...SESSION_USER, name: null };
+
+    renderPage('/dashboard?estado=comidas');
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Hola$/);
   });
 });

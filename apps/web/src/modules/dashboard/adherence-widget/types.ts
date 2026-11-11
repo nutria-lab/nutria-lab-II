@@ -10,9 +10,9 @@ import type { AdherenceResponse } from '../types';
  * - `loading` sin `data` → skeleton.
  * - `error` sin `data` → error con Reintentar; nunca 0% de progreso.
  * - `data: null` + `loading: false` + `error: null` → "No disponible todavía":
- *   NO es un estado de carga, es el estado de producción hasta NUT-96.
+ *   NO es un estado de carga: es el estado sin usuario en sesión o tras un 401 mientras la sesión redirige.
  *
- * El 401 lo resuelve el manejador global de sesión; el widget nunca lo recibe y NUT-96 no debe pasarlo como error.
+ * El 401 lo resuelve el manejador global de sesión; el widget nunca lo recibe y el coordinador no lo pasa como error.
  */
 export type AdherenceWidgetProps = {
   /** Respuesta del contrato A, o `null` si aún no hay; `null` NO significa cargando. */

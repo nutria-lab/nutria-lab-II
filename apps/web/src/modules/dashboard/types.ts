@@ -1,15 +1,14 @@
 import type { MealType } from '../../services/mealPlanService';
 import type { RecipeImage } from '../../services/recipeService';
-import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
 import type { MealCompletionStatus } from '../adherence/types';
+import type { ShoppingListResponse } from '../shopping-list/types';
+import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
 
-export type {
-  AdherenceDay,
-  AdherenceMeal,
-  AdherenceResponse,
-  MealCompletionStatus,
-} from '../adherence/types';
-import type { AdherenceResponse } from '../adherence/types';
+// Contrato A: un único modelo, el del módulo de adherencia.
+export type { AdherenceDay, AdherenceMeal, AdherenceResponse, MealCompletionStatus } from '../adherence/types';
+
+// Parte del contrato C que usa el Inicio: los contadores vienen del servidor y no se recalculan.
+export type ShoppingProgress = Pick<ShoppingListResponse, 'weekStart' | 'plan' | 'summary'>;
 
 export type CardState<T> =
   | { kind: 'loading' }
@@ -37,4 +36,5 @@ export type DashboardViewModel = {
   userName: string | null;
   todayMeals: CardState<TodayMealsData>;
   adherence: AdherenceWidgetViewProps;
+  shopping: CardState<ShoppingProgress>;
 };

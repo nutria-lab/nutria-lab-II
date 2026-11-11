@@ -57,6 +57,7 @@ function viewModel(overrides: Partial<DashboardViewModel> = {}): DashboardViewMo
     userName: 'María José',
     todayMeals: readyMeals([]),
     adherence: readyAdherence(),
+    shopping: { kind: 'unavailable' },
     ...overrides,
   };
 }
@@ -466,7 +467,7 @@ describe('DashboardView quick access', () => {
     expect(within(nav).getByRole('link', { name: /Lista de compras/ })).toHaveAttribute('href', '/shopping-list');
     expect(within(nav).getByText('Revisá las comidas de la semana')).toBeInTheDocument();
     expect(within(nav).getByText('Buscá ideas y preparaciones')).toBeInTheDocument();
-    expect(within(nav).getByText('Ingredientes de tu plan')).toBeInTheDocument();
+    expect(within(nav).getByText('3 de 8 marcados')).toBeInTheDocument();
   });
 
   it('has no generate-plan nor profile access', () => {

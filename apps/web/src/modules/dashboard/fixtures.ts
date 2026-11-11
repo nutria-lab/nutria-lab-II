@@ -4,7 +4,7 @@ import {
 } from './adherence-widget/fixtures';
 import { createAdherenceWidgetStateProps } from './adherence-widget/stateFixtures';
 import type { AdherenceWidgetViewProps } from './adherence-widget/utils';
-import type { AdherenceResponse, DashboardViewModel, TodayMeal } from './types';
+import type { AdherenceResponse, CardState, DashboardViewModel, ShoppingProgress, TodayMeal } from './types';
 
 // Solo desarrollo. La cadena centinela va dentro de los datos para poder
 // verificar en el build de producción que este módulo no quedó incluido.
@@ -25,7 +25,9 @@ export type DashboardFixtureKey =
   | 'progreso-actualizando'
   | 'progreso-error-actualizacion'
   | 'progreso-desactualizado'
-  | 'progreso-inconsistente';
+  | 'progreso-inconsistente'
+  | 'compras-sin-productos'
+  | 'compras-error';
 
 type DashboardFixture = Omit<DashboardViewModel, 'userName'> & { userName?: null };
 
@@ -62,55 +64,81 @@ const failedAdherence = (onRetry: () => void): AdherenceWidgetViewProps => ({
   onRetry,
 });
 
+// Compras (contrato C): contadores distintos entre sí para que se vea que no se recalculan.
+function shoppingProgress(totalItems: number, checkedItems: number): CardState<ShoppingProgress> {
+  return {
+    kind: 'ready',
+    data: {
+      weekStart: '2026-10-19',
+      plan: { id: fixtureId('plan'), version: 1, updatedAt: '2026-10-19T09:00:00.000Z' },
+      summary: { totalItems, checkedItems },
+    },
+  };
+}
+
+const READY_SHOPPING = shoppingProgress(8, 3);
+
+const NO_PLAN_SHOPPING: CardState<ShoppingProgress> = {
+  kind: 'ready',
+  data: { weekStart: '2026-10-19', plan: null, summary: { totalItems: 0, checkedItems: 0 } },
+};
+
 const mealsWithProgress = (adherence: AdherenceWidgetViewProps): DashboardFixture => ({
   todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
   adherence,
+  shopping: READY_SHOPPING,
 });
 
 export const DASHBOARD_FIXTURES: Record<DashboardFixtureKey, FixtureBuilder> = {
   loading: (onRetry) => ({
     todayMeals: { kind: 'loading' },
     adherence: { data: null, loading: true, error: null, onRetry },
+    shopping: { kind: 'loading' },
   }),
   'sin-plan': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'noPlan' } },
     adherence: createAdherenceWidgetProps('noPlan', onRetry),
+    shopping: NO_PLAN_SHOPPING,
   }),
   'sin-comidas': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'noMealsToday' } },
     adherence: readyAdherence(onRetry),
+    shopping: READY_SHOPPING,
   }),
-  comidas: (onRetry) => ({
-    todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
-    adherence: readyAdherence(onRetry),
-  }),
+  comidas: (onRetry) => mealsWithProgress(readyAdherence(onRetry)),
   'todo-registrado': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: ALL_LOGGED_MEALS } },
     adherence: readyAdherence(onRetry),
+    shopping: READY_SHOPPING,
   }),
   error: (onRetry) => ({
     todayMeals: { kind: 'error', retry: onRetry },
     adherence: failedAdherence(onRetry),
+    shopping: { kind: 'error', retry: onRetry },
   }),
   'error-parcial': (onRetry) => ({
     todayMeals: { kind: 'ready', data: { kind: 'meals', meals: UNKNOWN_STATUS_MEALS } },
     adherence: failedAdherence(onRetry),
+    shopping: READY_SHOPPING,
   }),
   'no-disponible': (onRetry) => ({
     todayMeals: { kind: 'unavailable' },
     adherence: { data: null, loading: false, error: null, onRetry },
+    shopping: { kind: 'unavailable' },
   }),
-  'sin-nombre': (onRetry) => ({
-    userName: null,
-    todayMeals: { kind: 'ready', data: { kind: 'meals', meals: MIXED_MEALS } },
-    adherence: readyAdherence(onRetry),
-  }),
+  'sin-nombre': (onRetry) => ({ ...mealsWithProgress(readyAdherence(onRetry)), userName: null }),
   'progreso-sin-registros': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('noRecords', onRetry)),
   'progreso-sin-comidas': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('planWithoutMeals', onRetry)),
   'progreso-actualizando': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('refreshing', onRetry)),
   'progreso-error-actualizacion': (onRetry) => mealsWithProgress(createAdherenceWidgetProps('staleWithError', onRetry)),
   'progreso-desactualizado': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('stalePlan', onRetry)),
   'progreso-inconsistente': (onRetry) => mealsWithProgress(createAdherenceWidgetStateProps('inconsistent', onRetry)),
+  'compras-sin-productos': (onRetry) => ({ ...mealsWithProgress(readyAdherence(onRetry)), shopping: shoppingProgress(0, 0) }),
+  // El camino de recuperación termina en `comidas`, que muestra los contadores.
+  'compras-error': (onRetry) => ({
+    ...mealsWithProgress(readyAdherence(onRetry)),
+    shopping: { kind: 'error', retry: onRetry },
+  }),
 };
 
 // Valida el contrato de adherencia; nunca se renderiza.
@@ -157,5 +185,6 @@ export function selectDashboardFixture(
     userName: fixture.userName === null ? null : userName,
     todayMeals: fixture.todayMeals,
     adherence: fixture.adherence,
+    shopping: fixture.shopping,
   };
 }

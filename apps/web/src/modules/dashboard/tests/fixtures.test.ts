@@ -29,6 +29,8 @@ const FIXTURE_KEYS: DashboardFixtureKey[] = [
   'progreso-error-actualizacion',
   'progreso-desactualizado',
   'progreso-inconsistente',
+  'compras-sin-productos',
+  'compras-error',
 ];
 
 const READY_ADHERENCE_KEYS: DashboardFixtureKey[] = ['sin-plan', 'sin-comidas', 'comidas', 'todo-registrado', 'sin-nombre'];
@@ -175,6 +177,45 @@ describe('DASHBOARD_FIXTURES', () => {
 
   it('sin-nombre: same meals state as comidas', () => {
     expect(selectValid('sin-nombre', 'María José').todayMeals).toEqual(selectValid('comidas', 'María José').todayMeals);
+  });
+
+  it('shopping: loading, no-disponible and error follow the rest of the cards', () => {
+    const onRetry = vi.fn();
+
+    expect(selectValid('loading', 'María José').shopping).toEqual({ kind: 'loading' });
+    expect(selectValid('no-disponible', 'María José').shopping).toEqual({ kind: 'unavailable' });
+    expect(selectValid('error', 'María José', onRetry).shopping).toEqual({ kind: 'error', retry: onRetry });
+  });
+
+  it('shopping: sin-plan has no plan and zero counters', () => {
+    const { shopping } = selectValid('sin-plan', 'María José');
+
+    expect(shopping.kind === 'ready' && shopping.data).toMatchObject({ plan: null, summary: { totalItems: 0, checkedItems: 0 } });
+  });
+
+  it('shopping: comidas has a plan with checked items below the total and the sentinel in the plan id', () => {
+    const { shopping } = selectValid('comidas', 'María José');
+    if (shopping.kind !== 'ready' || shopping.data.plan === null) throw new Error('expected a ready shopping plan');
+
+    expect(shopping.data.summary.totalItems).toBeGreaterThan(shopping.data.summary.checkedItems);
+    expect(shopping.data.summary.checkedItems).toBeGreaterThan(0);
+    expect(shopping.data.plan.id).toContain(DASHBOARD_FIXTURE_SENTINEL);
+  });
+
+  it('compras-sin-productos: plan present with zero items; the other cards are ready', () => {
+    const { shopping, todayMeals } = selectValid('compras-sin-productos', 'María José');
+
+    expect(shopping.kind === 'ready' && shopping.data.plan !== null && shopping.data.summary.totalItems).toBe(0);
+    expect(todayMeals.kind).toBe('ready');
+  });
+
+  it('compras-error: only shopping errors, with the injected retry', () => {
+    const onRetry = vi.fn();
+    const { shopping, todayMeals, adherence } = selectValid('compras-error', 'María José', onRetry);
+
+    expect(shopping).toEqual({ kind: 'error', retry: onRetry });
+    expect(todayMeals.kind).toBe('ready');
+    expect(adherence.error).toBeNull();
   });
 
   it('contain no percentages nor Stitch sample names or dishes', () => {
