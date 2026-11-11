@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "prisma generate && nest start --watch",
     "build": "pnpm prisma:generate && nest build",
     "lint": "pnpm prisma:generate && tsc --noEmit",
     "test": "jest",

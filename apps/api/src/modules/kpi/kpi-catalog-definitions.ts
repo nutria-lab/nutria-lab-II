@@ -62,10 +62,10 @@ export const KPI_CATALOG_DEFINITIONS: readonly KpiCatalogDefinition[] = [
     justification: 'Es una proporción de muestras, no una duración continua de disponibilidad.',
   },
   {
-    id: 'initial_plans_count', kind: 'business', unit: '{plan}',
-    description: 'Conteo de MealPlan todavía existente, creado en la ventana parcial [00:00, 21:00) de Argentina, ligado a generación inicial exitosa.',
-    source: 'meal_plans JOIN generation_runs: kind=MEAL_PLAN_INITIAL, status=SUCCEEDED y createdAt en [start, end).',
-    justification: 'No cuenta regeneraciones, generaciones fallidas o pendientes; un plan luego supersedido sigue contando si existe.',
+    id: 'adherence_rate', kind: 'business', unit: '%',
+    description: 'Promedio simple de la adherencia semanal individual de los planes actuales para la semana que contiene la fecha del reporte.',
+    source: 'Promedio por usuario de comidas con completion COMPLETED y snapshots vigentes dividido por comidas planificadas en planes actuales de la semana.',
+    justification: 'Cada usuario pesa igual, siguiendo el porcentaje semanal que presenta la experiencia de adherencia.',
   },
   {
     id: 'manual_recipes_count', kind: 'business', unit: '{recipe}',

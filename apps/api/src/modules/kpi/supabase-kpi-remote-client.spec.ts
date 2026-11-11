@@ -10,7 +10,7 @@ const DATE = '2026-10-09';
 const ENVIRONMENT = 'prod' as const;
 const EXPECTED = [
   ['availability_rate', 99.5], ['dependency_error_rate', 4], ['error_rate', 3],
-  ['health_status', 1], ['initial_plans_count', 2], ['last_success_age_seconds', 30],
+  ['health_status', 1], ['adherence_rate', 2], ['last_success_age_seconds', 30],
   ['latency_p95_ms', 19], ['manual_recipes_count', 5], ['operations_count', 7], ['timeout_rate', 1],
 ].map(([kpi_id, value]) => ({
   kpi_id: kpi_id as import('./kpi-contract').KpiId,

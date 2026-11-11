@@ -11,11 +11,11 @@ const CANON = windowForDate(DAY);
 const CLOCK_HOURS_LATER = new Date('2026-10-12T18:30:00.000Z'); // 15:30 local del día siguiente
 
 const ALL_KPI_IDS: readonly KpiId[] = [
+  'adherence_rate',
   'availability_rate',
   'dependency_error_rate',
   'error_rate',
   'health_status',
-  'initial_plans_count',
   'last_success_age_seconds',
   'latency_p95_ms',
   'manual_recipes_count',
@@ -61,7 +61,7 @@ class FakeComposite {
 
 const businessLogger: KpiLogger = {
   async collect(ctx) {
-    return (['initial_plans_count', 'manual_recipes_count'] as const).map(kpiId => ({
+    return (['adherence_rate', 'manual_recipes_count'] as const).map(kpiId => ({
       kpi_id: kpiId,
       value: 1,
       quality: 'observed' as const,
@@ -280,7 +280,7 @@ describe('TelemetryLogger.collect (G4)', () => {
     });
   });
 
-  it('Composite falso: ids disjuntos con initial_plans_count/manual_recipes_count y completo con ellos', async () => {
+  it('Composite falso: ids disjuntos con adherence_rate/manual_recipes_count y completo con ellos', async () => {
     const { logger } = makeLogger();
     const composite = new FakeComposite([logger, businessLogger]);
 
