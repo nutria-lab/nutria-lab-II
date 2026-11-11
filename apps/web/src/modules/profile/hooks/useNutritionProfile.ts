@@ -4,6 +4,7 @@ import {
   NutritionProfileNotFoundError,
   type NutritionProfile,
 } from '../../../services/nutritionProfileService';
+import { isCookTimePreference } from '../cookTimeOptions';
 
 type Status = 'loading' | 'idle' | 'saving' | 'success' | 'error';
 
@@ -15,7 +16,7 @@ const DEFAULT_PROFILE: NutritionProfile = {
 };
 
 function validateProfile(profile: NutritionProfile): string | null {
-  if (!profile.goal || !profile.diet || !profile.cookTimePreference) {
+  if (!profile.goal || !profile.diet || !isCookTimePreference(profile.cookTimePreference)) {
     return 'Completá objetivo, dieta y tiempo de cocina antes de guardar.';
   }
   const uniqueRestrictions = new Set(profile.excludedIngredients);

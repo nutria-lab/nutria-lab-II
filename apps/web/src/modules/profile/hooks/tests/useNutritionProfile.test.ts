@@ -86,6 +86,19 @@ describe('useNutritionProfile', () => {
     expect(nutritionProfileService.updateProfile).not.toHaveBeenCalled();
   });
 
+  it('rejects saving a cook time outside the enum before calling the API', async () => {
+    vi.mocked(nutritionProfileService.getProfile).mockResolvedValue(sampleProfile);
+    const { result } = renderHook(() => useNutritionProfile());
+    await waitFor(() => expect(result.current.status).toBe('idle'));
+
+    await act(async () => {
+      await result.current.save({ ...sampleProfile, cookTimePreference: 'BRUNCH' as NutritionProfile['cookTimePreference'] });
+    });
+
+    expect(nutritionProfileService.updateProfile).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('error');
+  });
+
   it('saves successfully and updates the profile from the server response', async () => {
     vi.mocked(nutritionProfileService.getProfile).mockResolvedValue(sampleProfile);
     const updated: NutritionProfile = { ...sampleProfile, goal: 'MAINTAIN' };
