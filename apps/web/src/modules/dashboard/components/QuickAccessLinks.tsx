@@ -51,7 +51,8 @@ export function QuickAccessLinks({ shopping, className = '' }: Props) {
       <h2 id="dashboard-quick-access-title" className="mb-4 font-headline text-xl font-semibold text-on-surface">
         Accesos rápidos
       </h2>
-      <ul role="list" className="grid gap-3 md:grid-cols-3">
+      {/* Tres columnas recién desde xl: entre md y xl el sidebar deja tarjetas demasiado angostas para el texto. */}
+      <ul role="list" className="grid gap-3 xl:grid-cols-3">
         {QUICK_ACCESS_ITEMS.map((item) => (
           <li key={item.to}>
             <Link
@@ -65,7 +66,7 @@ export function QuickAccessLinks({ shopping, className = '' }: Props) {
                 <span className="material-symbols-outlined text-2xl">{item.icon}</span>
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block font-semibold">{item.title}</span>
+                <span className="block break-words font-semibold">{item.title}</span>
                 <span className="block break-words text-sm opacity-80">
                   {item.showsShoppingProgress ? shoppingDescription(shopping, item.description) : item.description}
                 </span>
