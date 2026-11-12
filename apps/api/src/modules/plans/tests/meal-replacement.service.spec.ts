@@ -19,7 +19,11 @@ const MEAL = 'meal-1';
 const KEY = '33333333-3333-4333-8333-333333333333';
 const PLAN_UPDATED_AT = new Date('2026-10-01T10:00:00.000Z');
 
-function catalogRecipe(id: string, title = `Receta ${id}`) {
+function catalogRecipe(
+  id: string,
+  title = `Receta ${id}`,
+  nutritionalValues: Record<string, unknown> = { calories: 350, protein: 20, fiber: 9 },
+) {
   return {
     id,
     title,
@@ -30,7 +34,7 @@ function catalogRecipe(id: string, title = `Receta ${id}`) {
     instructions: ['Mezclar'],
     categories: [],
     properties: [],
-    nutritionalValues: { calories: 350, protein: 20 },
+    nutritionalValues,
   };
 }
 
@@ -62,7 +66,13 @@ function setup(): any {
     isCurrent: true,
     updatedAt: PLAN_UPDATED_AT,
     days: [
-      { id: 'day-1', meals: [{ id: MEAL, mealType: 'DINNER', title: 'Cena vieja', recipeId: 'recipe-old' }] },
+      { id: 'day-1', meals: [{
+        id: MEAL,
+        mealType: 'DINNER',
+        title: 'Cena vieja',
+        recipeId: 'recipe-old',
+        nutritionalValues: { Calories: 180, Protein: 8, Fiber: 4, Description: 'Nutrición anterior' },
+      }] },
       { id: 'day-2', meals: [{ id: 'meal-2', mealType: 'LUNCH', title: 'Almuerzo', recipeId: 'recipe-used' }] },
     ],
   };
@@ -75,7 +85,12 @@ function setup(): any {
     createOrRecoverGenerationRun: jest.fn().mockResolvedValue({ run: { id: 'run-1', status: 'PENDING' }, wasCreated: true }),
     replaceMealTransaction: jest.fn(async (input: any) => ({
       recipe: input.newRecipe ? { id: 'recipe-new', ...input.newRecipe } : catalogRecipe(input.existingRecipeId),
-      plannedMeal: { id: MEAL, mealType: 'DINNER', title: input.title ?? 'Título de la receta' },
+      plannedMeal: {
+        id: MEAL,
+        mealType: 'DINNER',
+        title: input.title ?? 'Título de la receta',
+        nutritionalValues: input.nutritionalValues,
+      },
     })),
     transitionGenerationRun: jest.fn().mockResolvedValue(1),
     findRecipeById: jest.fn(),
@@ -166,7 +181,7 @@ describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () =>
         existingRecipeId: 'recipe-cat',
         expectedPlanUpdatedAt: PLAN_UPDATED_AT,
         generationRunId: 'run-1',
-        nutritionalValues: { Protein: 20, Fiber: 0, Calories: 350, Description: 'Receta del catálogo' },
+        nutritionalValues: { Protein: 20, Fiber: 9, Calories: 350, Description: 'Receta del catálogo' },
         outputSnapshot: { path: 'REUSED_EXISTING_RECIPE' },
       }),
     );
@@ -175,8 +190,54 @@ describe('MealReplacementService - receta del catálogo (NUT-72, sin IA)', () =>
       planId: PLAN,
       version: 1,
       dayId: 'day-1',
-      plannedMeal: { id: MEAL, mealType: 'DINNER', title: 'Título de la receta', recipeId: 'recipe-cat', recipe: expect.objectContaining({ id: 'recipe-cat' }) },
+      plannedMeal: {
+        id: MEAL,
+        dayId: 'day-1',
+        mealType: 'DINNER',
+        title: 'Título de la receta',
+        recipeId: 'recipe-cat',
+        nutritionalValues: { Protein: 20, Fiber: 9, Calories: 350, Description: 'Receta del catálogo' },
+        recipe: expect.objectContaining({ id: 'recipe-cat' }),
+      },
       generationRunId: 'run-1',
+    });
+  });
+
+  it('returns all current public meal fields and uses the selected recipe nutrition instead of the previous meal values', async () => {
+    const { catalogReturns, replace } = setup();
+    catalogReturns(catalogRecipe('recipe-cat', 'Ensalada completa', { calories: 610, protein: 32, fiber: 14 }));
+
+    const response = await replace();
+
+    expect(response.plannedMeal).toMatchObject({
+      id: MEAL,
+      dayId: 'day-1',
+      recipeId: 'recipe-cat',
+      nutritionalValues: {
+        Calories: 610,
+        Protein: 32,
+        Fiber: 14,
+        Description: 'Receta del catálogo',
+      },
+    });
+  });
+
+  it('skips an incomplete catalog recipe and uses the next candidate without inventing zeros', async () => {
+    const { repository, catalogReturns, replace } = setup();
+    catalogReturns(
+      catalogRecipe('recipe-partial', 'Receta parcial', { calories: 480, protein: 19 }),
+      catalogRecipe('recipe-complete', 'Receta completa', { calories: 520, protein: 26, fiber: 11 }),
+    );
+
+    const response = await replace();
+
+    expect(repository.replaceMealTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      existingRecipeId: 'recipe-complete',
+      nutritionalValues: { Calories: 520, Protein: 26, Fiber: 11, Description: 'Receta del catálogo' },
+    }));
+    expect(response.plannedMeal).toMatchObject({
+      recipeId: 'recipe-complete',
+      nutritionalValues: { Calories: 520, Protein: 26, Fiber: 11, Description: 'Receta del catálogo' },
     });
   });
 
@@ -260,6 +321,26 @@ describe('MealReplacementService - generación con IA (NUT-73/74)', () => {
     expect(write.title).toBe('Wok de verduras');
     expect(write.outputSnapshot).toEqual({ path: 'AI_GENERATED' });
     expect(response.plannedMeal.recipeId).toBe('recipe-new');
+  });
+
+  it('returns generated recipe nutrition on the replacement meal', async () => {
+    const { openai, replace } = setup();
+    openai.generateReplacementMeal.mockResolvedValue(JSON.stringify(generatedMeal({
+      nutritionalValues: { Calories: 590, Protein: 27, Fiber: 12, Description: 'Macros de la receta nueva' },
+    })));
+
+    const response = await replace();
+
+    expect(response.plannedMeal).toMatchObject({
+      dayId: 'day-1',
+      recipeId: 'recipe-new',
+      nutritionalValues: {
+        Calories: 590,
+        Protein: 27,
+        Fiber: 12,
+        Description: 'Macros de la receta nueva',
+      },
+    });
   });
 
   it('si NUT-72 no puede evaluar el perfil (ej. KETO), sigue con la IA', async () => {
@@ -497,7 +578,17 @@ describe('MealReplacementService - idempotencia y concurrencia', () => {
     const firstSnapshot = repository.createOrRecoverGenerationRun.mock.calls[0][6];
 
     repository.createOrRecoverGenerationRun.mockResolvedValue({
-      run: { id: 'run-1', status: 'SUCCEEDED', requestSnapshot: firstSnapshot, outputSnapshot: { recipeId: 'recipe-cat', title: 'Ensalada' } },
+      run: {
+        id: 'run-1',
+        status: 'SUCCEEDED',
+        requestSnapshot: firstSnapshot,
+        outputSnapshot: {
+          path: 'REUSED_EXISTING_RECIPE',
+          recipeId: 'recipe-cat',
+          title: 'Ensalada',
+          nutritionalValues: { Protein: 20, Fiber: 9, Calories: 350, Description: 'Receta del catálogo' },
+        },
+      },
       wasCreated: false,
     });
     repository.findRecipeById.mockResolvedValue(catalogRecipe('recipe-cat'));
@@ -509,7 +600,234 @@ describe('MealReplacementService - idempotencia y concurrencia', () => {
     expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
     expect(repository.replaceMealTransaction).toHaveBeenCalledTimes(1);
     expect(replay.generationRunId).toBe('run-1');
-    expect(replay.plannedMeal).toEqual(expect.objectContaining({ recipeId: 'recipe-cat', title: 'Ensalada' }));
+    expect(replay.plannedMeal).toEqual(expect.objectContaining({
+      dayId: 'day-1',
+      recipeId: 'recipe-cat',
+      title: 'Ensalada',
+      nutritionalValues: { Protein: 20, Fiber: 9, Calories: 350, Description: 'Receta del catálogo' },
+    }));
+  });
+
+  it('replays a completed AI replacement from committed meal nutrition when the recipe row has no nutrition', async () => {
+    const { plan, repository, coverage, openai, replace, snapshotFor } = setup();
+    const committedNutrition = {
+      Calories: 590,
+      Protein: 27,
+      Fiber: 12,
+      Description: 'Macros comprometidos',
+    };
+    Object.assign(plan.days[0].meals[0], {
+      title: 'Wok de verduras',
+      recipeId: 'recipe-ai',
+      nutritionalValues: committedNutrition,
+    });
+    const requestSnapshot = await snapshotFor();
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: {
+        id: 'run-1',
+        status: 'SUCCEEDED',
+        requestSnapshot,
+        outputSnapshot: { path: 'AI_GENERATED', recipeId: 'recipe-ai', title: 'Wok de verduras' },
+      },
+      wasCreated: false,
+    });
+    repository.findRecipeById.mockResolvedValue({
+      ...catalogRecipe('recipe-ai', 'Wok de verduras'),
+      nutritionalValues: null,
+      origin: 'AI',
+    });
+
+    const replay = await replace();
+
+    expect(replay.plannedMeal).toMatchObject({
+      id: MEAL,
+      dayId: 'day-1',
+      mealType: 'DINNER',
+      title: 'Wok de verduras',
+      recipeId: 'recipe-ai',
+      nutritionalValues: committedNutrition,
+      recipe: expect.objectContaining({ id: 'recipe-ai', nutritionalValues: null, image: null }),
+    });
+    expect(repository.findRecipeById).toHaveBeenCalledWith('recipe-ai');
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+    expect(coverage.evaluate).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
+  });
+
+  it('preserves the committed AI draft nutrition when replaying a reused catalog recipe after the meal was superseded', async () => {
+    const { plan, repository, recipes, coverage, openai, replace } = setup();
+    recipes.findByNormalizedTitles.mockResolvedValue([
+      { id: 'recipe-dup', title: 'WOK DE VERDURAS', description: 'Del catálogo', ingredients: [{ name: 'brócoli' }] },
+    ]);
+    repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-dup', 'Wok de verduras'), prepMinutes: 15 });
+
+    const firstResponse = await replace();
+    const requestSnapshot = repository.createOrRecoverGenerationRun.mock.calls[0][6];
+    const committedDraftNutrition = repository.replaceMealTransaction.mock.calls[0][0].nutritionalValues;
+    expect(committedDraftNutrition).toEqual({ Protein: 18, Fiber: 7, Calories: 420, Description: 'Cena liviana' });
+    expect(firstResponse.plannedMeal.nutritionalValues).toEqual(committedDraftNutrition);
+
+    Object.assign(plan.days[0].meals[0], {
+      title: 'Reemplazo más nuevo',
+      recipeId: 'recipe-newer',
+      nutritionalValues: {
+        Calories: 730,
+        Protein: 33,
+        Fiber: 16,
+        Description: 'Nutrición del reemplazo más nuevo',
+      },
+    });
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: {
+        id: 'run-1',
+        status: 'SUCCEEDED',
+        requestSnapshot,
+        outputSnapshot: {
+          path: 'REUSED_DUPLICATE_RECIPE',
+          recipeId: 'recipe-dup',
+          title: 'Wok de verduras',
+          nutritionalValues: committedDraftNutrition,
+        },
+      },
+      wasCreated: false,
+    });
+    coverage.evaluate.mockClear();
+    openai.generateReplacementMeal.mockClear();
+
+    const replay = await replace();
+
+    expect(replay.plannedMeal.nutritionalValues).toEqual(committedDraftNutrition);
+    expect(replay.plannedMeal.nutritionalValues).not.toEqual({
+      Protein: 20,
+      Fiber: 9,
+      Calories: 350,
+      Description: 'Receta del catálogo',
+    });
+    expect(repository.replaceMealTransaction).toHaveBeenCalledTimes(1);
+    expect(coverage.evaluate).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when a legacy AI replay no longer matches the meal and its nutrition is unrecoverable', async () => {
+    const { plan, repository, coverage, openai, replace, snapshotFor } = setup();
+    Object.assign(plan.days[0].meals[0], {
+      title: 'Reemplazo más nuevo',
+      recipeId: 'recipe-newer',
+      nutritionalValues: {
+        Calories: 720,
+        Protein: 31,
+        Fiber: 15,
+        Description: 'Nutrición del reemplazo más nuevo',
+      },
+    });
+    const requestSnapshot = await snapshotFor();
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: {
+        id: 'run-legacy',
+        status: 'SUCCEEDED',
+        requestSnapshot,
+        outputSnapshot: { path: 'AI_GENERATED', recipeId: 'recipe-ai-old', title: 'Wok anterior' },
+      },
+      wasCreated: false,
+    });
+    repository.findRecipeById.mockResolvedValue({
+      ...catalogRecipe('recipe-ai-old', 'Wok anterior'),
+      nutritionalValues: null,
+      origin: 'AI',
+    });
+
+    const error = await replace().then(() => null, (reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getStatus()).toBe(409);
+    expect(error).not.toBeInstanceOf(TypeError);
+    expect(repository.findRecipeById).toHaveBeenCalledWith('recipe-ai-old');
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+    expect(coverage.evaluate).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 for a superseded legacy duplicate replay without snapshot nutrition', async () => {
+    const { plan, repository, coverage, openai, replace, snapshotFor } = setup();
+    Object.assign(plan.days[0].meals[0], {
+      title: 'Reemplazo más nuevo',
+      recipeId: 'recipe-newer',
+      nutritionalValues: {
+        Calories: 720,
+        Protein: 31,
+        Fiber: 15,
+        Description: 'Nutrición del reemplazo más nuevo',
+      },
+    });
+    const requestSnapshot = await snapshotFor();
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: {
+        id: 'run-legacy-duplicate',
+        status: 'SUCCEEDED',
+        requestSnapshot,
+        outputSnapshot: {
+          path: 'REUSED_DUPLICATE_RECIPE',
+          recipeId: 'recipe-dup',
+          title: 'Wok de verduras',
+        },
+      },
+      wasCreated: false,
+    });
+    // Legacy AI draft nutrition was 420/18/7; its duplicate catalog row has 350/20/9.
+    repository.findRecipeById.mockResolvedValue(catalogRecipe('recipe-dup', 'Wok de verduras'));
+
+    const replayPromise = replace();
+    await expect(replayPromise).rejects.toBeInstanceOf(ConflictException);
+    const error = await replayPromise.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getStatus()).toBe(409);
+    expect(repository.findRecipeById).toHaveBeenCalledWith('recipe-dup');
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+    expect(coverage.evaluate).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 when a superseded legacy catalog replay has no snapshot nutrition', async () => {
+    const { plan, repository, coverage, openai, replace, snapshotFor } = setup();
+    Object.assign(plan.days[0].meals[0], {
+      title: 'Reemplazo más nuevo',
+      recipeId: 'recipe-newer',
+      nutritionalValues: {
+        Calories: 720,
+        Protein: 31,
+        Fiber: 15,
+        Description: 'Nutrición del reemplazo más nuevo',
+      },
+    });
+    const requestSnapshot = await snapshotFor();
+    repository.createOrRecoverGenerationRun.mockResolvedValue({
+      run: {
+        id: 'run-legacy-catalog',
+        status: 'SUCCEEDED',
+        requestSnapshot,
+        outputSnapshot: {
+          path: 'REUSED_EXISTING_RECIPE',
+          recipeId: 'recipe-cat',
+          title: 'Receta del catálogo',
+        },
+      },
+      wasCreated: false,
+    });
+    repository.findRecipeById.mockResolvedValue(catalogRecipe('recipe-cat', 'Receta del catálogo', {
+      calories: 680,
+      protein: 34,
+      fiber: 13,
+    }));
+
+    const replayPromise = replace();
+    await expect(replayPromise).rejects.toBeInstanceOf(ConflictException);
+    const error = await replayPromise.catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getStatus()).toBe(409);
+    expect(repository.findRecipeById).toHaveBeenCalledWith('recipe-cat');
+    expect(repository.replaceMealTransaction).not.toHaveBeenCalled();
+    expect(coverage.evaluate).not.toHaveBeenCalled();
+    expect(openai.generateReplacementMeal).not.toHaveBeenCalled();
   });
 
   it('el mismo pedido con categorías y propiedades en otro orden tiene la misma huella', async () => {
@@ -647,7 +965,17 @@ describe('MealReplacementService - imágenes de NUT-83', () => {
     const snapshot = await snapshotFor();
     catalogReturns(catalogRecipe('recipe-cat'));
     repository.createOrRecoverGenerationRun.mockResolvedValue({
-      run: { id: 'run-1', status: 'SUCCEEDED', requestSnapshot: snapshot, outputSnapshot: { recipeId: 'recipe-cat', title: 'Receta' } },
+      run: {
+        id: 'run-1',
+        status: 'SUCCEEDED',
+        requestSnapshot: snapshot,
+        outputSnapshot: {
+          path: 'REUSED_EXISTING_RECIPE',
+          recipeId: 'recipe-cat',
+          title: 'Receta',
+          nutritionalValues: { Protein: 20, Fiber: 9, Calories: 350, Description: 'Receta del catálogo' },
+        },
+      },
       wasCreated: false,
     });
     repository.findRecipeById.mockResolvedValue({ ...catalogRecipe('recipe-cat'), image: pendingPersistedImage() });

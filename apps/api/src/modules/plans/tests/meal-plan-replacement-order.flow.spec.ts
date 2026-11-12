@@ -20,7 +20,7 @@ function catalogRecipe(id: string, title = `Receta ${id}`) {
     instructions: ['Mezclar'],
     categories: [],
     properties: [],
-    nutritionalValues: { calories: 350, protein: 20 },
+    nutritionalValues: { calories: 350, protein: 20, fiber: 9 },
   };
 }
 
@@ -35,6 +35,7 @@ function createFlow() {
       title: recipe.title,
       recipeId: recipe.id,
       recipe,
+      nutritionalValues: { Calories: 180, Protein: 8, Fiber: 4, Description: 'Nutrición anterior' },
       updatedAt: new Date('2026-09-14T10:00:00.000Z'),
     };
   });
@@ -96,6 +97,7 @@ function createFlow() {
         title: input.title ?? recipe.title,
         recipeId: recipe.id,
         recipe,
+        nutritionalValues: input.nutritionalValues,
         updatedAt: new Date(`2026-09-14T10:0${++writeCount}:00.000Z`),
       });
       state.plan.updatedAt = new Date(`2026-09-14T10:0${writeCount}:00.000Z`);
@@ -129,6 +131,18 @@ function mealSequence(plan: any) {
   })));
 }
 
+function publicMealProjection(meal: any, dayId: string) {
+  return {
+    id: meal.id,
+    dayId,
+    mealType: meal.mealType,
+    title: meal.title,
+    recipeId: meal.recipeId,
+    nutritionalValues: meal.nutritionalValues,
+    recipe: meal.recipe,
+  };
+}
+
 function expectCanonicalPlan(plan: any) {
   expect(plan.days.map((day: any) => day.id)).toEqual(['day-monday', 'day-tuesday', 'day-wednesday']);
   expect(plan.days.map((day: any) => day.meals.map((meal: any) => meal.mealType))).toEqual([
@@ -151,6 +165,11 @@ describe('GET → replacement → GET — orden de plan estable (NUT-106)', () =
     expect(repository.replaceMealTransaction).toHaveBeenCalledWith(expect.objectContaining({ plannedMealId }));
     const after = await plans.getPlanByWeek(USER, WEEK);
     expectCanonicalPlan(after);
+    const updatedMeal = after.days[0].meals.find((meal: any) => meal.id === plannedMealId);
+    expect(response.plannedMeal).toMatchObject({ dayId: 'day-monday' });
+    expect(publicMealProjection(response.plannedMeal, response.plannedMeal.dayId)).toEqual(
+      publicMealProjection(updatedMeal, 'day-monday'),
+    );
     expect(mealSequence(after).map((day: any[]) => day.map(meal => meal.id))).toEqual(
       mealSequence(before).map((day: any[]) => day.map(meal => meal.id)),
     );
@@ -187,6 +206,10 @@ describe('GET → replacement → GET — orden de plan estable (NUT-106)', () =
     expect(coverage.evaluate).toHaveBeenCalledTimes(1);
     const afterReplay = await plans.getPlanByWeek(USER, WEEK);
     expectCanonicalPlan(afterReplay);
+    const replayedMeal = afterReplay.days[0].meals.find((meal: any) => meal.id === plannedMealId);
+    expect(publicMealProjection(replay.plannedMeal, replay.plannedMeal.dayId)).toEqual(
+      publicMealProjection(replayedMeal, 'day-monday'),
+    );
     expect(mealSequence(afterReplay)[0].map((meal: any) => meal.id)).toEqual([
       'meal-breakfast', 'meal-lunch', 'meal-snack', 'meal-dinner',
     ]);

@@ -692,7 +692,12 @@ export class PlansRepository {
       });
 
       await this.transitionGenerationRunInTx(tx, input.generationRunId, input.userId, ['PENDING'], 'SUCCEEDED', {
-        outputSnapshot: { ...input.outputSnapshot, recipeId: recipe.id, title: plannedMeal.title },
+        outputSnapshot: {
+          ...input.outputSnapshot,
+          recipeId: recipe.id,
+          title: plannedMeal.title,
+          nutritionalValues: input.nutritionalValues,
+        },
         validationSnapshot: input.validationSnapshot,
       });
 

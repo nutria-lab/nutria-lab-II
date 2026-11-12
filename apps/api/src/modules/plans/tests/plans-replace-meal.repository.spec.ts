@@ -129,7 +129,12 @@ describe('PlansRepository.replaceMealTransaction (NUT-77)', () => {
       where: { id: 'run-1', userId: 'user-1', status: { in: ['PENDING'] } },
       data: expect.objectContaining({
         status: 'SUCCEEDED',
-        outputSnapshot: { path: 'REUSED_EXISTING_RECIPE', recipeId: 'recipe-cat', title: 'Receta del catálogo' },
+        outputSnapshot: {
+          path: 'REUSED_EXISTING_RECIPE',
+          recipeId: 'recipe-cat',
+          title: 'Receta del catálogo',
+          nutritionalValues: baseWrite.nutritionalValues,
+        },
       }),
     });
   });
