@@ -640,10 +640,18 @@ describe('App post-login destination (NUT-97)', () => {
   it('does not route a person with complete preferences through /goals after login', async () => {
     const user = userEvent.setup();
     let profileRequests = 0;
+    const dashboardRequests: string[] = [];
     anonymousUntilLogin(async (config) => {
       if (config.url === '/nutrition-profile') {
         profileRequests += 1;
         return response(config, nutritionProfile);
+      }
+
+      // The dashboard data is not under test here: an explicit 500 (never 401/403) keeps the
+      // global session handling out of the picture and lets the dashboard settle deterministically.
+      if (['/meal-plans/current', '/adherence', '/shopping-list'].includes(String(config.url))) {
+        dashboardRequests.push(String(config.url));
+        throw failedResponse(config, 500);
       }
 
       throw new Error(`Unexpected request: ${config.url}`);
@@ -652,9 +660,15 @@ describe('App post-login destination (NUT-97)', () => {
     renderApp('/login');
     await submitLogin(user);
 
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
-    expect(visitedPaths).not.toContain('/goals');
-    expect(visitedPaths.at(-1)).toBe('/dashboard');
+    // visitedPaths is filled by a passive effect, which can run after the DOM already shows
+    // the new route; wait for the recorded history itself instead of reading it once.
+    await waitFor(() => expect(visitedPaths).toEqual(['/login', '/dashboard']));
+    expect(await screen.findByText('No pudimos cargar tus comidas de hoy.')).toBeVisible();
+    await waitFor(() => expect([...dashboardRequests].sort())
+      .toEqual(['/adherence', '/meal-plans/current', '/shopping-list']));
+
+    expect(visitedPaths).toEqual(['/login', '/dashboard']);
+    expect(screen.getByTestId('location-full').textContent).toBe('/dashboard');
     expect(profileRequests).toBe(0);
   });
 
