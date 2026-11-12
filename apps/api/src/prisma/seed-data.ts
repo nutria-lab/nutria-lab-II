@@ -71,3 +71,42 @@ export async function seedBaseData(client: any) {
 
   return { pechuga, arroz, recipePollo };
 }
+
+// NUT-114 — Convenciones de identidad del seed sintético (solo constantes y funciones puras).
+export const SYNTHETIC_EMAIL_DOMAIN = 'nutria.test';
+
+const pad5 = (n: number) => String(n).padStart(5, '0');
+
+export function syntheticEmail(n: number): string {
+  return `demo.seed.${pad5(n)}@${SYNTHETIC_EMAIL_DOMAIN}`;
+}
+
+export function syntheticName(n: number): string {
+  return `Demo Sintético ${pad5(n)}`;
+}
+
+export const DEMO_WALKTHROUGH_EMAIL = 'demo.seed.00001@nutria.test';
+
+export const SEED_TABLE_CODES = {
+  users: '0001',
+  recipes: '0002',
+  mealPlans: '0003',
+  days: '0004',
+  meals: '0005',
+  profiles: '0006',
+  ingredients: '0007',
+  completions: '0008',
+  shoppingChecks: '0009',
+} as const;
+
+export type SeedTable = keyof typeof SEED_TABLE_CODES;
+
+const MAX_SYNTH_INDEX = 999_999_999_999;
+
+// '5eed' + código de tabla + '-0000-4000-8000-' + n con 12 dígitos (UUID v4 válido y reconocible).
+export function synthId(table: SeedTable, n: number): string {
+  if (!Number.isInteger(n) || n < 0 || n > MAX_SYNTH_INDEX) {
+    throw new RangeError('synthId index must be an integer in [0, 999999999999]');
+  }
+  return `5eed${SEED_TABLE_CODES[table]}-0000-4000-8000-${String(n).padStart(12, '0')}`;
+}
