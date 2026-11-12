@@ -46,6 +46,7 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
   let baseUrl: string;
   let jwt: JwtService;
   let plans: PlansRepository;
+  let replacementRecipe: any;
   let previousJwtSecret: string | undefined;
   let jwtSecretChanged = false;
 
@@ -88,13 +89,18 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
     await prisma.$connect();
 
     plans = new PlansRepository(prisma as any);
+    const planReader = new PlansService(plans, {} as any, {} as any, {} as any);
     const shopping = new ShoppingListService(new ShoppingListRepository(prisma as any));
     const adherence = new AdherenceService(new AdherenceRepository(prisma as any, baClock), baClock);
     const recipeValidation = new RecipeValidationService(
       { findByNormalizedTitles: async () => [] } as any,
       plans,
     );
-    const replacementRecipe = await createRecipe('Garbanzos', 'Bowl de garbanzos');
+    replacementRecipe = await createRecipe('Garbanzos', 'Bowl de garbanzos', {
+      calories: 430,
+      protein: 29,
+      fiber: 13,
+    });
     const replacement = new MealReplacementService(
       plans,
       {} as any,
@@ -141,7 +147,7 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
     const module = await Test.createTestingModule({
       controllers: [PlansController, ShoppingListController, AdherenceController],
       providers: [
-        { provide: PlansService, useValue: {} },
+        { provide: PlansService, useValue: planReader },
         { provide: MealReplacementService, useValue: replacement },
         { provide: MealPlanRegenerationService, useValue: regeneration },
         { provide: ShoppingListService, useValue: shopping },
@@ -187,7 +193,11 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
     }
   });
 
-  async function createRecipe(ingredient: string, title: string) {
+  async function createRecipe(
+    ingredient: string,
+    title: string,
+    nutritionalValues: Record<string, number> = { calories: 350, protein: 20 },
+  ) {
     return prisma.recipe.create({ data: {
       title,
       description: `Synthetic ${title}`,
@@ -195,7 +205,7 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
       cookMinutes: 10,
       ingredients: [{ name: ingredient, quantity: 250, unit: 'g' }],
       instructions: ['Synthetic preparation'],
-      nutritionalValues: { calories: 350, protein: 20 },
+      nutritionalValues,
     } });
   }
 
@@ -406,4 +416,46 @@ describeWithDb('NUT-98 purchases and adherence cross-flow on isolated PostgreSQL
     });
     expect(oldVersionRegeneration.status).toBe(409);
   }, 60000);
+
+  it('matches the committed public meal after HTTP replacement POST and current-plan GET', async () => {
+    const owner = await fixture('replacement-parity', 'Avena', 'Avena de paridad');
+    const ownerToken = await tokenFor(owner.user.id);
+    const replacement = await request(`/meal-plans/${owner.plan.id}/meals/${owner.meal.id}/replace`, {
+      method: 'POST',
+      token: ownerToken,
+      headers: { 'idempotency-key': '88888888-8888-4888-8888-888888888888' },
+      body: {},
+    });
+    expect(replacement.status).toBe(200);
+    const replacementBody = await replacement.json();
+
+    const currentPlanResponse = await request(`/meal-plans/current?weekStart=${weekStart}`, { token: ownerToken });
+    expect(currentPlanResponse.status).toBe(200);
+    const currentPlan = await currentPlanResponse.json();
+    const currentDay = currentPlan.days.find((day: any) => day.id === owner.plan.days[0].id);
+    const currentMeal = currentDay?.meals.find((meal: any) => meal.id === owner.meal.id);
+    expect(currentMeal).toBeDefined();
+    expect(replacementBody.plannedMeal).toMatchObject({
+      id: owner.meal.id,
+      dayId: currentDay.id,
+      mealType: 'LUNCH',
+      recipeId: replacementRecipe.id,
+      nutritionalValues: {
+        Calories: 430,
+        Protein: 29,
+        Fiber: 13,
+        Description: replacementRecipe.description,
+      },
+    });
+    expect(replacementBody.plannedMeal).toEqual({
+      id: currentMeal.id,
+      dayId: currentDay.id,
+      mealType: currentMeal.mealType,
+      title: currentMeal.title,
+      recipeId: currentMeal.recipeId,
+      nutritionalValues: currentMeal.nutritionalValues,
+      recipe: currentMeal.recipe,
+    });
+    expect(replacementBody.plannedMeal.recipe.image).toEqual(currentMeal.recipe.image);
+  });
 });

@@ -24,6 +24,7 @@ import { reusableDuplicate, summarizeParseFailure, summarizeResults } from '../r
 import { isStalePendingRun } from './generation-run-ttl';
 import { RecipeValidationService, mealToDraftInput } from './recipe-validation.service';
 import { MealReplacementConflictError, PlansRepository } from './plans.repository';
+import { mapRecipeNutritionToMeal } from './recipe-nutrition.mapper';
 import { UnsplashService, toPublicRecipeImage } from '@/modules/unsplash/unsplash.service';
 import type { PersistedRecipeImage, RecipeImage } from '@/modules/unsplash/recipe-image.types';
 
@@ -44,12 +45,29 @@ export interface MealReplacementResponse {
   dayId: string;
   plannedMeal: {
     id: string;
+    dayId: string;
     mealType: MealType;
     title: string;
     recipeId: string;
+    nutritionalValues: ReturnType<typeof mapRecipeNutritionToMeal>;
     recipe: Omit<Recipe, 'image'> & { image: RecipeImage | null };
   };
   generationRunId: string;
+}
+
+type MappedMealNutrition = ReturnType<typeof mapRecipeNutritionToMeal>;
+type BuildResponseOptions = {
+  generatedByAi?: boolean;
+  isReplay?: boolean;
+  persistedNutrition?: MappedMealNutrition;
+};
+
+function isMappedMealNutrition(value: unknown): value is MappedMealNutrition {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const nutrition = value as Record<string, unknown>;
+  return ['Calories', 'Protein', 'Fiber'].every(key =>
+    typeof nutrition[key] === 'number' && Number.isFinite(nutrition[key]),
+  ) && typeof nutrition.Description === 'string' && nutrition.Description.trim().length > 0;
 }
 
 // Reemplaza UNA comida del plan actual sin tocar el resto de la semana (NUT-77).
@@ -147,7 +165,7 @@ export class MealReplacementService {
     const write = existing
       ? {
           existingRecipeId: existing.id,
-          nutritionalValues: this.nutritionalValuesFromRecipe(existing),
+          nutritionalValues: mapRecipeNutritionToMeal(existing),
           outputSnapshot: { path: 'REUSED_EXISTING_RECIPE' },
           validationSnapshot: { source: 'coverage' },
         }
@@ -175,7 +193,17 @@ export class MealReplacementService {
 
     // 5. Foto nueva de la IA: el uso se registra en Unsplash recién ahora, con la receta ya guardada (NUT-83).
     const recipe = 'newRecipe' in write && write.newRecipe.image ? await this.trackNewRecipeImage(saved.recipe) : saved.recipe;
-    return this.buildResponse(plan, dayId, saved.plannedMeal, recipe, runId);
+    return this.buildResponse(
+      plan,
+      dayId,
+      saved.plannedMeal,
+      recipe,
+      runId,
+      {
+        generatedByAi: 'newRecipe' in write,
+        persistedNutrition: saved.plannedMeal.nutritionalValues,
+      },
+    );
   }
 
   // NUT-83: busca la foto de una receta nueva. Si falla, la receta se guarda igual sin imagen.
@@ -223,7 +251,18 @@ export class MealReplacementService {
     const recipe = await this.repository.findRecipeById(run.outputSnapshot?.recipeId);
     if (!recipe) throw new ConflictException('The replacement for this Idempotency-Key is no longer available');
     const title = run.outputSnapshot?.title ?? recipe.title;
-    return this.buildResponse(plan, dayId, { ...meal, title }, recipe, run.id);
+    return this.buildResponse(
+      plan,
+      dayId,
+      { ...meal, title },
+      recipe,
+      run.id,
+      {
+        generatedByAi: run.outputSnapshot?.path !== 'REUSED_EXISTING_RECIPE',
+        isReplay: true,
+        persistedNutrition: run.outputSnapshot?.nutritionalValues,
+      },
+    );
   }
 
   // NUT-72: busca en el catálogo excluyendo la receta actual y, si se puede, las ya usadas esa semana.
@@ -238,7 +277,14 @@ export class MealReplacementService {
 
     for (const excludeRecipeIds of exclusions) {
       const found = await this.compatibleCatalogRecipes(userId, criteria, excludeRecipeIds);
-      if (found.length > 0) return found[0];
+      for (const candidate of found) {
+        try {
+          mapRecipeNutritionToMeal(candidate);
+          return candidate;
+        } catch (error) {
+          if (!(error instanceof TypeError)) throw error;
+        }
+      }
     }
     return null;
   }
@@ -303,9 +349,10 @@ export class MealReplacementService {
       throw new UnprocessableEntityException('No compatible replacement was found');
     }
 
+    const nutritionalValues = this.mapReplacementNutrition(recipe, true);
     const mealFields = {
       title: meal.title,
-      nutritionalValues: { ...meal.nutritionalValues },
+      nutritionalValues,
       validationSnapshot: { ...summarizeResults([result]) },
     };
     if (duplicate) {
@@ -332,6 +379,7 @@ export class MealReplacementService {
         description: recipe.description,
         prepMinutes: recipe.prepMinutes,
         cookMinutes: recipe.cookMinutes,
+        nutritionalValues: recipe.nutritionalValues,
         ingredients: recipe.ingredients as any,
         instructions: recipe.instructions,
         categories: recipe.categories,
@@ -349,18 +397,6 @@ export class MealReplacementService {
       criteria.properties.every(property => recipeProperties.has(property.toLowerCase()));
   }
 
-  // Las recetas del catálogo guardan macros como { calories, protein, fiber }; la comida usa otra forma.
-  private nutritionalValuesFromRecipe(recipe: Recipe) {
-    const values = (recipe.nutritionalValues ?? {}) as Record<string, unknown>;
-    const number = (value: unknown) => (typeof value === 'number' ? value : 0);
-    return {
-      Protein: number(values.protein),
-      Fiber: number(values.fiber),
-      Calories: number(values.calories),
-      Description: recipe.description,
-    };
-  }
-
   private async failRun(runId: string, userId: string, status: 'FAILED' | 'REJECTED', errorCode: string) {
     try {
       await this.repository.transitionGenerationRun(runId, userId, ['PENDING'], status, { errorCode });
@@ -369,21 +405,50 @@ export class MealReplacementService {
     }
   }
 
+  private mapReplacementNutrition(recipe: unknown, generatedByAi = false) {
+    const source = recipe as Record<string, unknown>;
+    const nutritionDescription = (source.nutritionalValues as Record<string, unknown> | undefined)?.description;
+    return mapRecipeNutritionToMeal({
+      ...source,
+      ...(generatedByAi && typeof nutritionDescription === 'string' ? { description: nutritionDescription } : {}),
+    });
+  }
+
   // La imagen pasa por toPublicRecipeImage: la metadata privada de tracking nunca sale (NUT-83).
-  private buildResponse(plan: any, dayId: string, plannedMeal: any, recipe: Recipe, generationRunId: string) {
+  private buildResponse(
+    plan: any,
+    dayId: string,
+    plannedMeal: any,
+    recipe: Recipe,
+    generationRunId: string,
+    options: BuildResponseOptions = {},
+  ) {
     const image = toPublicRecipeImage(((recipe as { image?: unknown }).image ?? null) as PersistedRecipeImage | null);
+    const nutritionalValues = this.resolveResponseNutrition(recipe, plannedMeal, options);
     return {
       planId: plan.id,
       version: plan.version,
       dayId,
       plannedMeal: {
         id: plannedMeal.id,
+        dayId,
         mealType: plannedMeal.mealType,
         title: plannedMeal.title,
         recipeId: recipe.id,
+        nutritionalValues,
         recipe: { ...recipe, image },
       },
       generationRunId,
     };
+  }
+
+  private resolveResponseNutrition(recipe: Recipe, plannedMeal: any, options: BuildResponseOptions): MappedMealNutrition {
+    const matchingMealNutrition = plannedMeal.recipeId === recipe.id ? plannedMeal.nutritionalValues : undefined;
+    if (isMappedMealNutrition(options.persistedNutrition)) return options.persistedNutrition;
+    if (isMappedMealNutrition(matchingMealNutrition)) return matchingMealNutrition;
+    if (options.isReplay) {
+      throw new ConflictException('The replacement nutrition is no longer available');
+    }
+    return this.mapReplacementNutrition(recipe, options.generatedByAi);
   }
 }
