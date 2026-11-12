@@ -8,7 +8,13 @@ import { TodayMealsCard } from './TodayMealsCard';
 
 // El DOM sigue el orden mobile (saludo, progreso, siguiente comida, lista, accesos);
 // en lg la grilla ubica la siguiente comida a la izquierda (7) y el progreso a la derecha (5).
-export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) {
+type DashboardViewProps = {
+  viewModel: DashboardViewModel;
+  /** Destino del CTA del estado "sin plan"; por defecto, el plan semanal. */
+  noPlanActionTo?: string;
+};
+
+export function DashboardView({ viewModel, noPlanActionTo }: DashboardViewProps) {
   const withNextMeal = hasNextMealColumn(viewModel.todayMeals);
 
   return (
@@ -30,7 +36,7 @@ export function DashboardView({ viewModel }: { viewModel: DashboardViewModel }) 
             className={withNextMeal ? 'lg:col-span-5 lg:col-start-8 lg:row-start-1' : 'lg:col-span-12'}
           />
           <NextMealHighlight state={viewModel.todayMeals} className="lg:col-span-7 lg:col-start-1 lg:row-start-1" />
-          <TodayMealsCard state={viewModel.todayMeals} className="lg:col-span-12" />
+          <TodayMealsCard state={viewModel.todayMeals} noPlanActionTo={noPlanActionTo} className="lg:col-span-12" />
           <QuickAccessLinks shopping={viewModel.shopping} className="lg:col-span-12" />
         </div>
       </main>

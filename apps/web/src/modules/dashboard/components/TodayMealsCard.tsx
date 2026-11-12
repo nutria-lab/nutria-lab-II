@@ -7,6 +7,8 @@ import { MealStatusChip } from './MealStatusChip';
 
 type Props = {
   state: CardState<TodayMealsData>;
+  /** Destino del CTA del estado "sin plan" (por ejemplo, /goals si faltan preferencias). */
+  noPlanActionTo?: string;
   className?: string;
 };
 
@@ -56,7 +58,7 @@ function TodayMealsList({ meals }: { meals: TodayMeal[] }) {
   );
 }
 
-function TodayMealsBody({ state }: { state: CardState<TodayMealsData> }) {
+function TodayMealsBody({ state, noPlanActionTo }: { state: CardState<TodayMealsData>; noPlanActionTo: string }) {
   switch (state.kind) {
     case 'loading':
       return <CardSkeleton rows={4} />;
@@ -77,7 +79,7 @@ function TodayMealsBody({ state }: { state: CardState<TodayMealsData> }) {
             <CardNotice
               icon="calendar_month"
               title="Todavía no tenés un plan para esta semana."
-              action={{ label: 'Ir a mi plan', to: '/meal-plan' }}
+              action={{ label: 'Ir a mi plan', to: noPlanActionTo }}
             />
           );
         case 'noMealsToday':
@@ -89,13 +91,13 @@ function TodayMealsBody({ state }: { state: CardState<TodayMealsData> }) {
   }
 }
 
-export function TodayMealsCard({ state, className = '' }: Props) {
+export function TodayMealsCard({ state, noPlanActionTo = '/meal-plan', className = '' }: Props) {
   return (
     <section aria-labelledby="dashboard-today-meals-title" className={`rounded-xl bg-surface-container p-6 ${className}`}>
       <h2 id="dashboard-today-meals-title" className="mb-4 font-headline text-xl font-semibold text-on-surface">
         Comidas de hoy
       </h2>
-      <TodayMealsBody state={state} />
+      <TodayMealsBody state={state} noPlanActionTo={noPlanActionTo} />
     </section>
   );
 }

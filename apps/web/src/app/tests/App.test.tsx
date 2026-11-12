@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
@@ -67,9 +68,22 @@ function deferred<T>() {
   return { promise, reject, resolve };
 }
 
+const visitedPaths: string[] = [];
+
 function LocationProbe() {
   const location = useLocation();
-  return <output data-testid="location">{location.pathname}</output>;
+  const fullPath = `${location.pathname}${location.search}${location.hash}`;
+
+  useEffect(() => {
+    visitedPaths.push(fullPath);
+  }, [fullPath]);
+
+  return (
+    <>
+      <output data-testid="location">{location.pathname}</output>
+      <output data-testid="location-full">{fullPath}</output>
+    </>
+  );
 }
 
 function renderApp(
@@ -105,6 +119,7 @@ async function completeValidCredentials(user: ReturnType<typeof userEvent.setup>
 
 afterEach(() => {
   cleanup();
+  visitedPaths.length = 0;
   apiClient.defaults.adapter = initialAdapter;
   setAuthFailureHandler(null);
   vi.restoreAllMocks();
@@ -246,7 +261,7 @@ describe('App authentication routes', () => {
     fireEvent.submit(document.querySelector('form')!);
     fireEvent.submit(document.querySelector('form')!);
 
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/goals'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
     expect(currentUserRequests).toBe(1);
     expect(loginRequests).toBe(1);
   });
@@ -282,7 +297,7 @@ describe('App authentication routes', () => {
     expect(loginRequests).toBe(1);
 
     pendingLogin.resolve(response({ url: '/auth/login' } as InternalAxiosRequestConfig, authenticatedUser));
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/goals'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
   });
 
   it('keeps the NUT-8 registration route public after anonymous session restoration', async () => {
@@ -388,7 +403,7 @@ describe('App authentication routes', () => {
     await completeValidCredentials(user);
     fireEvent.submit(loginHeading.closest('main')!.querySelector('form')!);
 
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/goals'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
   });
 
   it('keeps the login route and existing generic message when the server rejects credentials', async () => {
@@ -579,4 +594,213 @@ describe('App logout', () => {
     expect(logoutRequests).toBe(1);
     expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
   });
+});
+
+describe('App post-login destination (NUT-97)', () => {
+  function anonymousUntilLogin(onOtherRequest?: (config: InternalAxiosRequestConfig) => Promise<AxiosResponse>) {
+    let loginRequests = 0;
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        throw failedResponse(config, 401);
+      }
+
+      if (config.url === '/auth/login') {
+        loginRequests += 1;
+        return response(config, authenticatedUser);
+      }
+
+      if (onOtherRequest) {
+        return onOtherRequest(config);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    return { loginRequests: () => loginRequests };
+  }
+
+  async function submitLogin(user: ReturnType<typeof userEvent.setup>) {
+    const loginHeading = await screen.findByRole('heading', { name: /iniciá sesión/i });
+    await completeValidCredentials(user);
+    fireEvent.submit(loginHeading.closest('main')!.querySelector('form')!);
+  }
+
+  it('enters /dashboard after a login without a requested destination', async () => {
+    const user = userEvent.setup();
+    const requests = anonymousUntilLogin();
+
+    renderApp('/login');
+    await submitLogin(user);
+
+    await waitFor(() => expect(screen.getByTestId('location-full')).toHaveTextContent(/^\/dashboard$/));
+    expect(await screen.findByRole('heading', { name: 'Hola, Persona', level: 1 })).toBeVisible();
+    expect(requests.loginRequests()).toBe(1);
+  });
+
+  it('does not route a person with complete preferences through /goals after login', async () => {
+    const user = userEvent.setup();
+    let profileRequests = 0;
+    anonymousUntilLogin(async (config) => {
+      if (config.url === '/nutrition-profile') {
+        profileRequests += 1;
+        return response(config, nutritionProfile);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    renderApp('/login');
+    await submitLogin(user);
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
+    expect(visitedPaths).not.toContain('/goals');
+    expect(visitedPaths.at(-1)).toBe('/dashboard');
+    expect(profileRequests).toBe(0);
+  });
+
+  it.each([
+    ['/shopping-list'],
+    ['/meal-plan'],
+    ['/recipes/recipe-1'],
+    ['/dashboard'],
+  ])('sends an anonymous visitor of %s to login and returns there after login', async (deepLink) => {
+    const user = userEvent.setup();
+    anonymousUntilLogin(async (config) => {
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    renderApp(deepLink);
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+    await submitLogin(user);
+
+    await waitFor(() => expect(screen.getByTestId('location-full').textContent).toBe(deepLink));
+    expect(visitedPaths).not.toContain('/goals');
+  });
+
+  it('keeps the search and hash of the requested internal destination', async () => {
+    const user = userEvent.setup();
+    anonymousUntilLogin(async (config) => {
+      throw new Error(`Unexpected request: ${config.url}`);
+    });
+
+    renderApp('/shopping-list?vista=pendientes#lacteos');
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+    await submitLogin(user);
+
+    await waitFor(() => expect(screen.getByTestId('location-full').textContent)
+      .toBe('/shopping-list?vista=pendientes#lacteos'));
+  });
+
+  it.each([
+    ['an https absolute URL', 'https://evil.test/dashboard'],
+    ['a protocol-relative URL', '//evil.test'],
+    ['a backslash URL', '/\\evil.test'],
+    ['a javascript: URL', 'javascript:alert(1)'],
+    ['a data: URL', 'data:text/html,hola'],
+  ])('ignores %s as destination and enters /dashboard', async (_label, pathname) => {
+    const user = userEvent.setup();
+    anonymousUntilLogin();
+
+    renderApp({ pathname: '/login', state: { from: { pathname } } });
+    await submitLogin(user);
+
+    await waitFor(() => expect(screen.getByTestId('location-full').textContent).toBe('/dashboard'));
+  });
+
+  it('sends an already authenticated visitor of /login without a destination to /dashboard', async () => {
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        return response(config, authenticatedUser);
+      }
+
+      throw new Error(`Unexpected request: ${config.url}`);
+    };
+
+    renderApp('/login');
+
+    await waitFor(() => expect(screen.getByTestId('location-full').textContent).toBe('/dashboard'));
+    expect(visitedPaths).not.toContain('/goals');
+  });
+
+  it.each([['/shopping-list'], ['/recipes/recipe-1'], ['/meal-plan']])(
+    'keeps %s on reload when the session is still valid',
+    async (deepLink) => {
+      apiClient.defaults.adapter = async (config) => {
+        if (config.url === '/auth/me') {
+          return response(config, authenticatedUser);
+        }
+
+        throw new Error(`Unexpected request: ${config.url}`);
+      };
+
+      renderApp(deepLink);
+
+      expect(await screen.findAllByRole('link', { name: 'Goals' })).not.toHaveLength(0);
+      expect(screen.getByTestId('location-full').textContent).toBe(deepLink);
+      expect(visitedPaths).not.toContain('/login');
+    },
+  );
+
+  it.each([['/shopping-list'], ['/recipes/recipe-1'], ['/meal-plan']])(
+    'sends a reload of %s without a session to login without showing the app shell',
+    async (deepLink) => {
+      apiClient.defaults.adapter = async (config) => {
+        throw failedResponse(config, 401);
+      };
+
+      renderApp(deepLink);
+
+      await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+      expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+      expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('hands an expired session (401 while using the app) to the global session handling', async () => {
+    let logoutRequests = 0;
+    apiClient.defaults.adapter = async (config) => {
+      if (config.url === '/auth/me') {
+        return response(config, authenticatedUser);
+      }
+
+      if (config.url === '/auth/logout') {
+        logoutRequests += 1;
+        return response(config, undefined, 204);
+      }
+
+      throw failedResponse(config, 401);
+    };
+
+    renderApp('/shopping-list');
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/login'));
+    expect(await screen.findByRole('heading', { name: /iniciá sesión/i })).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Goals' })).not.toBeInTheDocument();
+    await waitFor(() => expect(logoutRequests).toBe(1));
+  });
+});
+
+describe('App return to the landing (NUT-97)', () => {
+  it.each([['/login'], ['/register']])(
+    'lets an anonymous visitor go back from %s to the public landing',
+    async (authRoute) => {
+      const user = userEvent.setup();
+      apiClient.defaults.adapter = async (config) => {
+        throw failedResponse(config, 401);
+      };
+
+      renderApp(authRoute);
+
+      const home = await screen.findByRole('link', { name: 'NutrIA, ir al inicio' });
+      await user.click(home);
+
+      await waitFor(() => expect(screen.getByTestId('location-full').textContent).toBe('/'));
+      expect(await screen.findByRole('heading', {
+        level: 1,
+        name: 'Planificá tus comidas, recetas y compras en un solo lugar',
+      })).toBeVisible();
+    },
+  );
 });

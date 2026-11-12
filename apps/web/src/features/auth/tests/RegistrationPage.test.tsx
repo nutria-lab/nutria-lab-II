@@ -400,3 +400,16 @@ describe('RegistrationPage', () => {
     expect(window.location.pathname).not.toContain('clave-de-prueba');
   });
 });
+
+describe('RegistrationPage brand link (NUT-97)', () => {
+  it('makes the brand mark a link back to the public landing without changing the mark', () => {
+    renderRegistration();
+
+    const home = screen.getByRole('link', { name: 'NutrIA, ir al inicio' });
+    expect(home).toHaveAttribute('href', '/');
+    const wordmark = screen.getByRole('img', { name: 'NutrIA' });
+    expect(home).toContainElement(wordmark);
+    expect(wordmark.parentElement).toHaveClass('mb-6', 'flex', 'w-full', 'min-w-0', 'items-center', 'justify-center', 'gap-1');
+    expect(wordmark).toHaveClass('w-36');
+  });
+});
