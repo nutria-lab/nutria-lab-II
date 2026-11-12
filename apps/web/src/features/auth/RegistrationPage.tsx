@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import { BrandMark } from '../../common/components/BrandMark';
+import { AuthBrandLink } from './AuthBrandLink';
 import { RegisterRequestError, registerService, type RegisterErrorKind } from '../../services/registerService';
 import {
   MINIMUM_PASSWORD_LENGTH,
@@ -187,7 +187,7 @@ export function RegistrationPage() {
       <div className="relative w-full max-w-md rounded-2xl border border-outline-variant/30 bg-surface-container-low p-8 shadow-[0_4px_20px_rgba(46,50,48,0.08)]">
         {/* Brand */}
         <div className="mb-6 flex justify-center">
-          <BrandMark variant="auth" />
+          <AuthBrandLink />
         </div>
 
         <header className="mb-8 text-center">

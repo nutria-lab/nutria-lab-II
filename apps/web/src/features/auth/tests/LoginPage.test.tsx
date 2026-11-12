@@ -214,3 +214,33 @@ describe('LoginPage', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe('LoginPage brand link (NUT-97)', () => {
+  it('makes the brand mark a link back to the public landing without changing the mark', () => {
+    renderLogin(<LoginPage />);
+
+    const home = screen.getByRole('link', { name: 'NutrIA, ir al inicio' });
+    expect(home).toHaveAttribute('href', '/');
+    const wordmark = screen.getByRole('img', { name: 'NutrIA' });
+    expect(home).toContainElement(wordmark);
+    expect(wordmark.parentElement).toHaveClass('mb-6', 'flex', 'w-full', 'min-w-0', 'items-center', 'justify-center', 'gap-1');
+    expect(wordmark).toHaveClass('w-36');
+  });
+
+  it('keeps the brand link out of keyboard interaction while the session is being restored, like the other links', () => {
+    renderLogin(<LoginPage status="restoring" />);
+
+    const home = screen.getByRole('link', { name: 'NutrIA, ir al inicio' });
+    expect(home).toHaveAttribute('href', '/');
+    expect(home).toHaveAttribute('aria-disabled', 'true');
+    expect(home).toHaveAttribute('tabindex', '-1');
+  });
+
+  it('re-enables the brand link once the login form is interactive', () => {
+    renderLogin(<LoginPage status="idle" />);
+
+    const home = screen.getByRole('link', { name: 'NutrIA, ir al inicio' });
+    expect(home).not.toHaveAttribute('aria-disabled');
+    expect(home).not.toHaveAttribute('tabindex');
+  });
+});

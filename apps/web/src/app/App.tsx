@@ -5,6 +5,7 @@ import { PlaceholderPage } from '../common/components/PlaceholderPage';
 import { AuthProvider, useAuth } from '../features/auth/AuthProvider';
 import { AccessGateBoundary } from '../features/access/AccessGateBoundary';
 import { LoginPage, type LoginPageStatus, type LoginSubmission } from '../features/auth/LoginPage';
+import { resolvePostLoginDestination } from '../features/auth/postLoginDestination';
 import { RegistrationPage } from '../features/auth/RegistrationPage';
 import { DashboardPage } from '../modules/dashboard/pages/DashboardPage';
 import { LandingPage } from '../modules/landing/pages/LandingPage';
@@ -21,11 +22,9 @@ function LoginRoute() {
   const location = useLocation();
   const navigate = useNavigate();
   const [status, setStatus] = useState<LoginPageStatus>('idle');
-  const intendedPath = (location.state as { from?: { pathname?: string } } | null)
-    ?.from?.pathname;
-  const destination = intendedPath?.startsWith('/') && !intendedPath.startsWith('//')
-    ? intendedPath
-    : '/goals';
+  const destination = resolvePostLoginDestination(
+    (location.state as { from?: unknown } | null)?.from,
+  );
 
   if (authStatus === 'authenticated') return <Navigate replace to={destination} />;
 

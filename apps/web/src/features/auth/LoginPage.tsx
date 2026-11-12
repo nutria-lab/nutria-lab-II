@@ -1,7 +1,7 @@
 import { type FormEvent, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
-import { BrandMark } from '../../common/components/BrandMark';
+import { AuthBrandLink } from './AuthBrandLink';
 import { validateLoginFields, type LoginFieldErrors } from './validator/loginValidation';
 
 export type LoginPageStatus = 'idle' | 'restoring' | 'loading' | 'invalidCredentials' | 'networkError';
@@ -88,7 +88,7 @@ export function LoginPage({ status = 'idle', onSubmit, onCredentialsChange }: Lo
       >
         {/* Brand */}
         <div className="mb-6 flex justify-center">
-          <BrandMark variant="auth" />
+          <AuthBrandLink disabled={isRestoring} />
         </div>
 
         <header className="mb-8 text-center">

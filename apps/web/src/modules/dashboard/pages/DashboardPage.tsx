@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../features/auth/AuthProvider';
 import { DashboardView } from '../components/DashboardView';
 import { useDashboardData } from '../hooks/useDashboardData';
+import { useNoPlanActionTarget } from '../hooks/useNoPlanActionTarget';
 
 // Los fixtures de ?estado son solo de desarrollo. Se cargan con import() dinámico porque Vite
 // reemplaza import.meta.env.DEV por false en producción y elimina esta rama: ni el código ni los
@@ -48,6 +49,11 @@ export function DashboardPage() {
       : null;
   // Con un fixture válido el coordinador no pide nada; si no, desarrollo y producción usan datos reales.
   const liveViewModel = useDashboardData({ userId: user?.id ?? null, userName, enabled: fixture === null });
+  // Las preferencias solo se consultan con datos reales y cuando se confirmó que no hay plan.
+  const hasNoLivePlan = fixture === null
+    && liveViewModel.todayMeals.kind === 'ready'
+    && liveViewModel.todayMeals.data.kind === 'noPlan';
+  const noPlanActionTo = useNoPlanActionTarget(hasNoLivePlan);
 
-  return <DashboardView viewModel={fixture ?? liveViewModel} />;
+  return <DashboardView viewModel={fixture ?? liveViewModel} noPlanActionTo={noPlanActionTo} />;
 }

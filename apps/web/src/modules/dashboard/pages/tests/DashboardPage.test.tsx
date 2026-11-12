@@ -8,6 +8,10 @@ import { dashboardAdherenceService } from '@/modules/dashboard/services/dashboar
 import { dashboardShoppingService } from '@/modules/dashboard/services/dashboardShoppingService';
 import type { AuthenticatedUser } from '@/services/authService';
 import { mealPlanService, type MealPlan } from '@/services/mealPlanService';
+import {
+  NutritionProfileNotFoundError,
+  nutritionProfileService,
+} from '@/services/nutritionProfileService';
 
 vi.mock('@/services/mealPlanService', () => ({
   mealPlanService: { getCurrentMealPlan: vi.fn() },
@@ -18,10 +22,15 @@ vi.mock('@/modules/dashboard/services/dashboardAdherenceService', () => ({
 vi.mock('@/modules/dashboard/services/dashboardShoppingService', () => ({
   dashboardShoppingService: { getForWeek: vi.fn() },
 }));
+vi.mock('@/services/nutritionProfileService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/nutritionProfileService')>()),
+  nutritionProfileService: { getProfile: vi.fn(), updateProfile: vi.fn() },
+}));
 
 const getPlan = vi.mocked(mealPlanService.getCurrentMealPlan);
 const getAdherence = vi.mocked(dashboardAdherenceService.getForWeek);
 const getShopping = vi.mocked(dashboardShoppingService.getForWeek);
+const getProfile = vi.mocked(nutritionProfileService.getProfile);
 
 // Miércoles 21/10/2026 en Buenos Aires.
 const NOW = new Date('2026-10-21T15:00:00.000Z');
@@ -143,6 +152,8 @@ beforeEach(() => {
   getPlan.mockReset();
   getAdherence.mockReset();
   getShopping.mockReset();
+  getProfile.mockReset();
+  getProfile.mockResolvedValue({ goal: 'MAINTAIN', diet: 'ALL', excludedIngredients: [], cookTimePreference: 'STANDARD' });
   mockLiveData();
 });
 
@@ -409,5 +420,105 @@ describe('DashboardPage greeting without a name', () => {
     renderPage('/dashboard?estado=comidas');
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/^Hola$/);
+  });
+});
+
+describe('DashboardPage no-plan CTA and preferences (NUT-97)', () => {
+  const NO_PLAN_CTA = 'Ir a mi plan';
+
+  beforeEach(() => {
+    vi.stubEnv('DEV', false);
+    getPlan.mockResolvedValue(null);
+    getAdherence.mockResolvedValue({
+      weekStart: WEEK,
+      timezone: 'America/Argentina/Buenos_Aires',
+      today: TODAY,
+      plan: null,
+      days: [],
+      summary: { plannedMeals: 0, completedMeals: 0, skippedMeals: 0, notLoggedMeals: 0, adherencePercent: null },
+    });
+    getShopping.mockResolvedValue({ weekStart: WEEK, plan: null, summary: { totalItems: 0, checkedItems: 0 } });
+  });
+
+  async function findNoPlanCta() {
+    const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+    expect(await within(meals).findByText(NO_PLAN)).toBeVisible();
+    return within(meals).getByRole('link', { name: NO_PLAN_CTA });
+  }
+
+  it('keeps the CTA on /meal-plan when the person already has preferences', async () => {
+    renderPage('/dashboard');
+
+    const cta = await findNoPlanCta();
+    await waitFor(() => expect(getProfile).toHaveBeenCalledTimes(1));
+    expect(cta).toHaveAttribute('href', '/meal-plan');
+  });
+
+  it('sends the CTA to /goals when the person has no preferences yet', async () => {
+    getProfile.mockRejectedValue(new NutritionProfileNotFoundError());
+    renderPage('/dashboard');
+
+    await findNoPlanCta();
+    await waitFor(() => expect(screen.getByRole('link', { name: NO_PLAN_CTA })).toHaveAttribute('href', '/goals'));
+  });
+
+  it('keeps the CTA on /meal-plan while the preferences are loading', async () => {
+    getProfile.mockReturnValue(new Promise(() => {}));
+    renderPage('/dashboard');
+
+    const cta = await findNoPlanCta();
+    expect(getProfile).toHaveBeenCalledTimes(1);
+    expect(cta).toHaveAttribute('href', '/meal-plan');
+  });
+
+  it('keeps the CTA on /meal-plan and the rest of the dashboard when /nutrition-profile fails', async () => {
+    getProfile.mockRejectedValue(new Error('Network Error'));
+    renderPage('/dashboard');
+
+    const cta = await findNoPlanCta();
+    await waitFor(() => expect(getProfile).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(cta).toHaveAttribute('href', '/meal-plan');
+    expect(screen.getByRole('region', { name: 'Progreso de la semana' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 1, name: 'Hola, María' })).toBeVisible();
+  });
+
+  it('does not change the CTA label', async () => {
+    getProfile.mockRejectedValue(new NutritionProfileNotFoundError());
+    renderPage('/dashboard');
+
+    await findNoPlanCta();
+    await waitFor(() => expect(screen.getByRole('link', { name: NO_PLAN_CTA })).toHaveAttribute('href', '/goals'));
+    expect(screen.getByRole('link', { name: NO_PLAN_CTA })).toHaveTextContent(/^Ir a mi plan$/);
+  });
+
+  it('does not ask for the preferences when the person already has a plan', async () => {
+    mockLiveData();
+    renderPage('/dashboard');
+
+    await expectLiveData();
+    expect(getProfile).not.toHaveBeenCalled();
+  });
+
+  it('does not ask for the preferences while the plan is still loading', () => {
+    getPlan.mockReturnValue(new Promise(() => {}));
+    renderPage('/dashboard');
+
+    expect(getProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe('DashboardPage no-plan fixture (NUT-97)', () => {
+  beforeEach(() => {
+    vi.stubEnv('DEV', true);
+  });
+
+  it('?estado=sin-plan keeps the CTA on /meal-plan and requests no preferences', () => {
+    renderPage('/dashboard?estado=sin-plan');
+
+    const meals = screen.getByRole('region', { name: 'Comidas de hoy' });
+    expect(within(meals).getByText(NO_PLAN)).toBeVisible();
+    expect(within(meals).getByRole('link', { name: 'Ir a mi plan' })).toHaveAttribute('href', '/meal-plan');
+    expect(getProfile).not.toHaveBeenCalled();
   });
 });
