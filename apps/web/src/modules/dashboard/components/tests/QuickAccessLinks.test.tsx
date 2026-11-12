@@ -75,3 +75,16 @@ describe('QuickAccessLinks — shopping progress (contract C)', () => {
     expect(screen.getByRole('link', { name: /Explorar recetas/ })).toHaveAttribute('href', '/recipes');
   });
 });
+
+// Desde md el sidebar ocupa 240px: tres columnas solo dejan ancho suficiente para el texto desde xl.
+describe('QuickAccessLinks — responsive layout', () => {
+  it('stacks the quick-access cards below xl and uses three columns from xl', () => {
+    renderLinks({ kind: 'loading' });
+    const list = screen.getByRole('list');
+
+    expect(list).toHaveClass('grid', 'xl:grid-cols-3');
+    // Ninguna grilla de varias columnas antes de xl (sin prefijo, sm, md ni lg).
+    const multiColumnBeforeXl = [...list.classList].filter((name) => /^(?:(?:sm|md|lg):)?grid-cols-(?!1$)/.test(name));
+    expect(multiColumnBeforeXl).toEqual([]);
+  });
+});
