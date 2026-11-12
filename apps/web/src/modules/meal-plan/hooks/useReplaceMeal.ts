@@ -9,6 +9,8 @@ export type ReplaceMealError = {
   originalMeal: PlannedMeal;
 };
 
+export const REPLACE_MEAL_ERROR_MESSAGE = 'No pudimos reemplazar la comida. Podés reintentar o cancelar.';
+
 type UseReplaceMealOptions = {
   onSuccess?: (updatedMeal: PlannedMeal, previousMeal: PlannedMeal) => void;
   onError?: (error: ReplaceMealError) => void;
@@ -79,13 +81,11 @@ export function useReplaceMeal(options: UseReplaceMealOptions = {}) {
       } catch (err) {
         setReplacingMealId(null);
 
+        // Texto fijo: nunca se muestra el mensaje técnico del backend o del cliente HTTP.
         const errorPayload: ReplaceMealError = {
           mealId: meal.id,
           mealTitle: meal.recipe?.title ?? meal.title,
-          message:
-            err instanceof Error && err.message
-              ? err.message
-              : 'No pudimos reemplazar la comida. Podés reintentar o cancelar.',
+          message: REPLACE_MEAL_ERROR_MESSAGE,
           idempotencyKey,
           originalMeal: meal,
         };
@@ -141,6 +141,5 @@ export function useReplaceMeal(options: UseReplaceMealOptions = {}) {
     replaceMeal,
     retryReplace,
     cancelReplaceError,
-    isSubmitting: inFlightRef.current,
   };
 }
