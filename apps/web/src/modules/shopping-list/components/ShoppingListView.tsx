@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { ShoppingListItemError, ShoppingListResponse } from "../types";
 import { formatWeekRange, shiftWeekStart } from "../utils";
@@ -5,6 +6,8 @@ import { ShoppingListItem } from "./ShoppingListItem";
 
 export type ShoppingListViewState =
   "loading" | "success" | "error" | "session-expired";
+
+const ITEMS_PER_PAGE = 10;
 
 type ShoppingListViewProps = {
   state: ShoppingListViewState;
@@ -47,8 +50,8 @@ function WarningMessages({ response }: { response: ShoppingListResponse }) {
         {invalidIngredientCount > 0 && (
           <li>
             {invalidIngredientCount === 1
-              ? "Un ingrediente tiene datos que no se pudieron incluir."
-              : `${invalidIngredientCount} ingredientes tienen datos que no se pudieron incluir.`}
+              ? "Un ingrediente tiene la unidad o la cantidad incompleta."
+              : `${invalidIngredientCount} ingredientes tienen la unidad o la cantidad incompleta.`} Los valores que se pueden calcular siguen en la lista.
           </li>
         )}
       </ul>
@@ -81,37 +84,60 @@ export function ShoppingListView({
   onSetChecked,
   onRetryItem = () => undefined,
 }: ShoppingListViewProps) {
+  const [pageIndex, setPageIndex] = useState(0);
   const checkedItems =
     response?.items.filter((item) => item.checked).length ?? 0;
   const totalItems = response?.items.length ?? 0;
+  const pageCount = Math.ceil(totalItems / ITEMS_PER_PAGE);
+  const activePageIndex = Math.min(pageIndex, Math.max(pageCount - 1, 0));
+  const firstVisibleItem = activePageIndex * ITEMS_PER_PAGE;
+  const pageItems =
+    response?.items.slice(firstVisibleItem, firstVisibleItem + ITEMS_PER_PAGE) ??
+    [];
+  const lastVisibleItem = Math.min(firstVisibleItem + ITEMS_PER_PAGE, totalItems);
   const progress =
     totalItems === 0 ? 0 : Math.round((checkedItems / totalItems) * 100);
   const isNoPlan = response?.plan === null;
   const isEmptyPlan =
     response?.plan !== null && response !== undefined && totalItems === 0;
 
+  useEffect(() => {
+    setPageIndex(0);
+  }, [weekStart, response?.plan?.id, response?.plan?.updatedAt]);
+
   return (
     <main
-      className="mx-auto w-full max-w-6xl min-w-0 px-4 py-7 sm:px-6 sm:py-10 lg:px-8"
+      className="mx-auto w-full max-w-6xl min-w-0 px-4 py-6 sm:px-6 sm:py-9 lg:px-8"
       aria-busy={state === "loading"}
     >
-      <header className="mb-7 flex flex-col gap-5 sm:mb-9 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-2 text-sm font-semibold uppercase tracking-[0.12em] text-brand-green">
-            Tu semana, más simple
-          </p>
-          <h1 className="font-headline text-3xl font-bold text-on-surface sm:text-4xl">
-            Lista de compras
-          </h1>
-          <p className="mt-2 max-w-2xl text-base leading-7 text-on-surface-variant">
-            Productos de tu plan semanal, en el orden recibido.
-          </p>
+      <header className="mb-6 flex flex-col gap-4 rounded-[2rem] border border-outline-variant/35 bg-gradient-to-br from-primary-fixed via-white to-secondary-fixed/40 p-5 shadow-sm sm:mb-8 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+        <div className="flex min-w-0 items-start gap-4">
+          <span aria-hidden="true" className="grid size-12 shrink-0 place-items-center rounded-2xl bg-brand-green text-white shadow-sm sm:size-14">
+            <span className="material-symbols-outlined text-2xl">shopping_basket</span>
+          </span>
+          <div className="min-w-0">
+            <p className="mb-1 text-xs font-bold uppercase tracking-[0.14em] text-brand-green">
+              Tu semana, más simple
+            </p>
+            <h1 className="font-headline text-3xl font-bold leading-tight text-on-surface sm:text-4xl">
+              Lista de compras
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-on-surface-variant sm:text-base sm:leading-7">
+              Ingredientes de tu plan, consolidados para ir al súper.
+            </p>
+          </div>
         </div>
+        {totalItems > 0 && (
+          <span className="inline-flex min-h-10 w-fit items-center gap-2 rounded-full border border-outline-variant/30 bg-white/80 px-4 text-sm font-semibold text-on-surface-variant">
+            <span aria-hidden="true" className="material-symbols-outlined text-lg text-brand-green">format_list_bulleted</span>
+            {totalItems} {totalItems === 1 ? "producto" : "productos"}
+          </span>
+        )}
       </header>
 
       <section
         aria-label="Semana seleccionada"
-        className="mb-5 flex items-center justify-between gap-3 rounded-2xl bg-white/80 p-3 shadow-sm sm:mb-7 sm:px-5"
+        className="mb-5 flex items-center justify-between gap-3 rounded-2xl border border-outline-variant/30 bg-white/85 p-3 shadow-sm sm:mb-7 sm:px-5"
       >
         <button
           aria-label="Semana anterior"
@@ -215,7 +241,7 @@ export function ShoppingListView({
               <aside className="space-y-5">
                 <section
                   aria-labelledby="shopping-progress-heading"
-                  className="min-h-36 rounded-3xl bg-primary-fixed p-5 sm:p-6"
+                  className="min-h-36 rounded-3xl border border-primary-container/40 bg-primary-fixed p-5 shadow-sm sm:p-6"
                 >
                   <h2
                     className="text-sm font-bold uppercase tracking-[0.12em] text-brand-green"
@@ -268,6 +294,12 @@ export function ShoppingListView({
                 )}
               </aside>
               <section aria-label="Productos de la lista" className="min-w-0">
+                {totalItems > 0 && (
+                  <div className="mb-3 px-1">
+                    <h2 className="font-headline text-xl font-bold text-on-surface">Ingredientes</h2>
+                    <p className="mt-1 text-sm text-on-surface-variant">Marcá lo que ya pusiste en el carrito.</p>
+                  </div>
+                )}
                 {totalItems === 0 ? (
                   !isEmptyPlan && (
                     <p className="rounded-3xl bg-white p-6 text-on-surface-variant shadow-sm">
@@ -276,7 +308,7 @@ export function ShoppingListView({
                   )
                 ) : (
                   <ul aria-label="Ingredientes" className="space-y-3">
-                    {response.items.map((item) => (
+                    {pageItems.map((item) => (
                       <ShoppingListItem
                         key={item.key}
                         item={item}
@@ -288,6 +320,45 @@ export function ShoppingListView({
                       />
                     ))}
                   </ul>
+                )}
+                {pageCount > 1 && (
+                  <nav
+                    aria-label="Paginación de ingredientes"
+                    className="mt-4 flex items-center justify-between gap-2 rounded-2xl border border-outline-variant/30 bg-white/85 p-2 shadow-sm sm:p-3"
+                  >
+                    <button
+                      aria-label="Página anterior de ingredientes"
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-outline-variant/35 bg-white px-2.5 text-sm font-semibold text-brand-green transition-colors hover:bg-primary-fixed/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green disabled:cursor-not-allowed disabled:opacity-45 sm:gap-2 sm:px-4"
+                      disabled={activePageIndex === 0}
+                      onClick={() => setPageIndex(Math.max(0, activePageIndex - 1))}
+                      type="button"
+                    >
+                      <span aria-hidden="true" className="material-symbols-outlined text-lg">arrow_back</span>
+                      Anterior
+                    </button>
+                    <p
+                      aria-atomic="true"
+                      aria-live="polite"
+                      className="min-w-0 text-center text-xs text-on-surface-variant sm:text-sm"
+                    >
+                      <span className="block font-semibold text-on-surface">
+                        Página {activePageIndex + 1} de {pageCount}
+                      </span>
+                      <span className="block">
+                        {firstVisibleItem + 1}–{lastVisibleItem} de {totalItems}
+                      </span>
+                    </p>
+                    <button
+                      aria-label="Página siguiente de ingredientes"
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-outline-variant/35 bg-white px-2.5 text-sm font-semibold text-brand-green transition-colors hover:bg-primary-fixed/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-green disabled:cursor-not-allowed disabled:opacity-45 sm:gap-2 sm:px-4"
+                      disabled={activePageIndex >= pageCount - 1}
+                      onClick={() => setPageIndex(Math.min(pageCount - 1, activePageIndex + 1))}
+                      type="button"
+                    >
+                      Siguiente
+                      <span aria-hidden="true" className="material-symbols-outlined text-lg">arrow_forward</span>
+                    </button>
+                  </nav>
                 )}
               </section>
             </div>
