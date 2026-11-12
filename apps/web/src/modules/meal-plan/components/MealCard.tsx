@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Meal } from '../../../services/mealPlanService';
 import { MEAL_TYPE_LABELS, formatIngredient } from '../utils';
 import { MealCardErrorBanner } from './MealCardErrorBanner';
@@ -39,6 +39,13 @@ type MealCardProps = {
   isReplacing?: boolean;
   replaceError?: MealCardReplaceError | null;
   adherence?: MealAdherenceControlProps;
+  /**
+   * Solo en la variante compacta (escritorio). Al empezar un reemplazo el botón de cambio queda
+   * deshabilitado, así que el foco pasa a la tarjeta; al terminar (éxito o error) o al descartar
+   * el error, vuelve al botón, salvo que el usuario lo haya llevado a otro lugar. Reacciona solo
+   * a transiciones, nunca al montar.
+   */
+  manageReplaceFocus?: boolean;
 };
 
 export function MealCard({
@@ -49,10 +56,36 @@ export function MealCard({
   isReplacing = false,
   replaceError = null,
   adherence,
+  manageReplaceFocus = false,
 }: MealCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isConfirmingMobile, setIsConfirmingMobile] = useState(false);
+  const articleRef = useRef<HTMLElement>(null);
+  const replaceButtonRef = useRef<HTMLButtonElement>(null);
   const { recipe } = meal;
+  const hasReplaceError = replaceError !== null;
+  const wasReplacingRef = useRef(isReplacing);
+  const hadReplaceErrorRef = useRef(hasReplaceError);
+
+  useEffect(() => {
+    const wasReplacing = wasReplacingRef.current;
+    const hadReplaceError = hadReplaceErrorRef.current;
+    wasReplacingRef.current = isReplacing;
+    hadReplaceErrorRef.current = hasReplaceError;
+    if (!compact || !manageReplaceFocus) return;
+
+    if (isReplacing && !wasReplacing) {
+      articleRef.current?.focus();
+      return;
+    }
+    const finished = wasReplacing && !isReplacing;
+    const errorDismissed = hadReplaceError && !hasReplaceError && !isReplacing;
+    if (!finished && !errorDismissed) return;
+    const active = document.activeElement;
+    if (active === articleRef.current || active === null || active === document.body) {
+      replaceButtonRef.current?.focus();
+    }
+  }, [compact, manageReplaceFocus, isReplacing, hasReplaceError]);
 
   const totalMinutes = recipe
     ? (recipe.prepMinutes ?? 0) + (recipe.cookMinutes ?? 0) || null
@@ -71,14 +104,17 @@ export function MealCard({
   if (compact) {
     return (
       <article
+        ref={articleRef}
+        tabIndex={-1}
         aria-busy={isReplacing || adherence?.pending}
-        className="relative flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all"
+        className="relative flex flex-col gap-2 rounded-xl bg-white p-2.5 shadow-sm border border-outline-variant/30 hover:border-brand-green/30 transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-green"
       >
         {isReplacing && <MealCardLoadingOverlay compact />}
 
         <div className="flex items-center justify-between">
           <MealTypeBadge mealType={meal.mealType} />
           <button
+            ref={replaceButtonRef}
             type="button"
             disabled={isReplacing || adherence?.pending}
             aria-label={`Cambiar comida ${recipe?.title ?? ''}`.trim()}

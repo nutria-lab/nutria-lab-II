@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Banner } from '../../../common/components/Banner';
 import { getCurrentDateInBuenosAires } from '../../../common/utils/calendar';
@@ -7,6 +7,7 @@ import { useReplaceMeal } from '../hooks/useReplaceMeal';
 import { WeekSelector } from '../components/WeekSelector';
 import { MealCard } from '../components/MealCard';
 import { RegenerateWeekDialog } from '../components/RegenerateWeekDialog';
+import { ReplaceMealModal } from '../components/ReplaceMealModal';
 import { ScreenReaderAnnouncer } from '../components/ScreenReaderAnnouncer';
 import type { Meal } from '../../../services/mealPlanService';
 import type { MealAdherenceControlProps } from '../../adherence';
@@ -95,6 +96,8 @@ export function MealPlanPage() {
 
   const [announcement, setAnnouncement] = useState('');
   const [modalMeal, setModalMeal] = useState<Meal | null>(null);
+  // Comida cuyo reemplazo se confirmó desde la grilla de escritorio: su tarjeta maneja el foco.
+  const [desktopReplaceMealId, setDesktopReplaceMealId] = useState<string | null>(null);
 
   const adherenceMatchesPlan = Boolean(
     mealPlan &&
@@ -120,21 +123,20 @@ export function MealPlanPage() {
     replaceMeal,
     retryReplace,
     cancelReplaceError,
-    isSubmitting,
   } = useReplaceMeal({
     onSuccess: (updatedMeal, previousMeal) => {
       updateMeal(updatedMeal);
-      setModalMeal(null);
       void adherence.reload();
       const prevTitle = previousMeal.recipe?.title ?? previousMeal.title;
       const newTitle = updatedMeal.recipe?.title ?? updatedMeal.title;
       setAnnouncement(`${prevTitle} reemplazado por ${newTitle}.`);
     },
     onError: (err) => {
-      setModalMeal(null);
       setAnnouncement(`Error al reemplazar ${err.mealTitle}. Podés reintentar o cancelar.`);
     },
   });
+
+  const handleCancelDesktopModal = useCallback(() => setModalMeal(null), []);
 
   const dayParam = searchParams.get('day');
   const todayKey = getCurrentDateInBuenosAires();
@@ -183,14 +185,35 @@ export function MealPlanPage() {
     if (!mealPlan) return;
     const title = meal.recipe?.title ?? meal.title;
     setAnnouncement(`Reemplazando ${title}...`);
+    setDesktopReplaceMealId(null);
     replaceMeal(mealPlan.id, meal);
   }
 
+  // Si el plan cambia con el diálogo abierto (p. ej. termina una regeneración) y la comida ya
+  // no existe, el diálogo se cierra: nunca se confirma un reemplazo sobre otra versión del plan.
+  const activeModalMeal =
+    modalMeal && mealPlan?.days.some((day) => day.meals.some((meal) => meal.id === modalMeal.id))
+      ? modalMeal
+      : null;
+
+  // El diálogo se cierra al confirmar: durante la carga solo queda bloqueada la tarjeta.
   function handleConfirmDesktopModal() {
-    if (!mealPlan || !modalMeal) return;
-    const title = modalMeal.recipe?.title ?? modalMeal.title;
+    if (!mealPlan || !activeModalMeal || replacingMealId !== null) return;
+    const title = activeModalMeal.recipe?.title ?? activeModalMeal.title;
     setAnnouncement(`Reemplazando ${title}...`);
-    replaceMeal(mealPlan.id, modalMeal);
+    setDesktopReplaceMealId(activeModalMeal.id);
+    setModalMeal(null);
+    replaceMeal(mealPlan.id, activeModalMeal);
+  }
+
+  function handleRetryFromDesktop(mealId: string) {
+    setDesktopReplaceMealId(mealId);
+    void retryReplace();
+  }
+
+  function handleRetryFromMobile() {
+    setDesktopReplaceMealId(null);
+    void retryReplace();
   }
 
   if (status === 'loading' && !mealPlan) return <LoadingSkeleton />;
@@ -292,7 +315,7 @@ export function MealPlanPage() {
                 replaceError && replaceError.mealId === meal.id
                   ? {
                       message: replaceError.message,
-                      onRetry: retryReplace,
+                      onRetry: handleRetryFromMobile,
                       onCancel: cancelReplaceError,
                     }
                   : null
@@ -335,12 +358,13 @@ export function MealPlanPage() {
                       onReplace={(m) => setModalMeal(m)}
                       onSwap={(m) => setModalMeal(m)}
                       isReplacing={replacingMealId === meal.id}
+                      manageReplaceFocus={desktopReplaceMealId === meal.id}
                       adherence={getAdherenceControl(meal)}
                       replaceError={
                         replaceError && replaceError.mealId === meal.id
                           ? {
                               message: replaceError.message,
-                              onRetry: retryReplace,
+                              onRetry: () => handleRetryFromDesktop(meal.id),
                               onCancel: cancelReplaceError,
                             }
                           : null
@@ -364,6 +388,14 @@ export function MealPlanPage() {
         onCancel={handleCloseRegeneration}
         onConfirm={handleConfirmRegeneration}
         onRetry={handleRetryRegeneration}
+      />
+      {/* El hook admite un solo reemplazo a la vez; el bloqueo se deriva de replacingMealId. */}
+      <ReplaceMealModal
+        isOpen={activeModalMeal !== null}
+        meal={activeModalMeal}
+        onConfirm={handleConfirmDesktopModal}
+        onCancel={handleCancelDesktopModal}
+        isConfirmBlocked={replacingMealId !== null}
       />
 
     </main>
