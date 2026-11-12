@@ -1,17 +1,19 @@
-import { 
-  PrismaClient, 
-  NutritionGoal, 
-  Diet, 
-  DietaryRestriction, 
-  CookTimePreference, 
-  DayOfWeek, 
+import {
+  PrismaClient,
+  NutritionGoal,
+  Diet,
+  DietaryRestriction,
+  CookTimePreference,
+  DayOfWeek,
   MealType,
-  IngredientType
 } from '../src/generated/prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as dotenv from 'dotenv';
+import { SeedGuardError, SeedTarget, assertSeedTarget } from './synthetic/guard';
+import { MAX_SYNTHETIC_USERS, generateSyntheticDataset } from './synthetic/generate';
+import { SeedPhaseError, loadSynthetic } from './synthetic/load';
 
 dotenv.config();
 
@@ -24,35 +26,38 @@ export {
 } from '../src/prisma/seed-data';
 import { seedBaseData } from '../src/prisma/seed-data';
 
-function getPrismaClient() {
-  const connectionString = process.env.DATABASE_URL;
-  const pool = new Pool({ connectionString });
-  const adapter = new PrismaPg(pool);
-  const prisma = new PrismaClient({ adapter });
-  return { prisma, pool };
+const SUCCESS_LINE = 'Seeding completado con exito.';
+const DEFAULT_BATCH_SIZE = 1000;
+
+export interface SeedDeps {
+  /** Única fuente de configuración: nunca se lee process.env dentro de runSeed. */
+  env: Record<string, string | undefined>;
+  createClient: () => { prisma: any; close(): Promise<void> };
+  now: () => Date;
+  log: (line: string) => void;
+  /** Solo para SEED_DEMO_PASSWORD, una vez. */
+  hashPassword: (plain: string) => Promise<string>;
 }
 
-async function main() {
-  console.log('Iniciando el proceso de seeding...\n');
-  const { prisma, pool } = getPrismaClient();
+export interface SeedResult {
+  exitCode: 0 | 1;
+  summary: string;
+}
 
-  try {
-    // ---------------------------------------------------------------------------
-    // 1. INGREDIENTES Y RECETAS (Datos base)
-    // ---------------------------------------------------------------------------
-    console.log('Procesando ingredientes y recetas base...');
-    const { recipePollo } = await seedBaseData(prisma);
+// ---------------------------------------------------------------------------
+// Datos base: ingredientes, receta, usuario.prueba1-3 y su plan de la semana.
+// ---------------------------------------------------------------------------
+async function seedBaseUsersAndPlans(prisma: any, log: (line: string) => void): Promise<void> {
+  log('Procesando ingredientes y recetas base...');
+  const { recipePollo } = await seedBaseData(prisma);
 
-  // ---------------------------------------------------------------------------
-  // 2. CREACION DE USUARIOS
-  // ---------------------------------------------------------------------------
-  console.log('Procesando usuarios...');
-  
+  log('Procesando usuarios...');
+
   const defaultPasswordHash = await bcrypt.hash('password123', 10);
 
   const usersToSeed = [
-    { 
-      email: 'usuario.prueba1@nutria.com', 
+    {
+      email: 'usuario.prueba1@nutria.com',
       name: 'Usuario Prueba 1',
       profile: {
         goal: NutritionGoal.LOSE_WEIGHT,
@@ -61,8 +66,8 @@ async function main() {
         cookTimePreference: CookTimePreference.STANDARD
       }
     },
-    { 
-      email: 'usuario.prueba2@nutria.com', 
+    {
+      email: 'usuario.prueba2@nutria.com',
       name: 'Usuario Prueba 2',
       profile: {
         goal: NutritionGoal.GAIN_MUSCLE,
@@ -71,8 +76,8 @@ async function main() {
         cookTimePreference: CookTimePreference.QUICK
       }
     },
-    { 
-      email: 'usuario.prueba3@nutria.com', 
+    {
+      email: 'usuario.prueba3@nutria.com',
       name: 'Usuario Prueba 3',
       profile: {
         goal: NutritionGoal.MAINTAIN,
@@ -84,22 +89,22 @@ async function main() {
   ];
 
   for (const userData of usersToSeed) {
-    // 2.1 Usuario
+    // Usuario
     const user = await prisma.user.upsert({
       where: { email: userData.email },
       update: {
         name: userData.name,
         passwordHash: defaultPasswordHash
-      }, 
+      },
       create: {
         email: userData.email,
         name: userData.name,
         passwordHash: defaultPasswordHash
       },
     });
-    console.log(`Usuario asegurado: ${user.email}`);
+    log(`Usuario asegurado: ${user.email}`);
 
-    // 2.2 Perfil Nutricional
+    // Perfil Nutricional
     await prisma.nutritionProfile.upsert({
       where: { userId: user.id },
       update: {
@@ -117,7 +122,7 @@ async function main() {
       }
     });
 
-    // 2.3 Plan Alimentario (Semanal)
+    // Plan Alimentario (Semanal)
     // Normalizar a medianoche UTC de la semana actual (Lunes)
     const now = new Date();
     const utcDay = now.getUTCDay();
@@ -146,17 +151,17 @@ async function main() {
     });
 
     const daysOfWeek = [
-      DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY, 
+      DayOfWeek.MONDAY, DayOfWeek.TUESDAY, DayOfWeek.WEDNESDAY,
       DayOfWeek.THURSDAY, DayOfWeek.FRIDAY, DayOfWeek.SATURDAY, DayOfWeek.SUNDAY
     ];
 
     const almuerzos = [
-      'Pollo con Arroz', 'Ensalada Cesar', 'Tacos de Pescado', 
+      'Pollo con Arroz', 'Ensalada Cesar', 'Tacos de Pescado',
       'Pasta al Pesto', 'Wrap de Atun', 'Hamburguesa de Lentejas', 'Salteado de Tofu'
     ];
-    
+
     const cenas = [
-      'Sopa de Verduras', 'Pescado a la Plancha', 'Tortilla de Espinacas', 
+      'Sopa de Verduras', 'Pescado a la Plancha', 'Tortilla de Espinacas',
       'Pizza Integral', 'Pollo al Horno', 'Bowl de Quinoa', 'Cena Ligera'
     ];
 
@@ -187,17 +192,100 @@ async function main() {
       });
     }
   }
+}
 
-    console.log('\nSeeding completado con exito.');
+function parseVolume(raw: string | undefined, fallback: number, name: string, max?: number): number {
+  const value = raw === undefined || raw === '' ? fallback : Number(raw);
+  if (!Number.isInteger(value) || value < 1 || (max !== undefined && value > max)) {
+    throw new RangeError(`${name} debe ser un entero entre 1 y ${max ?? 'un valor positivo'}.`);
+  }
+  return value;
+}
+
+/** Mensaje seguro para el resumen: nunca el texto de un error desconocido (podría traer credenciales). */
+function describeError(error: unknown): string {
+  if (error instanceof SeedGuardError || error instanceof SeedPhaseError || error instanceof RangeError) return error.message;
+  const code = typeof error === 'object' && error !== null && 'code' in error ? ` (código ${String((error as { code: unknown }).code)})` : '';
+  return `error inesperado${code}.`;
+}
+
+export async function runSeed(deps: SeedDeps): Promise<SeedResult> {
+  const { env, log } = deps;
+  log('Iniciando el proceso de seeding...');
+
+  let target: SeedTarget;
+  try {
+    target = assertSeedTarget(env);
+  } catch (error) {
+    return { exitCode: 1, summary: `Seed bloqueado antes de escribir: ${describeError(error)}` };
+  }
+  log(`Destino permitido: ${target.maskedHost}/${target.database}`);
+
+  let client: { prisma: any; close(): Promise<void> } | undefined;
+  try {
+    client = deps.createClient();
+    await seedBaseUsersAndPlans(client.prisma, log);
+
+    if (!target.synthetic) {
+      return { exitCode: 0, summary: SUCCESS_LINE };
+    }
+
+    const users = parseVolume(env.SEED_SYNTHETIC_USERS, MAX_SYNTHETIC_USERS, 'SEED_SYNTHETIC_USERS', MAX_SYNTHETIC_USERS);
+    const batchSize = parseVolume(env.SEED_BATCH_SIZE, DEFAULT_BATCH_SIZE, 'SEED_BATCH_SIZE');
+    const now = deps.now();
+    log(`Datos sintéticos: ${users} usuarios, lotes de ${batchSize}.`);
+    const demoPasswordHash = await deps.hashPassword(env.SEED_DEMO_PASSWORD!);
+    const dataset = generateSyntheticDataset({ users, demoPasswordHash, now });
+    const startedAt = Date.now();
+    const report = await loadSynthetic(client.prisma, { dataset, now, batchSize, log });
+    const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const counts = Object.entries(report.bulk.counts).map(([table, n]) => `${table}=${n}`).join(', ');
+
+    if (!report.currentWeek.ok) {
+      return {
+        exitCode: 1,
+        summary: `carga masiva OK, current-week FALLÓ (${seconds} s). Conteos: ${counts}. ${report.currentWeek.error.message}`,
+      };
+    }
+    const week = report.currentWeek.counts;
+    return {
+      exitCode: 0,
+      summary: `carga masiva OK, current-week OK (${seconds} s). Conteos: ${counts}. Semana actual de 00001: `
+        + `${week.completions} marcas, ${week.shoppingChecks} ítems de compra. ${SUCCESS_LINE}`,
+    };
+  } catch (error) {
+    return { exitCode: 1, summary: `Seed FALLÓ: ${describeError(error)}` };
   } finally {
-    await prisma.$disconnect();
-    await pool.end();
+    await client?.close().catch(() => undefined);
   }
 }
 
+function createRealClient(env: Record<string, string | undefined>) {
+  const pool = new Pool({ connectionString: env.DATABASE_URL });
+  const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
+  return {
+    prisma,
+    async close() {
+      await prisma.$disconnect();
+      await pool.end();
+    },
+  };
+}
+
 if (process.env.NODE_ENV !== 'test') {
-  main().catch((e) => {
-    console.error('Ocurrio un error durante el seeding:\n', e);
-    process.exit(1);
+  const env = { ...process.env };
+  runSeed({
+    env,
+    createClient: () => createRealClient(env),
+    now: () => new Date(),
+    log: (line) => console.log(line),
+    hashPassword: (plain) => bcrypt.hash(plain, 10),
+  }).then(({ exitCode, summary }) => {
+    (exitCode === 0 ? console.log : console.error)(summary);
+    process.exitCode = exitCode;
+  }).catch(() => {
+    // runSeed no lanza por contrato; si algo escapa, no se imprime su texto (podría incluir credenciales).
+    console.error('Seed FALLÓ: error inesperado.');
+    process.exitCode = 1;
   });
 }

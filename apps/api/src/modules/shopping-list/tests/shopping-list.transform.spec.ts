@@ -95,7 +95,7 @@ describe('transformShoppingList', () => {
     expect(response.warnings).toEqual([]);
   });
 
-  it('rejects prototype property unit keys and keeps each contribution isolated by source', () => {
+  it('does not accept prototype property unit aliases and retains sources when aggregating null-unit items', () => {
     const response = transformShoppingList('2026-10-19', plan([
       meal('meal-1', 'recipe-1', [
         { name: 'Sal', quantity: 5, unit: 'constructor' },
@@ -104,23 +104,33 @@ describe('transformShoppingList', () => {
       ]),
     ]));
 
-    expect(response.items).toHaveLength(3);
-    expect(response.items.every((item) => item.name === 'sal' && item.quantity === 5 && item.unit === null)).toBe(true);
-    expect(response.items.every((item) => item.sources.length === 1)).toBe(true);
-    expect(response.items.flatMap((item) => item.sources.map((source) => source.ingredientIndex)).sort())
-      .toEqual([0, 1, 2]);
-    expect(response.items.flatMap((item) => item.sources))
-      .toEqual(expect.arrayContaining([
-        { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 0, quantity: 5, unit: null },
-        { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 1, quantity: 5, unit: null },
-        { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 2, quantity: 5, unit: null },
-      ]));
+    expect(response.items).toHaveLength(1);
+    expect(response.items[0]).toMatchObject({ name: 'sal', quantity: 15, unit: null });
+    expect(response.items[0].sources.map((source) => source.ingredientIndex)).toEqual([0, 1, 2]);
+    expect(response.items[0].sources).toEqual([
+      { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 0, quantity: 5, unit: null },
+      { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 1, quantity: 5, unit: null },
+      { plannedMealId: 'meal-1', recipeId: 'recipe-1', ingredientIndex: 2, quantity: 5, unit: null },
+    ]);
     expect(response.warnings).toEqual([
       { code: 'INVALID_INGREDIENT', plannedMealId: 'meal-1', ingredientIndex: 0 },
       { code: 'INVALID_INGREDIENT', plannedMealId: 'meal-1', ingredientIndex: 1 },
       { code: 'INVALID_INGREDIENT', plannedMealId: 'meal-1', ingredientIndex: 2 },
     ]);
-    expect(response.items.map((item) => item.key)).toHaveLength(3);
+    expect(response.items.map((item) => item.key)).toHaveLength(1);
+  });
+
+  it('consolidates repeated unitless ingredients and sums their quantities', () => {
+    const response = transformShoppingList('2026-10-19', plan([
+      meal('meal-1', 'recipe-1', [{ name: 'Avocado', quantity: 0.5 }]),
+      meal('meal-2', 'recipe-2', [{ name: 'avocado', quantity: 1 }]),
+      meal('meal-3', 'recipe-3', [{ name: ' AVOCADO ', quantity: 0.5 }]),
+    ]));
+
+    expect(response.items).toHaveLength(1);
+    expect(response.items[0]).toMatchObject({ name: 'avocado', quantity: 2, unit: null });
+    expect(response.items[0].sources).toHaveLength(3);
+    expect(response.items[0].sources.map((source) => source.quantity)).toEqual([0.5, 1, 0.5]);
   });
 
   it('preserves semantic and accent differences instead of merging ingredient synonyms', () => {
